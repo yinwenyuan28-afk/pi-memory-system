@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { SkillManager } from "./skill-manager.js";
 
 /**
  * Skill 审查子代理调度模块。
@@ -29,8 +28,7 @@ Body sections:
 
 export function setupSkillReviewer(
 	pi: ExtensionAPI,
-	getManager: () => SkillManager | undefined,
-	getLoadedSkills: () => Set<string>,
+	getProfilePath: () => string | undefined,
 ): () => string {
 	let turnCount = 0;
 	let reviewScheduled = false;
@@ -38,9 +36,9 @@ export function setupSkillReviewer(
 	function prepareReviewPaths(ctx: ExtensionContext): { sessionPath: string; profilePath: string } | null {
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (!sessionFile || !existsSync(sessionFile)) return null;
-		// Skill reviewer 不需要直接访问 MemoryManager 来获取 profile
-		// 因为 session file 路径足够定位
-		return { sessionPath: sessionFile, profilePath: "" };
+		const profilePath = getProfilePath();
+		if (!profilePath) return null;
+		return { sessionPath: sessionFile, profilePath };
 	}
 
 	async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext): Promise<string> {

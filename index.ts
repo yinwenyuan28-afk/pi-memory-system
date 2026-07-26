@@ -8,6 +8,8 @@ import {
 } from "./skill/index.js";
 import { setupMemoryReviewer } from "./memory/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
+import { handleSkillManageTool } from "./skill/skill-tool.js";
+import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -50,7 +52,7 @@ export default function (pi: ExtensionAPI) {
 
     // 初始化审查子代理调度器（单次注册）
     getMemoryStatus = setupMemoryReviewer(pi, () => manager);
-    getSkillStatus = setupSkillReviewer(pi, () => skillManager, () => loadedSkillsThisSession);
+    getSkillStatus = setupSkillReviewer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
 
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
 
@@ -261,7 +263,6 @@ export default function (pi: ExtensionAPI) {
       if (!skillManager) {
         return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "Skill manager not initialized." }) }], details: {} };
       }
-      const { handleSkillManageTool } = await import("./skill/skill-tool.js");
       const result = handleSkillManageTool(params as Record<string, unknown>, skillManager);
       return { content: [{ type: "text", text: result }], details: {} };
     },
@@ -285,7 +286,6 @@ export default function (pi: ExtensionAPI) {
       if (!skillManager) {
         return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "Skill manager not initialized." }) }], details: {} };
       }
-      const { handleSkillViewTool } = await import("./skill/skill-view-tool.js");
       const result = handleSkillViewTool(params as Record<string, unknown>, skillManager);
       return { content: [{ type: "text", text: result }], details: {} };
     },
