@@ -23,6 +23,15 @@ export default function (pi: ExtensionAPI) {
   let profileSkillsPath: string | undefined;
   let loadedSkillsThisSession: Set<string> = new Set();
 
+  // ── load_memory_rules 状态变量 ─────────────────────────────
+
+  let _rulesState: {
+    content: string | null;
+    mode: "once" | "always" | null;
+    injected: boolean;
+  } = { content: null, mode: null, injected: false };
+  let _pendingCleanup = false;
+
   // 提供懒引用给 reviewer，避免循环依赖
   let getMemoryStatus: () => string = () => "0t";
   let getSkillStatus: () => string = () => "0t";
@@ -105,17 +114,12 @@ export default function (pi: ExtensionAPI) {
   const MEMORY_TOOL_REMINDER =
     "\n\n[Memory] You have persistent memory across sessions. Save durable facts using the memory " +
     "tool. Memory is injected into every turn, so keep entries compact and high-signal.\n" +
-    "SAVE when: user preference/habit/correction, root-cause analysis (causal structure), " +
+    "SAVE when: user preference/correction, root-cause analysis (causal structure), " +
     "non-obvious API behavior (pitfalls verified), reusable workflow pattern (→ skill).\n" +
     "DO NOT save: task progress / temporary TODO, one-shot fix without root cause, " +
     "version/release logs, facts directly inferable from code/docs.\n" +
+    "If you decide to save → call load_memory_rules for full classification rules and scope list.\n" +
     "Uncertain → stage in .staging/, do not write directly.\n" +
-    "For full signal reference, subagents read 记忆保存信号.md from profile root.\n" +
-    "For classification rules (target/memory/user/sub-memory boundaries), " +
-    "read 记忆分类框架.md from profile root.\n" +
-    "When you complete a complex task or discover a non-trivial pattern, " +
-    "save the approach as a skill with skill_manage. " +
-    "When a loaded skill is outdated or wrong, patch it immediately with skill_manage(edit).\n" +
     "\n[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (memory-reviewer, skill-reviewer, memory-organizer) " +
     "are protected. ONLY use edit, NEVER write on these files.";
 
@@ -165,6 +169,49 @@ export default function (pi: ExtensionAPI) {
 
     // 必须 return 修改后的 systemPrompt，否则 pi 丢弃所有变更
     return { systemPrompt: event.systemPrompt };
+  });
+
+  // ── context 事件：注入/移除 rules ──────────────────────────
+
+  pi.on("context", (event) => {
+    // 优先检查待清理（once 模式下 memory 已调用）
+    if (_pendingCleanup && _rulesState.injected) {
+      event.messages = event.messages.filter((m) => {
+        const text = typeof m.content === "string" ? m.content : "";
+        return !text.includes("__PI_RULES__");
+      });
+      _rulesState = { content: null, mode: null, injected: false };
+      _pendingCleanup = false;
+      return { messages: event.messages };
+    }
+
+    // 待注入
+    if (_rulesState.content && !_rulesState.injected) {
+      event.messages.unshift({
+        role: "user",
+        content: "[Memory Classification Rules Loaded]\n" + _rulesState.content,
+      });
+      _rulesState.injected = true;
+      return { messages: event.messages };
+    }
+  });
+
+  // ── tool_execution_end：memory 调用后标记清理 ───────────────
+
+  pi.on("tool_execution_end", (event) => {
+    if (event.toolName === "memory" && _rulesState.injected) {
+      if (_rulesState.mode === "once") {
+        _pendingCleanup = true;
+      }
+      // mode === "always" → 不清理，规则常驻
+    }
+  });
+
+  // ── agent_end：常驻规则随进程销毁 ───────────────────────────
+
+  pi.on("agent_end", () => {
+    _rulesState = { content: null, mode: null, injected: false };
+    _pendingCleanup = false;
   });
 
   // ── Memory Tool ─────────────────────────────────────────────
@@ -266,6 +313,54 @@ export default function (pi: ExtensionAPI) {
         return { content: [{ type: "text", text: JSON.stringify({ success: true, message: "No matching memories found.", content: "" }) }], details: {} };
       }
       return { content: [{ type: "text", text: JSON.stringify({ success: true, content: result }) }], details: {} };
+    },
+  });
+
+  // ── Load Memory Rules Tool ───────────────────────────────────
+
+  pi.registerTool({
+    name: "load_memory_rules",
+    label: "Load Memory Rules",
+    description:
+      "Load 记忆保存信号.md and 记忆分类框架.md into context head. " +
+      "Call this when you decide to save information to memory, BEFORE calling memory. " +
+      "Params: mode=\"once\" (default, clean after one memory call) or mode=\"always\" (permanent for this session).",
+    parameters: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["once", "always"],
+          description:
+            "'once' (default): rules removed after memory tool completes. " +
+            "'always': rules stay for the entire session (for subagents doing batch saves).",
+        },
+      },
+    },
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      try {
+        const profile = manager?.getProfileManager().getActiveProfile();
+        if (!profile) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "No active profile." }) }], details: {} };
+        }
+        const signalFile = readFileSync(join(profile.path, "记忆保存信号.md"), "utf-8");
+        const frameworkFile = readFileSync(join(profile.path, "记忆分类框架.md"), "utf-8");
+        _rulesState = {
+          content: `__PI_RULES__\n=== \u8BB0\u5FC6\u4FDD\u5B58\u4FE1\u53F7 ===\n${signalFile}\n\n=== \u8BB0\u5FC6\u5206\u7C7B\u6846\u67B6 ===\n${frameworkFile}\n\n__PI_RULES_END__`,
+          mode: params?.mode === "always" ? "always" : "once",
+          injected: false,
+        };
+        _pendingCleanup = false;
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: true, mode: _rulesState.mode, message: "Rules loaded. Mode: " + _rulesState.mode }) }],
+          details: {},
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: false, error: e instanceof Error ? e.message : String(e) }) }],
+          details: {},
+        };
+      }
     },
   });
 
