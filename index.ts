@@ -28,8 +28,7 @@ export default function (pi: ExtensionAPI) {
   let _rulesState: {
     content: string | null;
     mode: "once" | "always" | null;
-    injected: boolean;
-  } = { content: null, mode: null, injected: false };
+  } = { content: null, mode: null };
   let _pendingCleanup = false;
 
   // 提供懒引用给 reviewer，避免循环依赖
@@ -175,23 +174,23 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("context", (event) => {
     // 优先检查待清理（once 模式下 memory 已调用）
-    if (_pendingCleanup && _rulesState.injected) {
+    if (_pendingCleanup && _rulesState.content) {
       event.messages = event.messages.filter((m) => {
         const text = typeof m.content === "string" ? m.content : "";
         return !text.includes("__PI_RULES__");
       });
-      _rulesState = { content: null, mode: null, injected: false };
+      _rulesState.content = null;
+      _rulesState.mode = null;
       _pendingCleanup = false;
       return { messages: event.messages };
     }
 
-    // 待注入
-    if (_rulesState.content && !_rulesState.injected) {
+    // 有规则则注入（每次 LLM 调用前都注入，不依赖 injected flag）
+    if (_rulesState.content) {
       event.messages.unshift({
         role: "user",
         content: "[Memory Classification Rules Loaded]\n" + _rulesState.content,
       });
-      _rulesState.injected = true;
       return { messages: event.messages };
     }
   });
@@ -199,7 +198,7 @@ export default function (pi: ExtensionAPI) {
   // ── tool_execution_end：memory 调用后标记清理 ───────────────
 
   pi.on("tool_execution_end", (event) => {
-    if (event.toolName === "memory" && _rulesState.injected) {
+    if (event.toolName === "memory" && _rulesState.content) {
       if (_rulesState.mode === "once") {
         _pendingCleanup = true;
       }
@@ -210,7 +209,7 @@ export default function (pi: ExtensionAPI) {
   // ── agent_end：常驻规则随进程销毁 ───────────────────────────
 
   pi.on("agent_end", () => {
-    _rulesState = { content: null, mode: null, injected: false };
+    _rulesState = { content: null, mode: null };
     _pendingCleanup = false;
   });
 
@@ -348,7 +347,6 @@ export default function (pi: ExtensionAPI) {
         _rulesState = {
           content: `__PI_RULES__\n=== \u8BB0\u5FC6\u4FDD\u5B58\u4FE1\u53F7 ===\n${signalFile}\n\n=== \u8BB0\u5FC6\u5206\u7C7B\u6846\u67B6 ===\n${frameworkFile}\n\n__PI_RULES_END__`,
           mode: params?.mode === "always" ? "always" : "once",
-          injected: false,
         };
         _pendingCleanup = false;
         return {
