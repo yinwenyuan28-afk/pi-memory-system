@@ -29,7 +29,6 @@ export default function (pi: ExtensionAPI) {
     content: string | null;
     mode: "once" | "always" | null;
   } = { content: null, mode: null };
-  let _pendingCleanup = false;
 
   // 提供懒引用给 reviewer，避免循环依赖
   let getMemoryStatus: () => string = () => "0t";
@@ -170,22 +169,9 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: event.systemPrompt };
   });
 
-  // ── context 事件：注入/移除 rules ──────────────────────────
+  // ── context 事件：有 content 则注入 rules ───────────────────
 
   pi.on("context", (event) => {
-    // 优先检查待清理（once 模式下 memory 已调用）
-    if (_pendingCleanup && _rulesState.content) {
-      event.messages = event.messages.filter((m) => {
-        const text = typeof m.content === "string" ? m.content : "";
-        return !text.includes("__PI_RULES__");
-      });
-      _rulesState.content = null;
-      _rulesState.mode = null;
-      _pendingCleanup = false;
-      return { messages: event.messages };
-    }
-
-    // 有规则则注入（每次 LLM 调用前都注入，不依赖 injected flag）
     if (_rulesState.content) {
       event.messages.unshift({
         role: "user",
@@ -200,9 +186,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_execution_end", (event) => {
     if (event.toolName === "memory" && _rulesState.content) {
       if (_rulesState.mode === "once") {
-        _pendingCleanup = true;
+        _rulesState.content = null;  // once：清空后 context 事件不再注入
       }
-      // mode === "always" → 不清理，规则常驻
+      // mode === "always" → 不清理，content 保持，每次 context 继续注入
     }
   });
 
@@ -210,7 +196,6 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_end", () => {
     _rulesState = { content: null, mode: null };
-    _pendingCleanup = false;
   });
 
   // ── Memory Tool ─────────────────────────────────────────────
