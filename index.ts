@@ -8,6 +8,7 @@ import {
 } from "./skill/index.js";
 import { setupMemoryReviewer } from "./memory/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
+import { LLMKeywordSearcher } from "./memory/searcher.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -17,6 +18,7 @@ import { join, resolve } from "node:path";
 export default function (pi: ExtensionAPI) {
   const agentDir = getAgentDir();
   const manager = new MemoryManager(agentDir);
+  const searcher = new LLMKeywordSearcher();
   let skillManager: SkillManager | undefined;
   let profileSkillsPath: string | undefined;
   let loadedSkillsThisSession: Set<string> = new Set();
@@ -69,6 +71,15 @@ export default function (pi: ExtensionAPI) {
         return "";
       }
     });
+
+    // 初始化 LLMKeywordSearcher
+    searcher.setModel(currentModel);
+    searcher.setInvertedIndex(manager.invertedIndexInstance);
+    searcher.setProfilePath(profile.path);
+    searcher.resetTurn();
+    // 首次刷新关键词缓存（非阻塞，超时不影响启动）
+    const initContext = buildSearcherContext(ctx);
+    searcher.refreshKeywords(initContext).catch(() => {});
   });
 
   pi.on("session_shutdown", async () => {
@@ -77,10 +88,16 @@ export default function (pi: ExtensionAPI) {
     profileSkillsPath = undefined;
   });
 
-  // ── 状态显示 ────────────────────────────────────────────────
+  // ── 状态显示 + 关键词刷新 ──────────────────────────────────
 
   pi.on("agent_settled", async (_event, ctx) => {
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
+
+    // LLM 关键词缓存：每 5 轮刷新一次
+    if (searcher.incrementTurn()) {
+      const ctxText = buildSearcherContext(ctx);
+      searcher.refreshKeywords(ctxText).catch(() => {});
+    }
   });
 
   // ── Context Injection ───────────────────────────────────────
@@ -88,9 +105,14 @@ export default function (pi: ExtensionAPI) {
   const MEMORY_TOOL_REMINDER =
     "\n\n[Memory] You have persistent memory across sessions. Save durable facts using the memory " +
     "tool. Memory is injected into every turn, so keep entries compact and high-signal.\n" +
-    "For classification rules (auto-write / confirm-write / staging / size thresholds / target boundaries), " +
+    "SAVE when: user preference/habit/correction, root-cause analysis (causal structure), " +
+    "non-obvious API behavior (pitfalls verified), reusable workflow pattern (→ skill).\n" +
+    "DO NOT save: task progress / temporary TODO, one-shot fix without root cause, " +
+    "version/release logs, facts directly inferable from code/docs.\n" +
+    "Uncertain → stage in .staging/, do not write directly.\n" +
+    "For full signal reference, subagents read 记忆保存信号.md from profile root.\n" +
+    "For classification rules (target/memory/user/sub-memory boundaries), " +
     "read 记忆分类框架.md from profile root.\n" +
-    "Do NOT save task progress, session outcomes, or temporary TODO state to memory.\n" +
     "When you complete a complex task or discover a non-trivial pattern, " +
     "save the approach as a skill with skill_manage. " +
     "When a loaded skill is outdated or wrong, patch it immediately with skill_manage(edit).\n" +
@@ -125,7 +147,7 @@ export default function (pi: ExtensionAPI) {
       // sessionManager not available, fall back to prompt only
     }
 
-    const memoryContext = manager.prefetchAll(queryText, ctx.cwd);
+    const memoryContext = manager.prefetchAll(queryText, ctx.cwd, searcher.search(queryText));
     if (memoryContext) {
       event.systemPrompt += `\n\n${memoryContext}`;
     }
@@ -208,6 +230,42 @@ export default function (pi: ExtensionAPI) {
       }
       const result = manager.handleToolCall("memory", params as Record<string, unknown>);
       return { content: [{ type: "text", text: result }], details: {} };
+    },
+  });
+
+  // ── Get Memory Tool ────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "get_memory",
+    label: "Get Memory",
+    description:
+      "Search persistent memory for relevant context using keywords. " +
+      "Returns matched memory entries and sub-memory content. " +
+      "Use BEFORE writing to sub-memory to check if related content already exists, " +
+      "so you can update/merge instead of creating duplicates.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Keywords to search memory with. Be specific — use 3-8 keywords " +
+            "that describe the topic you need context on.",
+        },
+      },
+      required: ["query"],
+    },
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const query = String(params.query || "");
+      if (!query.trim()) {
+        return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "query is required." }) }], details: {} };
+      }
+      const searcherResult = await searcher.searchWithIntent(query);
+      const result = manager.prefetchAll(query, ctx.cwd, searcherResult);
+      if (!result) {
+        return { content: [{ type: "text", text: JSON.stringify({ success: true, message: "No matching memories found.", content: "" }) }], details: {} };
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ success: true, content: result }) }], details: {} };
     },
   });
 
@@ -371,4 +429,33 @@ export default function (pi: ExtensionAPI) {
 function getAgentDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || process.env.HOMEDRIVE + process.env.HOMEPATH || "";
   return process.env.PI_CODING_AGENT_DIR || `${home}/.pi/agent`;
+}
+
+/**
+ * 为 LLM 关键词设计器构建上下文文本。
+ * 从 session 中取最近有效轮次的对话摘要。
+ */
+function buildSearcherContext(ctx: any): string {
+  try {
+    const entries = ctx.sessionManager.getEntries();
+    const messages = entries
+      .filter((e: any) => e.type === "message")
+      .slice(-20)
+      .map((e: any) => {
+        const c = e.message?.content;
+        if (typeof c === "string") return `[${e.message?.role}] ${c}`;
+        if (Array.isArray(c)) {
+          return c
+            .filter((x: any) => x.type === "text")
+            .map((x: any) => x.text)
+            .join(" ");
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+    return messages || "No prior conversation.";
+  } catch {
+    return "No prior conversation.";
+  }
 }
