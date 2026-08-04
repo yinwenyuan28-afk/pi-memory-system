@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  computeReviewRange,
+  hasCompleteEnding,
+  loadCursor,
+  saveCursor,
+  scanSessionFile,
+} from "../memory/review-cursor.js";
 
 /**
  * Skill 审查子代理调度模块。
@@ -9,6 +16,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
  */
 
 const REVIEW_INTERVAL = 10;
+const CURSOR_KEY = "skillReviewer";
 
 /** 后台审查子代理超时（毫秒）：10 分钟，防止 executor 卡死导致审查永久停摆（M7）。 */
 const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -26,6 +34,56 @@ export function setupSkillReviewer(
 		const profilePath = getProfilePath();
 		if (!profilePath) return null;
 		return { sessionPath: sessionFile, profilePath };
+	}
+
+	/**
+	 * 构建审查任务字符串：带游标计算出的行范围 + 用户消息行号。
+	 * 返回 null 表示应跳过本次审查（无数据/工作流未完成/无新增）。
+	 */
+	function buildReviewTask(ctx: ExtensionContext): { task: string; paths: { sessionPath: string; profilePath: string }; endLine: number } | null {
+		const paths = prepareReviewPaths(ctx);
+		if (!paths) return null;
+
+		// C：轻量未完成检测（快速跳过半途状态）
+		if (!hasCompleteEnding(paths.sessionPath)) {
+			ctx.ui.setStatus("memory", "Skill skip(进行中)");
+			return null;
+		}
+
+		const scanned = scanSessionFile(paths.sessionPath);
+		if (!scanned) return null;
+
+		// A：游标增量
+		const cursor = loadCursor(paths.profilePath, CURSOR_KEY);
+		const cursorLine = cursor && cursor.sessionPath === paths.sessionPath ? cursor.line : 0;
+
+		const range = computeReviewRange(
+			paths.sessionPath,
+			cursorLine,
+			scanned.totalLines,
+			scanned.userMessageLines,
+			scanned.lastAssistantHasText,
+		);
+
+		if (!range.complete) {
+			ctx.ui.setStatus("memory", "Skill skip(进行中)");
+			return null;
+		}
+
+		// 无新增内容（游标已在末尾）→ 跳过
+		if (range.userMessageLines.length === 0) {
+			ctx.ui.setStatus("memory", `Skill ${REVIEW_INTERVAL - turnCount}t`);
+			return null;
+		}
+
+		const task = [
+			`Review session: ${paths.sessionPath}`,
+			`Profile: ${paths.profilePath}`,
+			`Start line: ${range.startLine}`,
+			`End line: ${range.endLine}`,
+			`User message lines: ${range.userMessageLines.join(", ")}`,
+		].join("\n");
+		return { task, paths, endLine: range.endLine };
 	}
 
 	async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext): Promise<string> {
@@ -61,19 +119,17 @@ export function setupSkillReviewer(
 		if (!reviewScheduled) turnCount++;
 		if (turnCount >= REVIEW_INTERVAL && !reviewScheduled) {
 			turnCount = 0;
+			const built = buildReviewTask(ctx);
+			if (!built) return; // 跳过本次（进行中/无新增），等下一轮 agent_settled
 			reviewScheduled = true;
 			ctx.ui.setStatus("memory", "Memory ⚙skill-review...");
-			const paths = prepareReviewPaths(ctx);
-			const task = paths
-				? `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}`
-				: "No new conversation data to review.";
-			runPiSubagent("skill-reviewer", task, ctx)
-				.then(() => {
-					reviewScheduled = false;
-				})
-				.catch(() => {
-					reviewScheduled = false;
-				});
+			try {
+				await runPiSubagent("skill-reviewer", built.task, ctx);
+				// 审查成功 → 游标推进到末尾
+				saveCursor(built.paths.profilePath, CURSOR_KEY, built.paths.sessionPath, built.endLine);
+			} finally {
+				reviewScheduled = false;
+			}
 		}
 	});
 
@@ -85,14 +141,30 @@ export function setupSkillReviewer(
 				return;
 			}
 			reviewScheduled = true;
-			const paths = prepareReviewPaths(ctx);
 			const extra = (args || "").trim();
-			const task = paths
-				? `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}${extra ? `\nExtra context: ${extra}` : ""}`
-				: "No new conversation data to review.";
-			runPiSubagent("skill-reviewer", task, ctx)
-				.then(() => { reviewScheduled = false; })
-				.catch(() => { reviewScheduled = false; });
+			const built = buildReviewTask(ctx);
+			if (!built) {
+				// 无新增内容或工作流未完成：仍走一次全量兜底
+				const paths = prepareReviewPaths(ctx);
+				if (paths) {
+					const task = `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}${extra ? `\nExtra context: ${extra}` : ""}`;
+					try {
+						await runPiSubagent("skill-reviewer", task, ctx);
+					} finally {
+						reviewScheduled = false;
+					}
+				} else {
+					reviewScheduled = false;
+				}
+				ctx.ui.notify("Learning skill from your request...", "info");
+				return;
+			}
+			try {
+				await runPiSubagent("skill-reviewer", built.task + (extra ? `\nExtra context: ${extra}` : ""), ctx);
+				saveCursor(built.paths.profilePath, CURSOR_KEY, built.paths.sessionPath, built.endLine);
+			} finally {
+				reviewScheduled = false;
+			}
 			ctx.ui.notify("Learning skill from your request...", "info");
 		},
 	});
