@@ -11,6 +11,9 @@ import type { MemoryManager } from "./manager.js";
 
 const REVIEW_INTERVAL = 10;
 
+/** 后台审查子代理超时（毫秒）：10 分钟，防止 executor 卡死导致审查永久停摆（M7）。 */
+const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+
 export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryManager | undefined): () => string {
 	let turnCount = 0;
 	let reviewScheduled = false;
@@ -30,13 +33,26 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 			| undefined;
 		if (!executor) throw new Error("pi-subagents executor not available");
 		const id = randomUUID();
-		await executor(
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const executorPromise = executor(
 			id,
 			{ agent, task, async: true, clarify: false, agentScope: "both" },
-			new AbortController().signal,
+			controller.signal,
 			undefined,
 			ctx,
 		);
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => {
+				controller.abort();
+				reject(new Error(`subagent ${agent} timed out after ${SUBAGENT_TIMEOUT_MS}ms`));
+			}, SUBAGENT_TIMEOUT_MS);
+		});
+		try {
+			await Promise.race([executorPromise, timeoutPromise]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
 		return id;
 	}
 
@@ -64,13 +80,20 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 		description: "Manually trigger a full memory review of the entire conversation.",
 		usage: "Usage: /remember",
 		handler: async (_args, ctx) => {
+			if (reviewScheduled) {
+				ctx.ui.notify("Memory review already in progress", "info");
+				return;
+			}
+			reviewScheduled = true;
 			ctx.ui.setStatus("memory", "Memory ⚙remember...");
 			ctx.ui.notify("Full memory review started via pi-subagents", "info");
 			const paths = prepareReviewPaths(ctx);
 			const task = paths
 				? `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}`
 				: "No new conversation data to review.";
-			runPiSubagent("memory-reviewer", task, ctx).catch(() => {});
+			runPiSubagent("memory-reviewer", task, ctx)
+				.then(() => { reviewScheduled = false; })
+				.catch(() => { reviewScheduled = false; });
 		},
 	});
 

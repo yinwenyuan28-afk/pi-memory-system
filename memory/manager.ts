@@ -90,7 +90,7 @@ export class MemoryManager {
 	 * 3. Loads matching sub-memories.
 	 * 4. Queries external provider (if configured).
 	 */
-	prefetchAll(query: string, cwd: string): string {
+	prefetchAll(query: string, cwd: string, indexOverride?: string): string {
 		if (!this._initialized) return "";
 
 		const parts: string[] = [];
@@ -99,23 +99,34 @@ export class MemoryManager {
 		const storeContext = this.store.getFullContext();
 		if (storeContext) parts.push(storeContext);
 
-		// 2. Inverted index search (primary)
-		const indexResults = this.invertedIndex.search(query);
+		// 2. Inverted index search (searcher override or default)
 		const loadedPaths = new Set<string>();
-		if (indexResults.length > 0) {
-			const indexParts: string[] = [];
-			for (const filePath of indexResults) {
-				loadedPaths.add(filePath);
-				const fullPath = join(this.profileManager.getActiveProfile().path, filePath);
-				if (existsSync(fullPath)) {
-					const content = readFileSync(fullPath, "utf-8").trim();
-					if (content) {
-						indexParts.push(`[INDEX MATCH: ${filePath}]\n${content}`);
+		if (indexOverride) {
+			// searcher 已代劳：关键词搜索 + 排序 + 内容读取
+			parts.push(indexOverride);
+			// 从 indexOverride 中提取已加载的文件路径，避免路由重复
+			const pathMatches = indexOverride.matchAll(/\[INDEX MATCH: ([^\]]+)\]/g);
+			for (const m of pathMatches) {
+				loadedPaths.add(m[1]);
+			}
+		} else {
+			// 原始逻辑：jieba 分词搜索
+			const indexResults = this.invertedIndex.search(query);
+			if (indexResults.length > 0) {
+				const indexParts: string[] = [];
+				for (const filePath of indexResults) {
+					loadedPaths.add(filePath);
+					const fullPath = join(this.profileManager.getActiveProfile().path, filePath);
+					if (existsSync(fullPath)) {
+						const content = readFileSync(fullPath, "utf-8").trim();
+						if (content) {
+							indexParts.push(`[INDEX MATCH: ${filePath}]\n${content}`);
+						}
 					}
 				}
-			}
-			if (indexParts.length > 0) {
-				parts.push(indexParts.join("\n\n"));
+				if (indexParts.length > 0) {
+					parts.push(indexParts.join("\n\n"));
+				}
 			}
 		}
 
@@ -226,9 +237,6 @@ export class MemoryManager {
 		if (!result.success) return;
 
 		const target = String(args.target || "memory");
-		const action = String(args.action || "");
-		const content = args.content !== undefined ? String(args.content) : undefined;
-		const oldText = args.old_text !== undefined ? String(args.old_text) : undefined;
 		const subMemoryPath = args.path !== undefined ? String(args.path) : undefined;
 
 		// Determine file path
@@ -238,28 +246,10 @@ export class MemoryManager {
 		else if (target === "sub-memory" && subMemoryPath) filePath = `sub-memories/${subMemoryPath}`;
 		else return;
 
-		if (action === "add" && content) {
-			this.invertedIndex.addEntry(filePath, content);
-		} else if (action === "replace" && oldText && content) {
-			this.invertedIndex.updateEntry(filePath, oldText, content);
-		} else if (action === "remove" && oldText) {
-			this.invertedIndex.removeEntry(filePath);
-			// re-index remaining content if replace/remove leaves other entries
-			// For simplicity, just remove and let next write rebuild
-		}
-
-		// Batch operations
-		const operations = args.operations;
-		if (Array.isArray(operations) && operations.length > 0) {
-			// For batch, just rebuild the affected file's index from disk
-			// This is the safest approach for batch operations
-			const profilePath = this.profileManager.getActiveProfile().path;
-			const fullPath = join(profilePath, filePath);
-			if (existsSync(fullPath)) {
-				const content = readFileSync(fullPath, "utf-8");
-				this.invertedIndex.addEntry(filePath, content);
-			}
-		}
+		// 所有写入路径统一从磁盘重建该文件索引（S1 修复）
+		// add/replace/remove/batch 都基于文件完整当前内容重建，
+		// 避免只索引写入片段导致同文件旧条目被逐步抹掉。
+		this.invertedIndex.reindexFromDisk(filePath);
 	}
 
 	// ── Profile Management ──────────────────────────────────────────

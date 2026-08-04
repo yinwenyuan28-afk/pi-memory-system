@@ -10,21 +10,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const REVIEW_INTERVAL = 10;
 
-const _AUTHORING_STANDARDS = `
-Frontmatter:
-- name: lowercase-hyphenated, <=64 chars, no spaces.
-- description: ONE sentence, <=60 characters, ends with a period.
-- version: 0.1.0
-- author: Pi
-
-Body sections:
-1. "## When to Use" — concrete trigger phrases
-2. "## Prerequisites" — exact env vars, install steps, credentials
-3. "## How to Run" — the canonical invocation
-4. "## Procedure" — numbered steps with exact commands
-5. "## Pitfalls" — known limits, gotchas
-6. "## Verification" — one check that proves it worked
-`;
+/** 后台审查子代理超时（毫秒）：10 分钟，防止 executor 卡死导致审查永久停摆（M7）。 */
+const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export function setupSkillReviewer(
 	pi: ExtensionAPI,
@@ -47,13 +34,26 @@ export function setupSkillReviewer(
 			| undefined;
 		if (!executor) throw new Error("pi-subagents executor not available");
 		const id = randomUUID();
-		await executor(
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const executorPromise = executor(
 			id,
 			{ agent, task, async: true, clarify: false, agentScope: "both" },
-			new AbortController().signal,
+			controller.signal,
 			undefined,
 			ctx,
 		);
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => {
+				controller.abort();
+				reject(new Error(`subagent ${agent} timed out after ${SUBAGENT_TIMEOUT_MS}ms`));
+			}, SUBAGENT_TIMEOUT_MS);
+		});
+		try {
+			await Promise.race([executorPromise, timeoutPromise]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
 		return id;
 	}
 
@@ -77,28 +77,22 @@ export function setupSkillReviewer(
 		}
 	});
 
-	function buildLearnPrompt(userRequest: string): string {
-		const req = (userRequest || "").trim() || "everything we accomplished in the current conversation";
-		return (
-			"[/learn] The user wants you to learn a reusable skill from the request below.\n\n" +
-			`THE REQUEST:\n${req}\n\n` +
-			"The request may mix SOURCES and REQUIREMENTS. Treat EVERY part as load-bearing.\n\n" +
-			"Do this:\n" +
-			"1. Gather every source using your existing tools.\n" +
-			"2. Check for duplicates: use `skill_manage(list)` to list existing skills. " +
-			"If the new content overlaps with an existing skill, UPDATE it with `skill_manage(edit)` instead of creating a new file.\n" +
-			"3. Apply every requirement and constraint in the request.\n" +
-			"4. Save the skill: `skill_manage(action=\"create\")` (only if no existing skill covers this).\n\n" +
-			`${_AUTHORING_STANDARDS}\n\n` +
-			"When done, tell the user the skill name, its category, and a one-line summary of what it captured."
-		);
-	}
-
 	pi.registerCommand("learn", {
 		description: "Learn a reusable skill from source code, docs, or conversation. Usage: /learn [source]",
 		handler: async (args, ctx) => {
-			const prompt = buildLearnPrompt(args || "");
-			pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+			if (reviewScheduled) {
+				ctx.ui.notify("Skill review already in progress", "info");
+				return;
+			}
+			reviewScheduled = true;
+			const paths = prepareReviewPaths(ctx);
+			const extra = (args || "").trim();
+			const task = paths
+				? `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}${extra ? `\nExtra context: ${extra}` : ""}`
+				: "No new conversation data to review.";
+			runPiSubagent("skill-reviewer", task, ctx)
+				.then(() => { reviewScheduled = false; })
+				.catch(() => { reviewScheduled = false; });
 			ctx.ui.notify("Learning skill from your request...", "info");
 		},
 	});

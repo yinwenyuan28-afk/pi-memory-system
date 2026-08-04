@@ -6,6 +6,13 @@ import type { InvertedIndexData } from "./types.js";
 const INDEX_FILE = "memory-index.json";
 const INDEX_VERSION = 1;
 
+/**
+ * 通过 store 冻结快照常驻注入的根文件，不进入倒排索引。
+ * 这些文件每次 before_agent_start 都由 store.getFullContext() 全量注入，
+ * 若再被索引命中会重复注入浪费 token。
+ */
+export const ROOT_MEMORY_FILES: ReadonlySet<string> = new Set(["MEMORY.md", "USER.md"]);
+
 // 停用词（高频无意义词）
 const STOP_WORDS = new Set([
 	"的",
@@ -265,10 +272,31 @@ export class InvertedIndex {
 		this._addTerms(filePath, terms);
 		this.save();
 
-		// 异步 LLM 过滤（不阻塞写入）
+		// 异步 LLM 过滤（不阻塞写入）：按 filePath 串行队列
 		if (this.llmFilter && terms.length > 0) {
-			this._refineAsync(filePath, content, terms);
+			this._queueRefine(filePath);
 		}
+	}
+
+	/**
+	 * 从磁盘读取文件的完整内容并重建索引（统一写入入口）。
+	 * 解决 S1：只索引写入片段会导致同文件旧条目被逐步抹掉。
+	 */
+	reindexFromDisk(filePath: string): void {
+		// MEMORY.md/USER.md 由 store 快照每次全量注入，不建索引（避免重复注入）
+		if (ROOT_MEMORY_FILES.has(filePath)) {
+			this.removeEntry(filePath);
+			return;
+		}
+		const fullPath = join(this.profilePath, filePath);
+		this.removeEntry(filePath);
+		if (!existsSync(fullPath)) return;
+		const content = readFileSync(fullPath, "utf-8");
+		const terms = this.tokenizeSync(content);
+		if (terms.length === 0) return;
+		this._addTerms(filePath, terms);
+		this.save();
+		if (this.llmFilter) this._queueRefine(filePath);
 	}
 
 	/** 索引的核心操作（同步，无 LLM）。 */
@@ -279,10 +307,19 @@ export class InvertedIndex {
 		}
 	}
 
-	/** 异步 LLM 过滤：先删旧索引，再用 LLM 过滤后的词重建。 */
-	private async _refineAsync(filePath: string, content: string, candidates: string[]): Promise<void> {
+	/** 异步 LLM 过滤：从磁盘读取完整内容，LLM 过滤后重建该文件索引。 */
+	private async _refineAsync(filePath: string): Promise<void> {
 		try {
-			const prompt = buildFilterPrompt(content, candidates);
+			const fullPath = join(this.profilePath, filePath);
+			if (!existsSync(fullPath)) {
+				this.removeEntry(filePath);
+				return;
+			}
+			const fullContent = readFileSync(fullPath, "utf-8");
+			const candidates = this.tokenizeSync(fullContent);
+			if (candidates.length === 0) return;
+
+			const prompt = buildFilterPrompt(fullContent, candidates);
 			const response = await this.llmFilter!(prompt);
 			const kept = parseFilterResponse(response, candidates);
 
@@ -291,7 +328,7 @@ export class InvertedIndex {
 				files.delete(filePath);
 			}
 
-			// 用 LLM 过滤后的词重建
+			// 用 LLM 过滤后的词重建（完整内容）
 			this._addTerms(filePath, kept);
 
 			// 清理空 term
@@ -303,6 +340,15 @@ export class InvertedIndex {
 		} catch {
 			// LLM 过滤失败不影响已有索引
 		}
+	}
+
+	/** per-filePath 串行刷新队列，防止并发 refine 竞态（M1）。 */
+	private refineQueues: Map<string, Promise<void>> = new Map();
+
+	private _queueRefine(filePath: string): void {
+		const prev = this.refineQueues.get(filePath) || Promise.resolve();
+		const next = prev.then(() => this._refineAsync(filePath)).catch(() => {});
+		this.refineQueues.set(filePath, next);
 	}
 
 	/** 从索引中删除一条记忆文件的所有条目。 */
@@ -317,10 +363,9 @@ export class InvertedIndex {
 		this.save();
 	}
 
-	/** 更新一条记忆文件的索引（先删旧内容，再加新内容）。 */
-	updateEntry(filePath: string, oldContent: string, newContent: string): void {
-		this.removeEntry(filePath);
-		this.addEntry(filePath, newContent);
+	/** 更新一条记忆文件的索引：从磁盘读取完整内容重建。 */
+	updateEntry(filePath: string, _oldContent: string, _newContent: string): void {
+		this.reindexFromDisk(filePath);
 	}
 
 	// ── 搜索 ────────────────────────────────────────────────
@@ -351,7 +396,37 @@ export class InvertedIndex {
 			.map(([file]) => file);
 	}
 
+	/**
+	 * Search with normalized hit scores (0-1).
+	 * Same logic as search(), but returns scores for combined ranking.
+	 */
+	searchWithScores(query: string, limit = 5): Array<{ file: string; score: number }> {
+		const terms = this.tokenizeSync(query);
+		if (!terms.length) return [];
+
+		const hitCount = new Map<string, number>();
+
+		for (const term of terms) {
+			const files = this.index.get(term);
+			if (!files) continue;
+			for (const f of files) {
+				hitCount.set(f, (hitCount.get(f) || 0) + 1);
+			}
+		}
+
+		const entries = Array.from(hitCount.entries());
+		if (!entries.length) return [];
+
+		const maxHits = Math.max(...entries.map(([, c]) => c));
+		return entries
+			.sort((a, b) => b[1] - a[1])
+			.slice(0, limit)
+			.map(([file, hits]) => ({ file, score: maxHits > 0 ? hits / maxHits : 0 }));
+	}
+
 	/** 获取索引大小（term 数量）。 */
+
+
 	get size(): number {
 		return this.index.size;
 	}

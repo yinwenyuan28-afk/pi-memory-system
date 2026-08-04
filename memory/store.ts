@@ -153,7 +153,11 @@ export class MemoryStore {
 
 		const separator = existing.trim() ? "\n\n---\n\n" : "";
 		const newContent = `${existing}${separator}${content}`;
-		writeFileSync(fullPath, newContent, "utf-8");
+
+		// M5：原子写（tmp + rename），防止后台审查子代理并发读写时读到半写状态
+		const tmpPath = join(this.profilePath, `.tmp_${randomUUID()}`);
+		writeFileSync(tmpPath, newContent, "utf-8");
+		renameSync(tmpPath, fullPath);
 
 		return {
 			success: true,

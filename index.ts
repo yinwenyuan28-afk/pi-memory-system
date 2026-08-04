@@ -22,6 +22,8 @@ export default function (pi: ExtensionAPI) {
   let skillManager: SkillManager | undefined;
   let profileSkillsPath: string | undefined;
   let loadedSkillsThisSession: Set<string> = new Set();
+  // M8：reviewer 只注册一次（防 session_start 重复触发时重复监听）
+  let reviewersInitialized = false;
 
   // ── load_memory_rules 状态变量 ─────────────────────────────
 
@@ -59,9 +61,12 @@ export default function (pi: ExtensionAPI) {
     );
     loadedSkillsThisSession = new Set();
 
-    // 初始化审查子代理调度器（单次注册）
-    getMemoryStatus = setupMemoryReviewer(pi, () => manager);
-    getSkillStatus = setupSkillReviewer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+    // 初始化审查子代理调度器（单次注册，M8 guard）
+    if (!reviewersInitialized) {
+      getMemoryStatus = setupMemoryReviewer(pi, () => manager);
+      getSkillStatus = setupSkillReviewer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+      reviewersInitialized = true;
+    }
 
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
 
@@ -333,7 +338,6 @@ export default function (pi: ExtensionAPI) {
           content: `__PI_RULES__\n=== \u8BB0\u5FC6\u4FDD\u5B58\u4FE1\u53F7 ===\n${signalFile}\n\n=== \u8BB0\u5FC6\u5206\u7C7B\u6846\u67B6 ===\n${frameworkFile}\n\n__PI_RULES_END__`,
           mode: params?.mode === "always" ? "always" : "once",
         };
-        _pendingCleanup = false;
         return {
           content: [{ type: "text", text: JSON.stringify({ success: true, mode: _rulesState.mode, message: "Rules loaded. Mode: " + _rulesState.mode }) }],
           details: {},
@@ -447,7 +451,14 @@ export default function (pi: ExtensionAPI) {
         try {
           manager.switchProfile(parts[1]);
           const profile = manager.getProfileManager().getActiveProfile();
-          skillManager = new SkillManager(profile.path);
+          skillManager = new SkillManager(profile.path, [
+            resolve(agentDir, "skills"),
+          ]);
+          profileSkillsPath = profile.path;
+          // M3：切换 profile 后同步 searcher（路径 + 清缓存防串档）
+          searcher.setProfilePath(profile.path);
+          searcher.clearKeywords();
+          searcher.resetTurn();
           ctx.ui.notify(`Switched to profile: ${parts[1]}`, "info");
         } catch (e) {
           ctx.ui.notify(`Failed: ${e instanceof Error ? e.message : String(e)}`, "error");
@@ -469,15 +480,8 @@ export default function (pi: ExtensionAPI) {
 
       const entries: Array<{ filePath: string; content: string }> = [];
 
-      // MEMORY.md + USER.md
-      for (const name of ["MEMORY.md", "USER.md"]) {
-        const fp = join(profile.path, name);
-        if (existsSync(fp)) {
-          entries.push({ filePath: name, content: readFileSync(fp, "utf-8") });
-        }
-      }
-
-      // sub-memories/ (递归)
+      // MEMORY.md/USER.md 不走索引（store 快照常驻注入，避免重复），
+      // 只索引 sub-memories/ 下的按需检索文件
       const subDir = join(profile.path, "sub-memories");
       if (existsSync(subDir)) {
         const walk = (dir: string, prefix: string) => {

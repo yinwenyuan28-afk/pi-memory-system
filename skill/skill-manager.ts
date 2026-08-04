@@ -372,24 +372,43 @@ export class SkillManager {
 		categoryFilter?: string,
 		includeArchived = false,
 	): void {
-		if (!existsSync(root)) return;
+		this.scanSkillDirRecursive(root, results, protectedLevel, categoryFilter, includeArchived);
+	}
 
-		const entries = readdirSync(root, { withFileTypes: true });
+	/**
+	 * 递归扫描技能目录（M4 修复）。
+	 * 之前的单层扫描导致 <category>/<name>/SKILL.md 的嵌套技能在 list 中不可见。
+	 */
+	private scanSkillDirRecursive(
+		dir: string,
+		results: SkillInfo[],
+		protectedLevel: ProtectedLevel,
+		categoryFilter?: string,
+		includeArchived = false,
+	): void {
+		if (!existsSync(dir)) return;
+
+		const entries = readdirSync(dir, { withFileTypes: true });
 		for (const entry of entries) {
 			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (entry.name === ARCHIVED_DIR && !includeArchived) continue;
 
-			const skillPath = join(root, entry.name);
+			const skillPath = join(dir, entry.name);
 			const skillMdPath = join(skillPath, "SKILL.md");
-			if (!existsSync(skillMdPath)) continue;
+
+			if (!existsSync(skillMdPath)) {
+				// 无 SKILL.md → 是分类目录，递归深入
+				this.scanSkillDirRecursive(skillPath, results, protectedLevel, categoryFilter, includeArchived);
+				continue;
+			}
 
 			const content = readFileSync(skillMdPath, "utf-8");
 			const usage = this.loadUsage();
 			const normalized = this.normalizeName(entry.name);
 			const record = usage[normalized];
 
-			const category = entry.name.startsWith("--") ? "archived" : dirname(skillPath).split(/[\\/]/).pop() || "";
+			const category = entry.name.startsWith("--") ? "archived" : dirname(skillPath).split(/[\/]/).pop() || "";
 
 			if (categoryFilter && category !== categoryFilter) continue;
 
