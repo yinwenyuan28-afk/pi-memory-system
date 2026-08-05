@@ -58,6 +58,7 @@ export function registerWorkflowTools(
         success: true,
         workflow_id: active.id,
         workflow_title: active.title,
+        workflow_cwd: active.cwd,
         changes: changes.map((c) => ({
           id: c.id,
           file_path: c.file_path,
@@ -298,7 +299,7 @@ function renderWorkflowRecord(mgr: WorkflowManager, wf: import("./db.js").Workfl
   const dbInst = mgr.getDB();
   const lines: string[] = [];
   lines.push(`# 工作流 #${wf.id} ${wf.title}`);
-  lines.push(`状态: ${wf.status} | 创建: ${wf.created_at}`);
+  lines.push(`状态: ${wf.status} | 创建: ${wf.created_at}${wf.cwd ? ` | 目录: ${wf.cwd}` : ""}`);
   if (wf.pre_node_id) lines.push(`前版本: #${wf.pre_node_id}${wf.diff_from_prev ? `（${wf.diff_from_prev}）` : ""}`);
   if (wf.parent_node_id) lines.push(`父工作流: #${wf.parent_node_id}`);
   if (wf.description) lines.push(`\n概述: ${wf.description}`);

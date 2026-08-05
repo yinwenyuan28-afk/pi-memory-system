@@ -48,7 +48,7 @@ export function setupWorkflowSystem(
   registerWorkflowCommands(pi, () => manager, () => detector);
 
   // 用户消息监听 → 生命周期状态机
-  pi.on("input", (event) => {
+  pi.on("input", (event, ctx) => {
     if (event.source !== "interactive") return; // M2：只处理用户交互输入
     const text = event.text?.trim();
     if (!text) return;
@@ -60,22 +60,24 @@ export function setupWorkflowSystem(
     const sessionId = deps.getSessionId();
     if (!sessionId) return;
     const dbInst = mgr.getDB();
+    const cwd = ctx?.cwd;
     const active = dbInst.getActiveWorkflow();
     if (!active) {
       // 无活动工作流 → 创建判定（LLM 语义判断产出意图）
-      void handleNoActiveWorkflow(mgr, det, text, sessionId);
+      void handleNoActiveWorkflow(mgr, det, text, sessionId, cwd);
       return;
     }
-    void handleWithActiveWorkflow(mgr, det, text, sessionId, active.id);
+    void handleWithActiveWorkflow(mgr, det, text, sessionId, active.id, cwd);
   });
 
   // 工具执行结果监听 → 改动采集 + 兜底补建
-  pi.on("tool_result", (event) => {
+  pi.on("tool_result", (event, ctx) => {
     const mgr = manager;
     if (!mgr) return;
     const dbInst = mgr.getDB();
     const sessionId = deps.getSessionId();
     if (!sessionId) return;
+    const cwd = ctx?.cwd;
     // M1：失败工具不记录（isError 时跳过）
     if (event.isError) return;
     // 改动记录：edit/write 成功
@@ -93,6 +95,7 @@ export function setupWorkflowSystem(
       const fallbackTitle = lastNoIntentMessage?.text.slice(0, 100) ?? `工作流 ${filePath}`;
       const newId = mgr.createWorkflowFromMessage({
         sessionId,
+        cwd,
         title: fallbackTitle,
         description: `由工具调用兜底补建（${event.toolName} ${filePath}）`,
       });
@@ -111,6 +114,7 @@ export function setupWorkflowSystem(
       const fallbackTitle = lastNoIntentMessage?.text.slice(0, 100) ?? `工作流（${event.toolName}）`;
       const newId = mgr.createWorkflowFromMessage({
         sessionId,
+        cwd,
         title: fallbackTitle,
         description: `由 ${event.toolName} 工具调用兜底补建`,
       });
@@ -206,6 +210,7 @@ async function handleNoActiveWorkflow(
   det: WorkflowDetector,
   text: string,
   sessionId: string,
+  cwd?: string,
 ): Promise<void> {
   const shouldCreate = await det.detectCreate(text);
   if (shouldCreate) {
@@ -216,6 +221,7 @@ async function handleNoActiveWorkflow(
     }
     const id = mgr.createWorkflowFromMessage({
       sessionId,
+      cwd,
       title: text.slice(0, 100),
       description: text.slice(0, 500),
     });
@@ -236,6 +242,7 @@ async function handleWithActiveWorkflow(
   text: string,
   sessionId: string,
   workflowId: number,
+  cwd?: string,
 ): Promise<void> {
   const dbInst = mgr.getDB();
 
@@ -265,6 +272,7 @@ async function handleWithActiveWorkflow(
   if (reject === "evolve") {
     const newId = mgr.createEvolutionWorkflow(workflowId, {
       sessionId,
+      cwd,
       title: text.slice(0, 100),
       description: text.slice(0, 500),
     });
@@ -295,6 +303,7 @@ async function handleWithActiveWorkflow(
   if (await det.detectChild(text)) {
     const childId = mgr.createChildWorkflow(workflowId, {
       sessionId,
+      cwd,
       title: text.slice(0, 100),
     });
     mgr.recordEvent(childId, "user_request", text);
@@ -314,16 +323,20 @@ async function handleWithActiveWorkflow(
     return;
   }
 
-  // ⑦ 兜底：新需求（非延续）→ 当前工作流挂起 + 创建新工作流
+  // ⑦ 兜底：默认延续当前工作流（多数消息是讨论/执行/指示/收尾），
+  // 只有明确全新需求信号 + LLM 确认才创建新工作流（防误创建）
   mgr.recordEvent(workflowId, "user_request", text);
-  void mgr.suspendSummary(workflowId);
-  const newId = mgr.createWorkflowFromMessage({
-    sessionId,
-    title: text.slice(0, 100),
-    description: text.slice(0, 500),
-  });
-  mgr.getDB().setStatus(newId, "in_progress");
-  mgr.recordEvent(newId, "user_request", text);
+  if (await det.detectNewRequest(text)) {
+    void mgr.suspendSummary(workflowId);
+    const newId = mgr.createWorkflowFromMessage({
+      sessionId,
+      cwd,
+      title: text.slice(0, 100),
+      description: text.slice(0, 500),
+    });
+    mgr.getDB().setStatus(newId, "in_progress");
+    mgr.recordEvent(newId, "user_request", text);
+  }
 }
 
 // ---------------------------------------------------------------------------

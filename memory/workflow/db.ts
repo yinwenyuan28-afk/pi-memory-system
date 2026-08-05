@@ -62,6 +62,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS workflows (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id    TEXT NOT NULL,
+  cwd           TEXT,                          -- 工作目录（工作流归属的项目/目录）
   title         TEXT NOT NULL,
   description   TEXT,
   background    TEXT,
@@ -173,6 +174,18 @@ export class WorkflowDB {
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec(SCHEMA_SQL);
+    this.migrate();
+  }
+
+  /**
+   * 表结构迁移（兼容已有库）：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列
+   * 当前迁移：workflows 加 cwd 列（工作目录归属）
+   */
+  private migrate(): void {
+    const cols = this.db.prepare("PRAGMA table_info(workflows)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "cwd")) {
+      this.db.exec("ALTER TABLE workflows ADD COLUMN cwd TEXT");
+    }
   }
 
   /** 关闭数据库连接（profile 切换时调用） */
@@ -198,6 +211,7 @@ export class WorkflowDB {
    */
   createWorkflow(input: {
     sessionId: string;
+    cwd?: string;
     title: string;
     description?: string;
     background?: string;
@@ -209,12 +223,13 @@ export class WorkflowDB {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(
       `INSERT INTO workflows
-        (session_id, title, description, background, goal, status,
+        (session_id, cwd, title, description, background, goal, status,
          pre_node_id, diff_from_prev, parent_node_id, created_at, updated_at, refined)
-       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, 0)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, 0)`,
     );
     const result = stmt.run(
       input.sessionId,
+      input.cwd ?? null,
       input.title,
       input.description ?? null,
       input.background ?? null,
@@ -320,6 +335,7 @@ export class WorkflowDB {
       workflow: {
         id: r.id,
         session_id: r.session_id,
+        cwd: r.cwd,
         title: r.title,
         description: r.description,
         background: r.background,
@@ -567,6 +583,7 @@ export class WorkflowDB {
 export interface WorkflowRow {
   id: number;
   session_id: string;
+  cwd: string | null;
   title: string;
   description: string | null;
   background: string | null;

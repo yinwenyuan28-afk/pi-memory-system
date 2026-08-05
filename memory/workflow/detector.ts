@@ -12,6 +12,10 @@ import { completeSimple } from "@earendil-works/pi-ai/compat";
 
 const LLM_TIMEOUT_MS = 5000;
 
+// 全新需求信号正则（兜底分支：默认延续，只有明确新需求信号才创建新工作流）
+const NEW_REQUEST_REGEX =
+  /全新|另一个|换个.{0,6}(需求|任务|项目)|重新开|另起|新任务|下一个需求|重新做|别的项目|其他任务|换一个需求|新开一个|做另一个|完全不同的/;
+
 // ---------------------------------------------------------------------------
 // 信号词正则（初筛，零成本）
 // ---------------------------------------------------------------------------
@@ -135,9 +139,11 @@ export class WorkflowDetector {
     return r === null ? false : r;
   }
 
+
+
   /**
-   * 延续检测：这条消息是在延续当前工作流（追加需求）还是全新需求
-   * @returns true=延续 | false=新需求
+   * 延续检测：这条消息是在延续当前工作流（追加需求）
+   * @returns true=延续
    */
   async detectContinue(message: string): Promise<boolean> {
     if (!SIGNAL_REGEX.continue.test(message)) return false;
@@ -147,6 +153,22 @@ export class WorkflowDetector {
       "这条用户消息是否在【延续当前工作流】（\"接着做/继续/下一步\"）？回答 JSON {\"yes\": true/false}",
     );
     return r === null ? true : r;
+  }
+
+  /**
+   * 全新需求检测：这条消息是否明确开启一个与当前工作流无关的新需求
+   * 兜底分支使用：默认延续当前工作流，只有明确新需求信号 + LLM 确认才创建新工作流
+   * @returns true=全新需求
+   */
+  async detectNewRequest(message: string): Promise<boolean> {
+    if (!NEW_REQUEST_REGEX.test(message)) return false;
+    if (!this.model) return false; // 保守：无模型时不创建
+    const r = await this.confirm(
+      message,
+      "这条用户消息是否在【开启一个与当前工作流无关的全新需求】？" +
+        "如果只是继续当前任务的讨论/指示/收尾（如提交、编译、检查），则不是。回答 JSON {\"yes\": true/false}",
+    );
+    return r === null ? false : r;
   }
 
   /**

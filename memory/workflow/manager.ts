@@ -61,6 +61,7 @@ export class WorkflowManager {
    */
   createWorkflowFromMessage(input: {
     sessionId: string;
+    cwd?: string;
     title: string;
     description?: string;
     background?: string;
@@ -79,6 +80,7 @@ export class WorkflowManager {
    */
   createChildWorkflow(parentId: number, input: {
     sessionId: string;
+    cwd?: string;
     title: string;
     description?: string;
   }): number {
@@ -100,6 +102,7 @@ export class WorkflowManager {
    */
   createEvolutionWorkflow(prevId: number, input: {
     sessionId: string;
+    cwd?: string;
     title: string;
     description?: string;
   }): number {
@@ -107,6 +110,7 @@ export class WorkflowManager {
     if (!prev) throw new Error(`前版本工作流 ${prevId} 不存在`);
     const newId = this.db.createWorkflow({
       ...input,
+      cwd: input.cwd ?? prev.cwd ?? undefined, // 继承父层级 cwd（规则 1）
       preNodeId: prevId,
       parentNodeId: prev.parent_node_id,
     });

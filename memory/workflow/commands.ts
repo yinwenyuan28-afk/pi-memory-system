@@ -54,7 +54,8 @@ export function registerWorkflowCommands(
           }
           const lines = rows.map((w) => {
             const active = dbInst.getActiveWorkflow()?.id === w.id ? " ★" : "";
-            return `#${w.id} [${w.status}] ${w.title.slice(0, 40)}${active}`;
+            const dir = w.cwd ? ` @ ${w.cwd.split(/[/\\]/).slice(-2).join("/")}` : "";
+            return `#${w.id} [${w.status}] ${w.title.slice(0, 40)}${dir}${active}`;
           });
           ctx.ui.notify(`工作流 (${rows.length}):\n${lines.join("\n")}`, "info");
           return;
@@ -202,7 +203,7 @@ function renderWorkflowRecord(mgr: WorkflowManager, wf: import("./db.js").Workfl
   const dbInst = mgr.getDB();
   const lines: string[] = [];
   lines.push(`# 工作流 #${wf.id} ${wf.title}`);
-  lines.push(`状态: ${wf.status} | 创建: ${wf.created_at}`);
+  lines.push(`状态: ${wf.status} | 创建: ${wf.created_at}${wf.cwd ? ` | 目录: ${wf.cwd}` : ""}`);
   if (wf.pre_node_id) lines.push(`前版本: #${wf.pre_node_id}${wf.diff_from_prev ? `（${wf.diff_from_prev}）` : ""}`);
   if (wf.parent_node_id) lines.push(`父工作流: #${wf.parent_node_id}`);
   if (wf.description) lines.push(`\n概述: ${wf.description}`);
