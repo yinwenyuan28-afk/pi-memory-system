@@ -9,6 +9,7 @@ import {
 import { setupMemoryReviewer } from "./memory/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
 import { LLMKeywordSearcher } from "./memory/searcher.js";
+import { setupWorkflowSystem } from "./memory/workflow/index.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -19,9 +20,16 @@ export default function (pi: ExtensionAPI) {
   const agentDir = getAgentDir();
   const manager = new MemoryManager(agentDir);
   const searcher = new LLMKeywordSearcher();
+  // workflow 保存系统控制器（扩展加载时注册命令/事件，session_start 时 init）
+  const workflowController = setupWorkflowSystem(pi, {
+    getProfilePath: () => manager?.getProfileManager().getActiveProfile()?.path,
+    getSessionId: () => sessionId,
+  });
   let skillManager: SkillManager | undefined;
   let profileSkillsPath: string | undefined;
   let loadedSkillsThisSession: Set<string> = new Set();
+  // 当前 session id（workflow 模块用，session_start 写入）
+  let sessionId = "";
   // M8：reviewer 只注册一次（防 session_start 重复触发时重复监听）
   let reviewersInitialized = false;
 
@@ -52,6 +60,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
     const profile = manager.getProfileManager().getActiveProfile();
+    sessionId = ctx.sessionManager.getSessionId();
     skillManager = new SkillManager(profile.path, [
       resolve(agentDir, "skills"),
     ]);
@@ -67,6 +76,9 @@ export default function (pi: ExtensionAPI) {
       getSkillStatus = setupSkillReviewer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
       reviewersInitialized = true;
     }
+
+    // 初始化工作流保存系统（session_start 时重建 db，跟随 profile）
+    workflowController.init(ctx);
 
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
 
@@ -98,6 +110,7 @@ export default function (pi: ExtensionAPI) {
     manager.shutdown();
     skillManager = undefined;
     profileSkillsPath = undefined;
+    workflowController.shutdown();
   });
 
   // ── 状态显示 + 关键词刷新 ──────────────────────────────────
@@ -459,6 +472,9 @@ export default function (pi: ExtensionAPI) {
           searcher.setProfilePath(profile.path);
           searcher.clearKeywords();
           searcher.resetTurn();
+          // workflow 系统跟随 profile 重建（数据库文件在 profile 目录下）
+          workflowController.shutdown();
+          workflowController.init();
           ctx.ui.notify(`Switched to profile: ${parts[1]}`, "info");
         } catch (e) {
           ctx.ui.notify(`Failed: ${e instanceof Error ? e.message : String(e)}`, "error");

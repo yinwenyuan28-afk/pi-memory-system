@@ -1,0 +1,214 @@
+// ============================================================================
+// workflow/detector.ts — 信号检测器
+//
+// 功能：生命周期分支判定（创建/验收/推翻双分支/需求调整/子任务/延续/隐式完成）
+//       采用"信号词正则初筛（零成本）→ 命中才 LLM 语义确认（5s 超时）"
+// 用途：index.ts 用户消息监听 → detector 判定 → manager 执行状态机动作
+// 设计：正则不命中直接返回（零 LLM 成本）；命中才调 completeSimple 确认，
+//       LLM 超时/失败回退到正则结论（保守选择）
+// ============================================================================
+
+import { completeSimple } from "@earendil-works/pi-ai/compat";
+
+const LLM_TIMEOUT_MS = 5000;
+
+// ---------------------------------------------------------------------------
+// 信号词正则（初筛，零成本）
+// ---------------------------------------------------------------------------
+
+const SIGNAL_REGEX: Record<string, RegExp> = {
+  // 创建：产出意图（实现功能/写代码/设计产品）
+  create:
+    /实现|开发|做(一|个|一|个)?|写(个|一个|一)?|设计|搭建|创建|构建|新增|做一个|写一个|开发一个|实现.{0,8}(功能|系统|模块)|把.{0,20}(改造|重构|升级)|接入|对接/,
+  // 验收：确认完成
+  accept:
+    /可以了|完成了|搞定了|做好了|没问题了|验收|收工|完工|就这样|满意|好了|搞定|通过|结束|没有其他|先这样/,
+  // 推翻：不对/换方式/放弃
+  reject:
+    /不对|错了|算了|不要|换方式|重来|推翻|砍掉|换个思路|不行|不好使|重新|撤销|作废|换个方案|别[这那]样/,
+  // 需求/方案/目标调整（仍在同一工作流语境，仅 UPDATE 行）
+  adjust:
+    /改一下|调整|优化|补充|完善|加上|去掉|改改|微调|变更|修改为|改成|加个|减掉|细化/,
+  // 子任务拆分
+  child: /拆出来|单独做|作为.{0,15}(的子任务|的一部分)|子任务|分开做|拆分|先做.{0,10}(这块|这个|这部分)/,
+  // 延续
+  continue: /接着做|继续|往下|下一步|接着|紧接着/,
+  // 隐式完成确认（下一条消息判断：继续修改 vs 新话题）
+  implicitConfirm:
+    /继续|修改|再|不行|还要|补充|接着|优化|调整|不对|加/,
+};
+
+// ---------------------------------------------------------------------------
+// WorkflowDetector 类
+// ---------------------------------------------------------------------------
+
+/**
+ * WorkflowDetector — 生命周期分支信号检测
+ *
+ * @param model LLM 模型引用（session_start 由 index.ts 注入）
+ * 每个检测方法：正则初筛（未命中 → 快速返回默认值）→ 命中 → LLM 语义确认
+ * LLM 确认失败时回退到正则结论（accept/reject 保守返回 false）
+ */
+export class WorkflowDetector {
+  private model: unknown = null;
+
+  /** 设置 LLM 模型引用 */
+  setModel(model: unknown): void {
+    this.model = model;
+  }
+
+  /**
+   * 创建判定：这条消息是否表达产出意图（无活动工作流时调用）
+   * 正则命中 → LLM 确认；正则未命中但后续有产出 → 兜底补建（index.ts 处理）
+   */
+  async detectCreate(message: string): Promise<boolean> {
+    if (!SIGNAL_REGEX.create.test(message)) return false;
+    if (!this.model) return true;
+    const r = await this.confirm(
+      message,
+      "这条用户消息是否表达【产出意图】（要实现一个功能、产出文件/代码、设计产品/方案）？" +
+        "回答 JSON {\"yes\": true/false}",
+    );
+    return r === null ? true : r;
+  }
+
+  /**
+   * 验收检测：这条消息是否在确认工作流完成
+   * 正则命中 → LLM 确认（防误报："还没完成"等）
+   */
+  async detectAccept(message: string): Promise<boolean> {
+    if (!SIGNAL_REGEX.accept.test(message)) return false;
+    if (!this.model) return true;
+    const r = await this.confirm(
+      message,
+      "这条用户消息是否在【确认工作流完成/验收】（例如“可以了/完成了/就这样”）？" +
+        "注意：如果消息包含“还要/再改/还没/不行”则不是验收。回答 JSON {\"yes\": true/false}",
+    );
+    return r === null ? true : r;
+  }
+
+  /**
+   * 推翻检测（双分支）：放弃 vs 演化
+   * @returns "abandon"（完全放弃）| "evolve"（推翻部分设计但需求仍在）| null（非推翻）
+   */
+  async detectReject(message: string): Promise<"abandon" | "evolve" | null> {
+    if (!SIGNAL_REGEX.reject.test(message)) return null;
+    if (!this.model) return "evolve";
+    const prompt =
+      "这条用户消息是否在推翻当前工作流的方案/设计？如果是，属于哪种：\n" +
+      "a) 完全放弃（“不做了/算了，不要这个了”）→ \"abandon\"\n" +
+      "b) 推翻部分设计但需求仍在（“重来但还要做/换方式实现”）→ \"evolve\"\n" +
+      "c) 不是推翻（只是普通否定/澄清）→ null\n" +
+      "回答 JSON {\"type\": \"abandon\"|\"evolve\"|null}";
+    const r = await this.confirm(message, prompt, true);
+    if (r === null) return "evolve";
+    return r;
+  }
+
+  /**
+   * 需求/方案/目标调整检测（仍在同一工作流语境，只 UPDATE 行）
+   * 优先于 reject 判定（reject 未命中时调用）
+   */
+  async detectAdjust(message: string): Promise<boolean> {
+    if (!SIGNAL_REGEX.adjust.test(message)) return false;
+    if (!this.model) return true;
+    const r = await this.confirm(
+      message,
+      "这条用户消息是否属于【对当前工作流的需求/方案/目标做调整】（仍在同一工作流语境，不是全新需求）？" +
+        "回答 JSON {\"yes\": true/false}",
+    );
+    return r === null ? true : r;
+  }
+
+  /**
+   * 子任务拆分检测：新需求是当前工作流的子任务还是独立工作流
+   * @returns true=子任务 | false=独立工作流
+   */
+  async detectChild(message: string): Promise<boolean> {
+    if (!SIGNAL_REGEX.child.test(message)) return false;
+    if (!this.model) return false;
+    const r = await this.confirm(
+      message,
+      "这条用户消息提到的新需求，是【当前工作流的子任务/组成部分】，还是独立的新工作流？" +
+        "回答 JSON {\"child\": true/false}",
+    );
+    return r === null ? false : r;
+  }
+
+  /**
+   * 延续检测：这条消息是在延续当前工作流（追加需求）还是全新需求
+   * @returns true=延续 | false=新需求
+   */
+  async detectContinue(message: string): Promise<boolean> {
+    if (!SIGNAL_REGEX.continue.test(message)) return false;
+    if (!this.model) return true;
+    const r = await this.confirm(
+      message,
+      "这条用户消息是否在【延续当前工作流】（\"接着做/继续/下一步\"）？回答 JSON {\"yes\": true/false}",
+    );
+    return r === null ? true : r;
+  }
+
+  /**
+   * 隐式完成确认（pending_completion 后下一条消息）：
+   * 继续修改当前工作流（回 in_progress）还是新话题/无异议（确认完成）
+   * @returns true=确认完成 | false=继续修改
+   */
+  async detectImplicitConfirm(message: string): Promise<boolean> {
+    // 明确验收信号直接确认完成
+    if (SIGNAL_REGEX.accept.test(message)) return true;
+    if (!this.model) return false;
+    const r = await this.confirm(
+      message,
+      "之前的工作流疑似完成（所有任务已完成）。这条新消息是在【继续修改/补充当前工作流】" +
+        "还是【转入新话题/没有异议】（可确认工作流完成）？回答 JSON {\"confirm\": true/false}",
+    );
+    return r === null ? false : r;
+  }
+
+  // ────────────────────────── LLM 确认内部方法 ──────────────────────────
+
+  /**
+   * 统一 LLM 语义确认（5s 超时）
+   * @param message 用户消息
+   * @param instruction 判定指令（要求 JSON 输出）
+   * @param rawMode true 时返回解析后的 JSON 值（用于多值判定）
+   * @returns 布尔判定；失败返回 null
+   */
+  private async confirm(
+    message: string,
+    instruction: string,
+    rawMode = false,
+  ): Promise<boolean | null | "abandon" | "evolve"> {
+    if (!this.model) return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+    try {
+      const result = await completeSimple(
+        this.model,
+        {
+          systemPrompt: "You respond only with valid JSON.",
+          messages: [
+            { role: "user", content: `用户消息：${message.slice(0, 500)}\n\n${instruction}` },
+          ],
+        },
+        { signal: controller.signal } as any,
+      );
+      const raw = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
+      const obj = JSON.parse(raw);
+      if (rawMode) {
+        const t = obj?.type;
+        return t === "abandon" || t === "evolve" ? t : null;
+      }
+      const yes = obj?.yes;
+      if (typeof yes === "boolean") return yes;
+      if (typeof obj?.child === "boolean") return obj.child;
+      if (typeof obj?.confirm === "boolean") return obj.confirm;
+      return null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
