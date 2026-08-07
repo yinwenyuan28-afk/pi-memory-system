@@ -9,7 +9,7 @@ import {
 import { setupMemoryReviewer } from "./memory/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
 import { LLMKeywordSearcher } from "./memory/searcher.js";
-import { setupWorkflowSystem } from "./memory/workflow/index.js";
+import { setupWorkflowSystem } from "./workflow/index.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -39,6 +39,11 @@ export default function (pi: ExtensionAPI) {
     content: string | null;
     mode: "once" | "always" | null;
   } = { content: null, mode: null };
+
+  // 子记忆路由缓存：before_agent_start 计算一次，context 事件直接读取。
+  // 不在 agent_end/agent_start 重置（retry/compaction/followUp 续跑不再触发 before_agent_start），
+  // 只在 before_agent_start 覆写——每次用户 turn 必然先触发它，queryText 永远新鲜。
+  let _pendingContext: { queryText: string; subMemories: string; cwd: string } | null = null;
 
   // 提供懒引用给 reviewer，避免循环依赖
   let getMemoryStatus: () => string = () => "0t";
@@ -118,7 +123,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_settled", async (_event, ctx) => {
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
 
-    // LLM 关键词缓存：每 5 轮刷新一次
+    // LLM 关键词缓存：事件驱动刷新为主（before_agent_start 检测话题切换），
+    // 此处为兜底：达到 REFRESH_INTERVAL（8 轮）仍强制刷新（异步不阻塞）
     if (searcher.incrementTurn()) {
       const ctxText = buildSearcherContext(ctx);
       searcher.refreshKeywords(ctxText).catch(() => {});
@@ -167,10 +173,22 @@ export default function (pi: ExtensionAPI) {
       // sessionManager not available, fall back to prompt only
     }
 
-    const memoryContext = manager.prefetchAll(queryText, ctx.cwd, searcher.search(queryText));
-    if (memoryContext) {
-      event.systemPrompt += `\n\n${memoryContext}`;
+    // 冻结快照（固定不变）→ system prompt 前缀稳定 → 命中 provider 前缀缓存
+    const systemContext = manager.buildSystemPrompt();
+    if (systemContext) {
+      event.systemPrompt += `\n\n${systemContext}`;
     }
+
+    // 子记忆（按 query 路由、每轮变化）→ context 事件注入消息末尾，不污染前缀
+    // jieba 只分词当前 prompt（历史消息不直接分词，避免记忆整理等旧话题词污染搜索结果）；
+    // LLM 关键词提取（cachedKeywords）仍基于完整 queryText（LLM 有语义理解能过滤历史噪音）
+    const subMemories = manager.prefetchSubMemories(queryText, ctx.cwd, searcher.search(event.prompt));
+    _pendingContext = { queryText, subMemories, cwd: ctx.cwd };
+
+    // 事件驱动刷新：话题切换（jieba(prompt) 与缓存关键词无交集）→ fire-and-forget 重建关键词
+    // 不 await：本轮仍用旧缓存 + jieba(prompt) 保底（S3 合并），下轮起用新关键词
+    searcher.maybeRefreshKeywords(event.prompt, queryText);
+
     event.systemPrompt += MEMORY_TOOL_REMINDER;
     const skillRefs = event.prompt.match(/<skill\s+name="([^"]+)"/g) || [];
     for (const ref of skillRefs) {
@@ -187,14 +205,33 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: event.systemPrompt };
   });
 
-  // ── context 事件：有 content 则注入 rules ───────────────────
+  // ── context 事件：规则 + 子记忆合并注入到消息末尾 ───────────
+  //
+  // 前缀缓存策略：system prompt（固定快照）+ 历史消息保持前缀稳定；
+  // 变化内容（rules / 子记忆）append 到 event.messages 末尾，不破坏前缀命中。
+  // context 事件修改的是 structuredClone 副本，不写回 state → 不进 session JSONL。
 
   pi.on("context", (event) => {
+    const injected: { role: "user"; content: string }[] = [];
+
+    // 1. 分类规则（load_memory_rules 注入，有 content 才注入）
     if (_rulesState.content) {
-      event.messages.unshift({
+      injected.push({
         role: "user",
         content: "[Memory Classification Rules Loaded]\n" + _rulesState.content,
       });
+    }
+
+    // 2. 子记忆（before_agent_start 缓存的路由结果；null 时跳过仅注入 rules）
+    if (_pendingContext?.subMemories) {
+      injected.push({
+        role: "user",
+        content: _pendingContext.subMemories,
+      });
+    }
+
+    if (injected.length > 0) {
+      event.messages.push(...injected);
       return { messages: event.messages };
     }
   });
@@ -324,7 +361,7 @@ export default function (pi: ExtensionAPI) {
     name: "load_memory_rules",
     label: "Load Memory Rules",
     description:
-      "Load 记忆保存信号.md and 记忆分类框架.md into context head. " +
+      "Load 记忆保存信号.md and 记忆分类框架.md into context (appended to the end of the message list). " +
       "Call this when you decide to save information to memory, BEFORE calling memory. " +
       "Params: mode=\"once\" (default, clean after one memory call) or mode=\"always\" (permanent for this session).",
     parameters: {

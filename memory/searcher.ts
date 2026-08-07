@@ -4,9 +4,15 @@ import { join } from "node:path";
 import type { InvertedIndex } from "./inverted-index.js";
 
 /**
- * 关键词缓存刷新间隔（轮次）。
+ * 关键词缓存兜底刷新间隔（轮次）。事件驱动刷新为主，达到此轮次仍强制刷新。
  */
-const REFRESH_INTERVAL = 5;
+const REFRESH_INTERVAL = 8;
+
+/**
+ * 短消息豁免阈值（字符数）：用户消息 trim 后短于此长度视为延续话题
+ * （如"继续"、"1"、"好"），不触发关键词缓存重建。
+ */
+const SHORT_PROMPT_THRESHOLD = 6;
 
 /**
  * LLM 调用超时（毫秒）。
@@ -84,6 +90,44 @@ export class LLMKeywordSearcher {
 		this.cachedKeywords = [];
 		this.cachedAt = 0;
 		this.refreshSeq = 0;
+	}
+
+	/**
+	 * 判断是否应触发关键词重建（事件驱动）：
+	 * - 短消息（无信息量，如"继续"/"1"）→ false（延续话题，不重建）
+	 * - 无缓存（首次/已清空）→ true（必刷）
+	 * - jieba(当前prompt) 与缓存关键词无部分匹配 → true（话题切换）
+	 * - 否则 → false（话题延续）
+	 */
+	shouldRefreshKeywords(prompt: string): boolean {
+		const trimmed = (prompt || "").trim();
+		// 短消息豁免：低于阈值视为延续话题，跳过检测与重建
+		if (trimmed.length < SHORT_PROMPT_THRESHOLD) return false;
+		// 无缓存：首次会话或 /profile 切换后，必须重建
+		if (this.cachedKeywords.length === 0) return true;
+		// 话题切换检测：当前 prompt 的 jieba 词与缓存关键词部分匹配（包含关系）
+		if (this.invertedIndex) {
+			const terms = this.invertedIndex.tokenizeSync(trimmed);
+			const overlap = terms.some((t) => {
+				const tl = t.toLowerCase();
+				return this.cachedKeywords.some((k) => {
+					const kl = k.toLowerCase();
+					return kl.includes(tl) || tl.includes(kl);
+				});
+			});
+			if (!overlap) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * 事件驱动刷新：检测到切换信号时触发 LLM 关键词重建（fire-and-forget，不 await）。
+	 * 本轮搜索仍用旧缓存 + jieba(prompt) 保底（S3 合并），下轮起用新关键词。
+	 */
+	maybeRefreshKeywords(prompt: string, contextText: string): void {
+		if (this.shouldRefreshKeywords(prompt)) {
+			this.refreshKeywords(contextText).catch(() => {});
+		}
 	}
 
 	/**

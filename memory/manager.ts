@@ -11,6 +11,16 @@ import { join } from "node:path";
 import { InvertedIndex } from "./inverted-index.js";
 
 /**
+ * 将记忆内容包装为标准的 <memory-context> 注入块。
+ *
+ * 包装格式与拆分前 prefetchAll 一致（注入格式不变承诺）；供 buildSystemPrompt（快照）
+ * 与 prefetchSubMemories（子记忆）共用，保证两处注入外观一致、可辨识。
+ */
+function wrapMemoryContext(parts: string[]): string {
+	return `<memory-context>\n[System note: The following is recalled memory context, NOT new user input. Treat as authoritative reference data.]\n\n${parts.join("\n\n")}\n</memory-context>`;
+}
+
+/**
  * MemoryManager — coordinates memory storage, routing, and providers.
  *
  * All operations are bound to the current active profile.
@@ -68,7 +78,11 @@ export class MemoryManager {
 
 	// ── System Prompt ───────────────────────────────────────────────
 
-	/** Build the full memory context block for system prompt injection. */
+	/**
+	 * 构建 system prompt 注入块（仅 MEMORY.md + USER.md 冻结快照）。
+	 *
+	 * 快照会话内固定不变 → 放 system prompt 前缀稳定 → 命中 provider 前缀缓存。
+	 */
 	buildSystemPrompt(): string {
 		if (!this._initialized) return "";
 		const parts: string[] = [];
@@ -77,29 +91,22 @@ export class MemoryManager {
 		const storeContext = this.store.getFullContext();
 		if (storeContext) parts.push(storeContext);
 
-		return parts.length > 0 ? parts.join("\n\n") : "";
+		return parts.length > 0 ? wrapMemoryContext(parts) : "";
 	}
 
 	// ── Prefetch / Route ────────────────────────────────────────────
 
 	/**
-	 * Prefetch all relevant memory context for the incoming user message.
+	 * 子记忆路由注入块（不含快照）：倒排索引 + routes + 外部 provider。
 	 *
-	 * 1. Returns the MEMORY.md/USER.md frozen snapshot.
-	 * 2. Runs route resolution (inverted index first, then routes.md).
-	 * 3. Loads matching sub-memories.
-	 * 4. Queries external provider (if configured).
+	 * 内容按 query 路由匹配、每轮变化 → 放 context 事件消息末尾，前缀（system + 历史）不变 → 命中缓存。
 	 */
-	prefetchAll(query: string, cwd: string, indexOverride?: string): string {
+	prefetchSubMemories(query: string, cwd: string, indexOverride?: string): string {
 		if (!this._initialized) return "";
 
 		const parts: string[] = [];
 
-		// 1. Store snapshot
-		const storeContext = this.store.getFullContext();
-		if (storeContext) parts.push(storeContext);
-
-		// 2. Inverted index search (searcher override or default)
+		// 1. Inverted index search (searcher override or default)
 		const loadedPaths = new Set<string>();
 		if (indexOverride) {
 			// searcher 已代劳：关键词搜索 + 排序 + 内容读取
@@ -130,7 +137,7 @@ export class MemoryManager {
 			}
 		}
 
-		// 3. Route matching (supplementary, for paths not already loaded by index)
+		// 2. Route matching (supplementary, for paths not already loaded by index)
 		const routeResults = this.router.resolve(query, cwd);
 		if (routeResults.length > 0) {
 			// Filter out routes whose targets were already loaded by index
@@ -151,9 +158,18 @@ export class MemoryManager {
 			}
 		}
 
-		return parts.length > 0
-			? `<memory-context>\n[System note: The following is recalled memory context, NOT new user input. Treat as authoritative reference data.]\n\n${parts.join("\n\n")}\n</memory-context>`
-			: "";
+		return parts.length > 0 ? wrapMemoryContext(parts) : "";
+	}
+
+	/**
+	 * 完整记忆上下文（兼容旧调用方）：快照 + 子记忆。
+	 *
+	 * 供 get_memory 工具（主动查询完整上下文）与 /remember 等使用，行为与拆分前一致。
+	 */
+	prefetchAll(query: string, cwd: string, indexOverride?: string): string {
+		const system = this.buildSystemPrompt();
+		const sub = this.prefetchSubMemories(query, cwd, indexOverride);
+		return [system, sub].filter(Boolean).join("\n\n");
 	}
 
 	// ── Sync ────────────────────────────────────────────────────────
