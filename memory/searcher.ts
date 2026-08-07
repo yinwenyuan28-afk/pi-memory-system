@@ -21,9 +21,9 @@ const SHORT_PROMPT_THRESHOLD = 6;
 const LLM_TIMEOUT_MS = 5000;
 
 /**
- * 返回结果的 top-k 上限。
+ * 返回结果的 top-k 上限（搜索阶段候选池，后续 LLM 过滤再精筛）。
  */
-const MAX_RESULTS = 5;
+const MAX_RESULTS = 10;
 
 /**
  * 综合评分权重：倒排索引命中数 vs Jaccard 语义相似度。
@@ -194,13 +194,15 @@ export class LLMKeywordSearcher {
 	/**
 	 * 综合评分排序：
 	 * score = INDEX_WEIGHT * indexScore + JACCARD_WEIGHT * jaccardScore
+	 *
+	 * 返回结构化候选数组（含 file/score/content），供上层 LLM 语义过滤精筛。
 	 */
-	private searchWithCombinedScore(keywords: string[]): string {
-		if (!this.invertedIndex || !this.profilePath) return "";
+	private searchCandidates(keywords: string[]): Array<{ file: string; score: number; content: string }> {
+		if (!this.invertedIndex || !this.profilePath) return [];
 
 		const query = keywords.join(" ");
 		const matched = this.invertedIndex.searchWithScores(query, MAX_RESULTS * 3);
-		if (matched.length === 0) return "";
+		if (matched.length === 0) return [];
 
 		const keywordSet = new Set(keywords.map((k) => k.toLowerCase()));
 
@@ -223,7 +225,15 @@ export class LLMKeywordSearcher {
 		}
 
 		scored.sort((a, b) => b.score - a.score);
-		const top = scored.slice(0, MAX_RESULTS);
+		return scored.slice(0, MAX_RESULTS);
+	}
+
+	/**
+	 * 综合评分排序（兼容旧接口）：返回带 [INDEX MATCH: file] (pct%) 头的字符串。
+	 */
+	private searchWithCombinedScore(keywords: string[]): string {
+		const top = this.searchCandidates(keywords);
+		if (top.length === 0) return "";
 
 		return top
 			.map((r) => {
@@ -231,6 +241,72 @@ export class LLMKeywordSearcher {
 				return `[INDEX MATCH: ${r.file}] (${pct}%)\n${r.content}`;
 			})
 			.join("\n\n");
+	}
+
+	/**
+	 * 对外：返回结构化候选（供 before_agent_start 做 LLM 语义过滤）。
+	 * 与 search() 同一搜索逻辑，但暴露候选数组而非拼好的字符串。
+	 */
+	searchTopCandidates(query: string): Array<{ file: string; score: number; content: string }> {
+		if (!this.invertedIndex || !this.profilePath) return [];
+		// S3 修复：缓存关键词 ∪ 当前 query 的 jieba 分词 合并搜索。
+		const queryTerms = this.invertedIndex.tokenizeSync(query);
+		const merged = Array.from(new Set([...this.cachedKeywords, ...queryTerms]));
+		if (merged.length === 0) return [];
+		return this.searchCandidates(merged);
+	}
+
+	/**
+	 * LLM 语义去无关项过滤：从候选记忆中剔除与 query 语义无关的文件。
+	 *
+	 * 纯字面评分（indexScore + Jaccard）无法区分"记忆注入流程" vs "短信发送流程"，
+	 * 靠 LLM 判断候选与当前问题的语义相关性。
+	 * 超时/失败 → 降级返回 top-5 字面结果（不丢记忆，少注入）。
+	 *
+	 * @returns 过滤后的候选（按原评分顺序，最多 4 个）
+	 */
+	async filterMemories(
+		candidates: Array<{ file: string; score: number; content: string }>,
+		queryText: string,
+	): Promise<Array<{ file: string; score: number; content: string }>> {
+		if (!this.model || candidates.length === 0) return candidates;
+
+		// 候选内容截断预览（控制 prompt token，只看开头判断主题）
+		const preview = candidates
+			.map((c) => `[${c.file}] ${c.content.slice(0, 300)}`)
+			.join("\n\n");
+		const prompt = renderPrompt(loadMemoryPrompts().filterRelevance, {
+			query: (queryText || "").slice(0, 800),
+			candidates: preview,
+		});
+
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+		try {
+			const result = await completeSimple(this.model, {
+				systemPrompt: "You are a memory relevance filter. Respond only with valid JSON.",
+				messages: [{ role: "user", content: prompt }],
+			}, { signal: controller.signal } as any);
+
+			const raw = typeof result.content === "string"
+				? result.content
+				: JSON.stringify(result.content);
+			const keep = parseFilterKeep(raw);
+			if (keep.length > 0) {
+				// 保留 keep 中的候选（保持原评分顺序），上限 4 个
+				const kept = candidates
+					.filter((c) => keep.includes(c.file))
+					.slice(0, 4);
+				if (kept.length > 0) return kept;
+			}
+			// keep 解析成功但为空（LLM 认为全部无关）→ 降级 top-2 保底
+			return candidates.slice(0, 2);
+		} catch {
+			// 超时/失败 → 降级 top-5 字面结果
+			return candidates.slice(0, 5);
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	/**

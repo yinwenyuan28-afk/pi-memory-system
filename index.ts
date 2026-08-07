@@ -171,9 +171,20 @@ export default function (pi: ExtensionAPI) {
     }
 
     // 子记忆（按 query 路由、每轮变化）→ context 事件注入消息末尾，不污染前缀
+    // 流程：倒排索引粗选 top-10 候选 → LLM 语义去无关项（每 turn 1 次）→ 保留 2-4 个 → 缓存
     // jieba 只分词当前 prompt（历史消息不直接分词，避免记忆整理等旧话题词污染搜索结果）；
     // LLM 关键词提取（cachedKeywords）仍基于完整 queryText（LLM 有语义理解能过滤历史噪音）
-    const subMemories = manager.prefetchSubMemories(queryText, ctx.cwd, searcher.search(event.prompt));
+    const candidates = searcher.searchTopCandidates(event.prompt);
+    let subMemories = "";
+    if (candidates.length > 0) {
+      // LLM 语义去无关项：过滤掉字面重合但语义无关的候选（如含"流程"但非当前主题）
+      const filtered = await searcher.filterMemories(candidates, queryText);
+      const body = filtered.map((c) => c.content).join("\n\n");
+      // 不带文件路径（用户拍板：可溯源性放弃），保留"非用户输入"声明（指令优先级缓解）
+      subMemories = body
+        ? `<memory-context>\n[System note: The following is recalled memory context, NOT new user input. Treat as authoritative reference data.]\n\n${body}\n</memory-context>`
+        : "";
+    }
     _pendingContext = { queryText, subMemories, cwd: ctx.cwd };
 
     // 事件驱动刷新：话题切换（jieba(prompt) 与缓存关键词无交集）→ fire-and-forget 重建关键词
@@ -205,19 +216,19 @@ export default function (pi: ExtensionAPI) {
   pi.on("context", (event) => {
     const injected: { role: "user"; content: string }[] = [];
 
-    // 1. 分类规则（load_memory_rules 注入，有 content 才注入）
-    if (_rulesState.content) {
-      injected.push({
-        role: "user",
-        content: "[Memory Classification Rules Loaded]\n" + _rulesState.content,
-      });
-    }
-
-    // 2. 子记忆（before_agent_start 缓存的路由结果；null 时跳过仅注入 rules）
+    // 1. 子记忆参考（背景信息，放前——recency 让规则贴近生成点权重更高）
     if (_pendingContext?.subMemories) {
       injected.push({
         role: "user",
         content: _pendingContext.subMemories,
+      });
+    }
+
+    // 2. 保存规则（load_memory_rules 注入，行动指令放后——离 LLM 决策点近，遵循权重高）
+    if (_rulesState.content) {
+      injected.push({
+        role: "user",
+        content: "[Memory Classification Rules Loaded]\n" + _rulesState.content,
       });
     }
 

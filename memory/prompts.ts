@@ -21,6 +21,8 @@ export interface MemoryPrompts {
   keywordExtraction: string;
   /** 倒排索引 refine 关键词过滤（{{content}} {{candidates}}） */
   filter: string;
+  /** 子记忆 LLM 语义去无关项过滤（{{query}} {{candidates}}） */
+  filterRelevance: string;
   /** 保存指南（注入 MEMORY_SCHEMA.description 和子代理 prompt） */
   saveGuidelines: string;
   /** system prompt 内联的保存信号精简版 */
@@ -52,6 +54,16 @@ const DEFAULT_PROMPTS: MemoryPrompts = {
 {{candidates}}
 
 只输出 JSON 格式：{ "keep": ["词1", "词2"] }`,
+  filterRelevance:
+    "You are a memory relevance filter. Decide which candidate memory files are relevant to the current user question.\n\n" +
+    "User question:\n{{query}}\n\n" +
+    "Candidate memory files (file → content preview):\n{{candidates}}\n\n" +
+    "Rules:\n" +
+    "- Keep only files whose content is semantically relevant to the user question\n" +
+    "- Discard files that merely share common words (e.g. both contain \"流程\" but talk about different things)\n" +
+    "- Keep at least 1 and at most 4 files\n" +
+    "- If nothing is relevant, keep the single most related file\n\n" +
+    "Respond with ONLY a JSON object: {\"keep\": [\"file1\", \"file2\"]}",
   saveGuidelines: `SAVE GUIDELINES — what NOT to save (and when exceptions apply):
 
 1. Transient session errors
@@ -117,6 +129,7 @@ export function loadMemoryPrompts(): MemoryPrompts {
     const files: Array<{ file: string; key: keyof MemoryPrompts }> = [
       { file: "keyword-extraction.md", key: "keywordExtraction" },
       { file: "filter.md", key: "filter" },
+      { file: "filter-relevance.md", key: "filterRelevance" },
       { file: "save-guidelines.md", key: "saveGuidelines" },
       { file: "tool-reminder.md", key: "toolReminder" },
     ];
