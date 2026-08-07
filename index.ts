@@ -9,6 +9,7 @@ import {
 import { setupMemoryReviewer } from "./memory/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
 import { LLMKeywordSearcher } from "./memory/searcher.js";
+import { loadMemoryPrompts } from "./memory/prompts.js";
 import { setupWorkflowSystem } from "./workflow/index.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
@@ -133,17 +134,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Context Injection ───────────────────────────────────────
 
-  const MEMORY_TOOL_REMINDER =
-    "\n\n[Memory] You have persistent memory across sessions. Save durable facts using the memory " +
-    "tool. Memory is injected into every turn, so keep entries compact and high-signal.\n" +
-    "SAVE when: user preference/correction, root-cause analysis (causal structure), " +
-    "non-obvious API behavior (pitfalls verified), reusable workflow pattern (→ skill).\n" +
-    "DO NOT save: task progress / temporary TODO, one-shot fix without root cause, " +
-    "version/release logs, facts directly inferable from code/docs.\n" +
-    "If you decide to save → call load_memory_rules for full classification rules and scope list.\n" +
-    "Uncertain → stage in .staging/, do not write directly.\n" +
-    "\n[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (memory-reviewer, skill-reviewer, memory-organizer) " +
-    "are protected. ONLY use edit, NEVER write on these files.";
+  const MEMORY_TOOL_REMINDER = loadMemoryPrompts().toolReminder;
 
   pi.on("before_agent_start", async (event, ctx) => {
     // Build combined query: current user input + recent conversation history

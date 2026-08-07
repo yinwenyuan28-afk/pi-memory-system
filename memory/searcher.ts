@@ -2,6 +2,7 @@ import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InvertedIndex } from "./inverted-index.js";
+import { loadMemoryPrompts, renderPrompt } from "./prompts.js";
 
 /**
  * 关键词缓存兜底刷新间隔（轮次）。事件驱动刷新为主，达到此轮次仍强制刷新。
@@ -138,7 +139,7 @@ export class LLMKeywordSearcher {
 		if (!this.model) return;
 		// 序号令牌：后发起的刷新若先完成则被忽略（防旧上下文覆盖新缓存）
 		const seq = ++this.refreshSeq;
-		const prompt = buildKeywordPrompt(contextText);
+		const prompt = renderPrompt(loadMemoryPrompts().keywordExtraction, { contextText });
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 		try {
@@ -253,17 +254,6 @@ export class LLMKeywordSearcher {
 }
 
 // ── Helper Functions ──────────────────────────────────────────
-
-function buildKeywordPrompt(contextText: string): string {
-	return (
-		`Analyze the following conversation context and extract 3-8 search keywords ` +
-		`that best describe what the user is asking or working on. ` +
-		`These keywords will be used to search a memory system, so be specific ` +
-		`and use terms that would appear in technical documentation or notes.\n\n` +
-		`${contextText}\n\n` +
-		`Respond with ONLY a JSON array of strings, e.g. ["keyword1", "keyword2", "keyword3"]`
-	);
-}
 
 function parseKeywordResponse(raw: string): string[] {
 	try {

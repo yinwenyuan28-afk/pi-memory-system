@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Jieba } from "@node-rs/jieba";
 import type { InvertedIndexData } from "./types.js";
+import { loadMemoryPrompts, renderPrompt } from "./prompts.js";
 
 const INDEX_FILE = "memory-index.json";
 const INDEX_VERSION = 1;
@@ -134,23 +135,10 @@ export { STOP_WORDS };
 
 /** LLM 过滤 prompt：从候选列表中删除不需要的词，只删不增。 */
 export function buildFilterPrompt(content: string, candidates: string[]): string {
-	return `你是一个关键词过滤器。
-
-从以下列表中选择应该作为搜索关键词保留的词。
-规则：
-- 只删不增：只能从列表中删除，不能添加不在列表中的词
-- 保留的必须是能帮助用户搜索到这篇文章的重要词汇
-- 删除无意义的通用词（的/了/是/有/在/我/你/他/这/那/它/和/与/就/都/还/也/很/到/去/做/用/把/被/让/给/对/从/向/按/将/以/为/因/由/于/及/并/或/既/又/还/更/最/略）
-- 删除无关的词
-- 如果保留的词太少（<3个），放宽限制多保留一些
-
-原文：
-${content}
-
-候选词列表：
-${candidates.join("\n")}
-
-只输出 JSON 格式：{ "keep": ["词1", "词2"] }`;
+	return renderPrompt(loadMemoryPrompts().filter, {
+		content,
+		candidates: candidates.join("\n"),
+	});
 }
 
 /**
