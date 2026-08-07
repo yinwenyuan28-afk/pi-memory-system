@@ -16,7 +16,7 @@ import {
  * 注册 /remember 手动触发命令。
  */
 
-const REVIEW_INTERVAL = 10;
+const REVIEW_INTERVAL = 20;
 const CURSOR_KEY = "memoryReviewer";
 
 /** 后台审查子代理超时（毫秒）：10 分钟，防止 executor 卡死导致审查永久停摆（M7）。 */
