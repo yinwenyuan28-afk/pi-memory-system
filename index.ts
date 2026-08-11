@@ -171,15 +171,26 @@ export default function (pi: ExtensionAPI) {
     }
 
     // 子记忆（按 query 路由、每轮变化）→ context 事件注入消息末尾，不污染前缀
-    // 流程：倒排索引粗选 top-10 候选 → LLM 语义去无关项（每 turn 1 次）→ 保留 2-4 个 → 缓存
+    // 流程：倒排索引粗选 top-10 文件 → splitSections 切章节 → 逐章 jaccard 评分
+    //       → LLM 语义去无关项（每 turn 1 次）→ 保留相关章节（≤5 章/4KB）→ 缓存
     // jieba 只分词当前 prompt（历史消息不直接分词，避免记忆整理等旧话题词污染搜索结果）；
     // LLM 关键词提取（cachedKeywords）仍基于完整 queryText（LLM 有语义理解能过滤历史噪音）
-    const candidates = searcher.searchTopCandidates(event.prompt);
+    const candidates = searcher.searchSectionCandidates(event.prompt);
     let subMemories = "";
     if (candidates.length > 0) {
-      // LLM 语义去无关项：过滤掉字面重合但语义无关的候选（如含"流程"但非当前主题）
+      // LLM 语义去无关项：过滤掉字面重合但语义无关的候选章节（如含"流程"但非当前主题）
       const filtered = await searcher.filterMemories(candidates, queryText);
-      const body = filtered.map((c) => c.content).join("\n\n");
+      // 拼接：带章节标题上下文（用户拍板：只给章节标题，不扩展相邻章节）
+      // 同文件多章节合并连续；无标题（前言/整文件）直接拼正文
+      const parts: string[] = [];
+      let totalChars = 0;
+      for (const sec of filtered) {
+        const block = sec.title ? `## ${sec.title}\n${sec.content}` : sec.content;
+        totalChars += block.length + 2;
+        if (totalChars > 4096) break; // ≤4KB 截断（按 LLM 相关度降序，丢尾部最不相关的）
+        parts.push(block);
+      }
+      const body = parts.join("\n\n");
       // 不带文件路径（用户拍板：可溯源性放弃），保留"非用户输入"声明（指令优先级缓解）
       subMemories = body
         ? `<memory-context>\n[System note: The following is recalled memory context, NOT new user input. Treat as authoritative reference data.]\n\n${body}\n</memory-context>`
@@ -207,11 +218,19 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: event.systemPrompt };
   });
 
-  // ── context 事件：规则 + 子记忆合并注入到消息末尾 ───────────
+  // ── context 事件：规则 + 子记忆合并注入（锚点注入，2026-08-08） ──
   //
-  // 前缀缓存策略：system prompt（固定快照）+ 历史消息保持前缀稳定；
-  // 变化内容（rules / 子记忆）append 到 event.messages 末尾，不破坏前缀命中。
+  // 前缀缓存策略：system prompt（固定快照）+ 历史消息保持前缀稳定。
   // context 事件修改的是 structuredClone 副本，不写回 state → 不进 session JSONL。
+  //
+  // 锚点注入：context 每轮 LLM 调用前触发，注入不持久化 → 必须每轮重新注入。
+  // 若一律 push 到末尾，工具轮次中记忆块紧贴工具结果，LLM 注意力集中在末尾（recency）
+  // 把记忆当"最新到达的输入"反复评估相关性 → 产生"记忆上下文与当前任务无关，忽略"的思考，
+  // 浪费 token 和注意力。改为以本轮 user 消息（最后一条 role=user）为锚点 splice 到其后：
+  //   第 1 轮: [..., user msg, 记忆块]
+  //   第 2 轮: [..., user msg, 记忆块, assistant, toolResult]
+  // 记忆块固定紧跟用户消息 → 语义上是"本条用户消息的背景参考"，工具轮次不再出现在末尾；
+  // 记忆块位置固定也有利于 provider prefix cache 前缀稳定。
 
   pi.on("context", (event) => {
     const injected: { role: "user"; content: string }[] = [];
@@ -233,8 +252,21 @@ export default function (pi: ExtensionAPI) {
     }
 
     if (injected.length > 0) {
-      event.messages.push(...injected);
-      return { messages: event.messages };
+      const messages = event.messages;
+      // 锚点：最后一条 user 消息（多轮历史中最后一条 user 仍是本轮用户输入）
+      let anchorIdx = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "user") {
+          anchorIdx = i;
+          break;
+        }
+      }
+      if (anchorIdx >= 0) {
+        messages.splice(anchorIdx + 1, 0, ...injected);
+      } else {
+        messages.push(...injected); // 兜底：无 user 消息（followUp 等特殊场景）追加末尾
+      }
+      return { messages };
     }
   });
 

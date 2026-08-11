@@ -55,15 +55,17 @@ const DEFAULT_PROMPTS: MemoryPrompts = {
 
 只输出 JSON 格式：{ "keep": ["词1", "词2"] }`,
   filterRelevance:
-    "You are a memory relevance filter. Decide which candidate memory files are relevant to the current user question.\n\n" +
+    "You are a memory relevance filter. Decide which candidate memory sections are relevant to the current user question.\n\n" +
     "User question:\n{{query}}\n\n" +
-    "Candidate memory files (file → content preview):\n{{candidates}}\n\n" +
+    "Candidate memory sections (format: [file#order] section title + content preview):\n{{candidates}}\n\n" +
     "Rules:\n" +
-    "- Keep only files whose content is semantically relevant to the user question\n" +
-    "- Discard files that merely share common words (e.g. both contain \"流程\" but talk about different things)\n" +
-    "- Keep at least 1 and at most 4 files\n" +
-    "- If nothing is relevant, keep the single most related file\n\n" +
-    "Respond with ONLY a JSON object: {\"keep\": [\"file1\", \"file2\"]}",
+    "- Keep only sections whose content is semantically relevant to the user question\n" +
+    "- Discard sections that merely share common words (e.g. both contain \"流程\" but talk about different things)\n" +
+    "- A single file may have multiple relevant sections; keep them all\n" +
+    "- Keep at most 5 sections total\n" +
+    "- Order the keep array by relevance, most relevant first\n" +
+    "- If nothing is relevant, keep the single most related section\n\n" +
+    "Respond with ONLY a JSON object: {\"keep\": [\"file#0\", \"file#2\"]}",
   saveGuidelines: `SAVE GUIDELINES — what NOT to save (and when exceptions apply):
 
 1. Transient session errors
