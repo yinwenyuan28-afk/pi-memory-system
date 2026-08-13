@@ -16,14 +16,15 @@ import { mkdirSync } from "node:fs";
 // 类型定义（与计划表结构 v3 一致）
 // ---------------------------------------------------------------------------
 
-/** 工作流状态：6 态 */
+/** 工作流状态：7 态（suspended = 挂起，保证唯一 in_progress 活动工作流） */
 export type WorkflowStatus =
   | "draft"
   | "approved"
   | "in_progress"
   | "completed"
   | "abandoned"
-  | "superseded";
+  | "superseded"
+  | "suspended";
 
 /** 任务状态 */
 export type TaskStatus = "pending" | "in-progress" | "done" | "blocked" | "cancelled";
@@ -35,9 +36,6 @@ export type EventType =
   | "execution_start"
   | "completion_signal"
   | "rejection_signal";
-
-/** 改动类型 */
-export type ChangeType = "edit" | "write" | "remove";
 
 /** 辅助上下文类别：7 类 */
 export type ContextCategory =
@@ -58,22 +56,14 @@ export type SummaryStatus = "draft" | "promoted" | "rejected";
 // ---------------------------------------------------------------------------
 
 const SCHEMA_SQL = `
--- ① 工作流主表（对应 PLAN.md 标准章节 + 图结构）
+-- ① 工作流主表（标准信息 + 执行情况；计划本体存文件，plan_path 关联）
 CREATE TABLE IF NOT EXISTS workflows (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id    TEXT NOT NULL,
   cwd           TEXT,                          -- 工作目录（工作流归属的项目/目录）
   title         TEXT NOT NULL,
   description   TEXT,
-  background    TEXT,
-  goal          TEXT,
-  approach      TEXT,
-  decisions_json TEXT,
-  steps         TEXT,
-  file_changes  TEXT,
-  not_doing     TEXT,
-  risks         TEXT,
-  extra_json    TEXT,
+  plan_path     TEXT,                          -- 计划文件绝对路径（可空 = 无关联计划文件）
   status        TEXT NOT NULL DEFAULT 'draft',
   pre_node_id   INTEGER,
   diff_from_prev TEXT,
@@ -107,19 +97,7 @@ CREATE TABLE IF NOT EXISTS workflow_events (
   created_at  TEXT NOT NULL
 );
 
--- ④ 改动记录表（执行细节：每次 edit/write 一条，代码层提取）
-CREATE TABLE IF NOT EXISTS workflow_changes (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  workflow_id    INTEGER NOT NULL,
-  file_path      TEXT NOT NULL,
-  change_type    TEXT NOT NULL,
-  summary        TEXT NOT NULL,
-  msg_id         TEXT,
-  prev_change_id INTEGER,
-  created_at     TEXT NOT NULL
-);
-
--- ⑤ 辅助上下文表（开发中 agent 主动记录）
+-- ④ 辅助上下文表（开发中 agent 主动记录）
 CREATE TABLE IF NOT EXISTS workflow_context (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   workflow_id INTEGER NOT NULL,
@@ -129,7 +107,7 @@ CREATE TABLE IF NOT EXISTS workflow_context (
   created_at  TEXT NOT NULL
 );
 
--- ⑥ 提炼结果表
+-- ⑤ 提炼结果表
 CREATE TABLE IF NOT EXISTS workflow_summaries (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   workflow_id  INTEGER NOT NULL,
@@ -140,14 +118,19 @@ CREATE TABLE IF NOT EXISTS workflow_summaries (
   created_at   TEXT NOT NULL
 );
 
+-- ⑥ 会话活跃指针表（session 维度的当前活跃工作流，与状态解耦）
+CREATE TABLE IF NOT EXISTS session_active (
+  session_id  TEXT PRIMARY KEY,
+  workflow_id INTEGER NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
 -- 索引（M3 修复：events/tasks/summaries/context 缺索引，查询全表扫描）
 CREATE INDEX IF NOT EXISTS idx_workflows_status    ON workflows(status);
 CREATE INDEX IF NOT EXISTS idx_workflows_pre_node  ON workflows(pre_node_id);
 CREATE INDEX IF NOT EXISTS idx_workflows_parent    ON workflows(parent_node_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_workflow      ON workflow_tasks(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_events_workflow     ON workflow_events(workflow_id);
-CREATE INDEX IF NOT EXISTS idx_changes_workflow    ON workflow_changes(workflow_id);
-CREATE INDEX IF NOT EXISTS idx_changes_file        ON workflow_changes(file_path);
 CREATE INDEX IF NOT EXISTS idx_context_workflow    ON workflow_context(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_workflow  ON workflow_summaries(workflow_id);
 `;
@@ -178,14 +161,49 @@ export class WorkflowDB {
   }
 
   /**
-   * 表结构迁移（兼容已有库）：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列
-   * 当前迁移：workflows 加 cwd 列（工作目录归属）
+   * 表结构迁移（兼容已有库）：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列/删列
+   * 1. 删除已废弃的计划内容列（v5：计划本体回源文件，权威数据在 plan/ 目录，库内副本直接丢弃）
+   * 2. workflows 加 plan_path 列（计划文件路径）
+   * 3. session_active 建表后，把现有各 session 的最新 in_progress 工作流填充为活跃指针（兼容旧数据）
    */
   private migrate(): void {
+    // 清理已废弃的 workflow_changes 表（文件改动自动采集已移除，2026-08-07）
+    this.db.exec("DROP TABLE IF EXISTS workflow_changes");
     const cols = this.db.prepare("PRAGMA table_info(workflows)").all() as Array<{ name: string }>;
-    if (!cols.some((c) => c.name === "cwd")) {
+    const names = new Set(cols.map((c) => c.name));
+    // v5：删除计划内容列（background/goal/approach/decisions_json/steps/file_changes/not_doing/risks/extra_json）
+    const droppedPlanCols = [
+      "background",
+      "goal",
+      "approach",
+      "decisions_json",
+      "steps",
+      "file_changes",
+      "not_doing",
+      "risks",
+      "extra_json",
+    ];
+    for (const c of droppedPlanCols) {
+      if (names.has(c)) this.db.exec(`ALTER TABLE workflows DROP COLUMN ${c}`);
+    }
+    // v5：新增 plan_path 列（计划文件路径）
+    if (!names.has("plan_path")) this.db.exec("ALTER TABLE workflows ADD COLUMN plan_path TEXT");
+    if (!names.has("cwd")) {
       this.db.exec("ALTER TABLE workflows ADD COLUMN cwd TEXT");
     }
+    // 旧数据回填：每 session 的最新 in_progress → session_active 指针（仅当该 session 尚无指针）
+    this.db
+      .prepare(
+        `INSERT INTO session_active (session_id, workflow_id, updated_at)
+         SELECT w.session_id, w.id, COALESCE(w.updated_at, w.created_at)
+         FROM workflows w
+         WHERE w.status = 'in_progress'
+           AND NOT EXISTS (SELECT 1 FROM session_active sa WHERE sa.session_id = w.session_id)
+           AND w.id = (SELECT w2.id FROM workflows w2
+                       WHERE w2.session_id = w.session_id AND w2.status = 'in_progress'
+                       ORDER BY COALESCE(w2.updated_at, w2.created_at) DESC LIMIT 1)`,
+      )
+      .run();
   }
 
   /** 关闭数据库连接（profile 切换时调用） */
@@ -206,7 +224,7 @@ export class WorkflowDB {
 
   /**
    * 创建工作流
-   * @param input 创建字段（title/description/goal/background + 图结构）
+   * @param input 创建字段（title/description/planPath + 图结构）
    * @returns 新工作流 id
    */
   createWorkflow(input: {
@@ -214,8 +232,7 @@ export class WorkflowDB {
     cwd?: string;
     title: string;
     description?: string;
-    background?: string;
-    goal?: string;
+    planPath?: string;
     preNodeId?: number;
     parentNodeId?: number;
     diffFromPrev?: string;
@@ -223,17 +240,16 @@ export class WorkflowDB {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(
       `INSERT INTO workflows
-        (session_id, cwd, title, description, background, goal, status,
+        (session_id, cwd, title, description, plan_path, status,
          pre_node_id, diff_from_prev, parent_node_id, created_at, updated_at, refined)
-       VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, 0)`,
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, 0)`,
     );
     const result = stmt.run(
       input.sessionId,
       input.cwd ?? null,
       input.title,
       input.description ?? null,
-      input.background ?? null,
-      input.goal ?? null,
+      input.planPath ?? null,
       input.preNodeId ?? null,
       input.diffFromPrev ?? null,
       input.parentNodeId ?? null,
@@ -289,22 +305,68 @@ export class WorkflowDB {
   }
 
   /**
-   * 获取当前活动工作流（last_active 指针语义的简化实现）
-   * 活动 = 未进入终态（非 completed/abandoned/superseded），取最近更新的一个
+   * 获取当前 session 的活跃工作流（session_active 指针优先）
+   * 设计：活跃 = 指针（session 维度），与工作流状态解耦。
+   *  - 指针指向的工作流存在且非终态 → 返回
+   *  - 指针指向的已终态/不存在 → 清除指针，返回 undefined
+   *  - 无指针 → undefined（不自动回退，避免"完成 A 后误激活 B"）
    */
-  getActiveWorkflow(): WorkflowRow | undefined {
-    return this.db
+  getActiveWorkflow(sessionId?: string): WorkflowRow | undefined {
+    if (!sessionId) {
+      // 兼容旧调用（无 session 时回退最近 in_progress）
+      return this.db
+        .prepare(
+          `SELECT * FROM workflows
+           WHERE status = 'in_progress'
+           ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1`,
+        )
+        .get() as WorkflowRow | undefined;
+    }
+    const row = this.db
       .prepare(
-        `SELECT * FROM workflows
-         WHERE status NOT IN ('completed', 'abandoned', 'superseded')
-         ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1`,
+        `SELECT w.* FROM session_active a
+         JOIN workflows w ON w.id = a.workflow_id
+         WHERE a.session_id = ?`,
       )
-      .get() as WorkflowRow | undefined;
+      .get(sessionId) as WorkflowRow | undefined;
+    if (!row) return undefined;
+    // 指针指向的工作流已进入终态 → 清除指针（完成/放弃后无活跃）
+    if (row.status === "completed" || row.status === "abandoned" || row.status === "superseded") {
+      this.clearActive(sessionId);
+      return undefined;
+    }
+    return row;
+  }
+
+  /** 设置 session 活跃指针（UPSERT） */
+  setActive(sessionId: string, workflowId: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO session_active (session_id, workflow_id, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET workflow_id = excluded.workflow_id, updated_at = excluded.updated_at`,
+      )
+      .run(sessionId, workflowId, new Date().toISOString());
+  }
+
+  /** 清除 session 活跃指针 */
+  clearActive(sessionId: string): void {
+    this.db.prepare("DELETE FROM session_active WHERE session_id = ?").run(sessionId);
+  }
+
+  /** 挂起其他非终态工作流（exceptId 除外）→ suspended */
+  suspendOthers(exceptId: number): void {
+    this.db
+      .prepare(
+        `UPDATE workflows SET status = 'suspended', updated_at = ?
+         WHERE id != ? AND status IN ('draft', 'approved', 'in_progress')`,
+      )
+      .run(new Date().toISOString(), exceptId);
   }
 
   /**
-   * 全文检索工作流（检索范围覆盖全部 TEXT 字段 + events + context + changes summary）
-   * —— 真实案例分析采纳：高价值业务设计（表结构/接口/状态机）存 extra_json 后仍可检索
+   * 全文检索工作流（检索范围：title/description/图结构/执行情况 + events + context）
+   * —— 计划文件正文检索由命令层读文件补充（文件是计划本体，不入库）
    */
   searchWorkflows(keyword: string): Array<{ workflow: WorkflowRow; match: string }> {
     const kw = `%${keyword}%`;
@@ -312,25 +374,16 @@ export class WorkflowDB {
       .prepare(
         `SELECT w.*, 'workflows' AS match_src,
                 COALESCE(w.title,'') || ' ' || COALESCE(w.description,'') || ' ' ||
-                COALESCE(w.background,'') || ' ' || COALESCE(w.goal,'') || ' ' ||
-                COALESCE(w.approach,'') || ' ' || COALESCE(w.decisions_json,'') || ' ' ||
-                COALESCE(w.steps,'') || ' ' || COALESCE(w.file_changes,'') || ' ' ||
-                COALESCE(w.not_doing,'') || ' ' || COALESCE(w.risks,'') || ' ' ||
-                COALESCE(w.extra_json,'') || ' ' || COALESCE(w.diff_from_prev,'') || ' ' ||
+                COALESCE(w.diff_from_prev,'') || ' ' ||
                 COALESCE(w.progress,'') || ' ' || COALESCE(w.next_steps,'') AS blob_all
          FROM workflows w
          WHERE COALESCE(w.title,'') LIKE ? OR COALESCE(w.description,'') LIKE ?
-            OR COALESCE(w.background,'') LIKE ? OR COALESCE(w.goal,'') LIKE ?
-            OR COALESCE(w.approach,'') LIKE ? OR COALESCE(w.decisions_json,'') LIKE ?
-            OR COALESCE(w.steps,'') LIKE ? OR COALESCE(w.file_changes,'') LIKE ?
-            OR COALESCE(w.not_doing,'') LIKE ? OR COALESCE(w.risks,'') LIKE ?
-            OR COALESCE(w.extra_json,'') LIKE ? OR COALESCE(w.diff_from_prev,'') LIKE ?
+            OR COALESCE(w.diff_from_prev,'') LIKE ?
             OR COALESCE(w.progress,'') LIKE ? OR COALESCE(w.next_steps,'') LIKE ?
             OR EXISTS (SELECT 1 FROM workflow_events e WHERE e.workflow_id = w.id AND e.content LIKE ?)
-            OR EXISTS (SELECT 1 FROM workflow_context c WHERE c.workflow_id = w.id AND c.content LIKE ?)
-            OR EXISTS (SELECT 1 FROM workflow_changes ch WHERE ch.workflow_id = w.id AND ch.summary LIKE ?)`,
+            OR EXISTS (SELECT 1 FROM workflow_context c WHERE c.workflow_id = w.id AND c.content LIKE ?)`,
       )
-      .all(...Array(14).fill(kw), kw, kw, kw) as Array<WorkflowRow & { match_src: string }>;
+      .all(...Array(5).fill(kw), kw, kw) as Array<WorkflowRow & { match_src: string }>;
     return rows.map((r) => ({
       workflow: {
         id: r.id,
@@ -338,15 +391,7 @@ export class WorkflowDB {
         cwd: r.cwd,
         title: r.title,
         description: r.description,
-        background: r.background,
-        goal: r.goal,
-        approach: r.approach,
-        decisions_json: r.decisions_json,
-        steps: r.steps,
-        file_changes: r.file_changes,
-        not_doing: r.not_doing,
-        risks: r.risks,
-        extra_json: r.extra_json,
+        plan_path: r.plan_path,
         status: r.status,
         pre_node_id: r.pre_node_id,
         diff_from_prev: r.diff_from_prev,
@@ -415,71 +460,6 @@ export class WorkflowDB {
     return this.db
       .prepare("SELECT * FROM workflow_events WHERE workflow_id = ? ORDER BY id")
       .all(workflowId) as EventRow[];
-  }
-
-  // ────────────────────────── workflow_changes ──────────────────────────
-
-  /**
-   * 追加改动记录（append-only），自动计算 prev_change_id
-   * prev_change_id = 该文件在本次改动之前的最近一次改动 id（跨工作流，NULL=链首）
-   */
-  addChange(workflowId: number, filePath: string, changeType: ChangeType, summary: string, msgId?: string): void {
-    // 找该文件最近一次改动（任意工作流）
-    const prev = this.db
-      .prepare(
-        "SELECT id FROM workflow_changes WHERE file_path = ? ORDER BY id DESC LIMIT 1",
-      )
-      .get(filePath) as { id: number } | undefined;
-    this.db
-      .prepare(
-        "INSERT INTO workflow_changes (workflow_id, file_path, change_type, summary, msg_id, prev_change_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
-        workflowId,
-        filePath,
-        changeType,
-        summary.slice(0, 200),
-        msgId ?? null,
-        prev?.id ?? null,
-        new Date().toISOString(),
-      );
-  }
-
-  /** 读取改动记录（可按文件过滤；不传 file_path = 全部，按 prev_change_id 链语义排序） */
-  listChanges(workflowId: number, filePath?: string): ChangeRow[] {
-    if (filePath) {
-      return this.db
-        .prepare("SELECT * FROM workflow_changes WHERE workflow_id = ? AND file_path = ? ORDER BY id")
-        .all(workflowId, filePath) as ChangeRow[];
-    }
-    return this.db
-      .prepare("SELECT * FROM workflow_changes WHERE workflow_id = ? ORDER BY id")
-      .all(workflowId) as ChangeRow[];
-  }
-
-  /** 读取某文件的全量改动链（跨工作流，按 prev_change_id 指针链排序：旧 → 新） */
-  getFileChangeChain(filePath: string): ChangeRow[] {
-    const rows = this.db
-      .prepare("SELECT * FROM workflow_changes WHERE file_path = ? ORDER BY id")
-      .all(filePath) as ChangeRow[];
-    // prev_change_id 指向"前一次同文件改动"：构建 nextByPrev 从链首正向遍历
-    const nextByPrev = new Map<number, ChangeRow>();
-    for (const r of rows) {
-      if (r.prev_change_id !== null) nextByPrev.set(r.prev_change_id, r);
-    }
-    const chain: ChangeRow[] = [];
-    const visited = new Set<number>();
-    for (const start of rows) {
-      if (start.prev_change_id !== null) continue; // 非链首跳过（从链首开始）
-      if (visited.has(start.id)) continue;
-      let cur: ChangeRow | undefined = start;
-      while (cur && !visited.has(cur.id)) {
-        chain.push(cur);
-        visited.add(cur.id);
-        cur = nextByPrev.get(cur.id);
-      }
-    }
-    return chain;
   }
 
   // ────────────────────────── workflow_context ──────────────────────────
@@ -586,15 +566,7 @@ export interface WorkflowRow {
   cwd: string | null;
   title: string;
   description: string | null;
-  background: string | null;
-  goal: string | null;
-  approach: string | null;
-  decisions_json: string | null;
-  steps: string | null;
-  file_changes: string | null;
-  not_doing: string | null;
-  risks: string | null;
-  extra_json: string | null;
+  plan_path: string | null;
   status: WorkflowStatus;
   pre_node_id: number | null;
   diff_from_prev: string | null;
@@ -623,17 +595,6 @@ export interface EventRow {
   event_type: EventType;
   content: string;
   msg_id: string | null;
-  created_at: string;
-}
-
-export interface ChangeRow {
-  id: number;
-  workflow_id: number;
-  file_path: string;
-  change_type: ChangeType;
-  summary: string;
-  msg_id: string | null;
-  prev_change_id: number | null;
   created_at: string;
 }
 

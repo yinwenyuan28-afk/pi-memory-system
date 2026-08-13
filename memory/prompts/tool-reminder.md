@@ -7,3 +7,4 @@ If you decide to save → call load_memory_rules for full classification rules a
 Uncertain → stage in .staging/, do not write directly.
 
 [Protected Files] C:\Users\leaf\.pi\agent\agents\*.md (memory-reviewer, skill-reviewer, memory-organizer) are protected. ONLY use edit, NEVER write on these files.
+[Protected Files] C:\Users\leaf\.pi\agent\extensions\memory-system\memory\prompts\*.md (keyword-extraction, filter, filter-relevance, save-guidelines, tool-reminder) are protected. ONLY use edit, NEVER write on these files.

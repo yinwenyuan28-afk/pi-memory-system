@@ -2,8 +2,7 @@
 // workflow/index.ts — 工作流保存系统：扩展接线入口
 //
 // 功能：注册工具/命令/事件（扩展加载时一次），管理 WorkflowDB/Manager/Detector
-//       生命周期（session_start 重建），接线 input → 状态机、tool_result →
-//       改动采集 + 兜底补建、context → 续接注入
+//       生命周期（session_start 重建），接线 input → 状态机、context → 续接注入
 // 用途：由 memory-system/index.ts 在扩展加载时调用 setupWorkflowSystem()
 // 设计：纯扩展零侵入 pi 源码；注册在加载时完成（TUI autocomplete 可见），
 //       db/manager 每次 session_start 重建（profile 跟随）
@@ -15,9 +14,6 @@ import { WorkflowDetector } from "./detector.js";
 import { registerWorkflowTools } from "./tools.js";
 import { registerWorkflowCommands } from "./commands.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-
-// 缓存最近一条"无产出意图"的用户消息（兜底补建需求来源）
-let lastNoIntentMessage: { text: string; time: number } | null = null;
 
 // 续接注入内容（session_start 构建，context 事件注入）
 let resumeContext: string | null = null;
@@ -60,90 +56,34 @@ export function setupWorkflowSystem(
     const sessionId = deps.getSessionId();
     if (!sessionId) return;
     const dbInst = mgr.getDB();
-    const cwd = ctx?.cwd;
-    const active = dbInst.getActiveWorkflow();
+    const active = dbInst.getActiveWorkflow(sessionId);
     if (!active) {
-      // 无活动工作流 → 创建判定（LLM 语义判断产出意图）
-      void handleNoActiveWorkflow(mgr, det, text, sessionId, cwd);
+      // 方案 B：无活跃工作流时，检测到产出意图只提示用户手动创建（不自动创建）
+      void handleNoActiveWorkflow(det, text, ctx);
       return;
     }
-    void handleWithActiveWorkflow(mgr, det, text, sessionId, active.id, cwd);
+    void handleWithActiveWorkflow(mgr, det, text, sessionId, active.id, ctx);
   });
 
-  // 工具执行结果监听 → 改动采集 + 兜底补建
-  pi.on("tool_result", (event, ctx) => {
-    const mgr = manager;
-    if (!mgr) return;
-    const dbInst = mgr.getDB();
-    const sessionId = deps.getSessionId();
-    if (!sessionId) return;
-    const cwd = ctx?.cwd;
-    // M1：失败工具不记录（isError 时跳过）
-    if (event.isError) return;
-    // 改动记录：edit/write 成功
-    if (event.toolName === "edit" || event.toolName === "write") {
-      const input = (event.input ?? {}) as Record<string, unknown>;
-      const filePath = typeof input.path === "string" ? input.path : undefined;
-      if (!filePath) return;
-      const summary = extractChangeSummary(event.toolName, input);
-      const active = dbInst.getActiveWorkflow();
-      if (active) {
-        mgr.recordChange(active.id, filePath, event.toolName, summary);
-        return;
-      }
-      // 兜底补建：无活动工作流但发生产出工具调用
-      const fallbackTitle = lastNoIntentMessage?.text.slice(0, 100) ?? `工作流 ${filePath}`;
-      const newId = mgr.createWorkflowFromMessage({
-        sessionId,
-        cwd,
-        title: fallbackTitle,
-        description: `由工具调用兜底补建（${event.toolName} ${filePath}）`,
-      });
-      mgr.getDB().setStatus(newId, "in_progress");
-      mgr.recordChange(newId, filePath, event.toolName, summary);
-      if (lastNoIntentMessage) {
-        mgr.recordEvent(newId, "user_request", lastNoIntentMessage.text);
-      }
-      lastNoIntentMessage = null;
-      return;
-    }
-    // 产出类工具（memory/skill_manage）兜底补建触发
-    // 注意：bash 不参与补建（几乎每轮出现且多为只读 ls/cat/grep，误创建率高）
-    const PRODUCTION_TOOLS = new Set(["memory", "skill_manage"]);
-    if (PRODUCTION_TOOLS.has(event.toolName) && !dbInst.getActiveWorkflow()) {
-      const fallbackTitle = lastNoIntentMessage?.text.slice(0, 100) ?? `工作流（${event.toolName}）`;
-      const newId = mgr.createWorkflowFromMessage({
-        sessionId,
-        cwd,
-        title: fallbackTitle,
-        description: `由 ${event.toolName} 工具调用兜底补建`,
-      });
-      mgr.getDB().setStatus(newId, "in_progress");
-      if (lastNoIntentMessage) {
-        mgr.recordEvent(newId, "user_request", lastNoIntentMessage.text);
-      }
-      lastNoIntentMessage = null;
-    }
-  });
-
-  // 续接注入（context 事件）
+  // 续接注入（context 事件）：一次性注入后清空（重启提示，不每轮污染）
   pi.on("context", (event) => {
     if (!resumeContext) return;
     event.messages.push({
       role: "user",
       content: resumeContext,
     });
+    // 只注入一次：防缓存过期（状态变化后旧内容每轮重复注入）
+    resumeContext = null;
     return { messages: event.messages };
   });
 
   // session 关闭 → 挂起总结 + 清理
   pi.on("session_shutdown", async () => {
     if (manager) {
-      const active = manager.getDB().getActiveWorkflow();
+      const active = manager.getDB().getActiveWorkflow(deps.getSessionId());
       if (active) void manager.suspendSummary(active.id);
     }
     resumeContext = null;
-    lastNoIntentMessage = null;
     if (db) {
       db.close();
       db = undefined;
@@ -171,14 +111,14 @@ export function setupWorkflowSystem(
         manager.setModel(ctx.model);
         detector.setModel(ctx.model);
       }
-      // 续接注入：检测历史活动工作流
-      resumeContext = buildResumeContext(manager);
+      // 续接注入：优先当前 session，无则跨 session 按 cwd 找（重启续接）
+      resumeContext = buildResumeContext(manager, deps.getSessionId(), ctx?.cwd);
     },
     /** 手动挂起当前活动工作流（供命令调用） */
     suspendActive: async (): Promise<void> => {
       const mgr = manager;
       if (!mgr) return;
-      const active = mgr.getDB().getActiveWorkflow();
+      const active = mgr.getDB().getActiveWorkflow(deps.getSessionId());
       if (active) await mgr.suspendSummary(active.id);
     },
     /** 获取 manager（供测试/调试） */
@@ -201,34 +141,21 @@ export function setupWorkflowSystem(
 // ---------------------------------------------------------------------------
 
 /**
- * 无活动工作流时的创建判定：
- * detectCreate（正则初筛 + LLM 确认）→ 创建并立即执行（in_progress）
- * 无产出意图 → 缓存消息（兜底补建需求来源）
+ * 无活动工作流时的处理（方案 B：用户手动创建）：
+ * detectCreate（正则初筛 + LLM 确认）→ 只提示用户可手动 /workflow-start，不自动创建
  */
 async function handleNoActiveWorkflow(
-  mgr: WorkflowManager,
   det: WorkflowDetector,
   text: string,
-  sessionId: string,
-  cwd?: string,
+  ctx: { ui: { notify: (msg: string, type?: string) => void } },
 ): Promise<void> {
   const shouldCreate = await det.detectCreate(text);
   if (shouldCreate) {
-    // 竞态保护：LLM 确认期间可能已被兜底补建（工具调用创建），不重复创建
-    if (mgr.getDB().getActiveWorkflow()) {
-      mgr.recordEvent(mgr.getDB().getActiveWorkflow()!.id, "user_request", text);
-      return;
-    }
-    const id = mgr.createWorkflowFromMessage({
-      sessionId,
-      cwd,
-      title: text.slice(0, 100),
-      description: text.slice(0, 500),
-    });
-    mgr.getDB().setStatus(id, "in_progress");
-    mgr.recordEvent(id, "user_request", text);
-  } else {
-    lastNoIntentMessage = { text, time: Date.now() };
+    // 方案 B：不自动创建，提示用户手动创建
+    ctx.ui.notify(
+      `检测到新任务意图：「${text.slice(0, 50)}」\n如需记录为工作流，请使用 /workflow-start <标题> 创建`,
+      "info",
+    );
   }
 }
 
@@ -242,7 +169,7 @@ async function handleWithActiveWorkflow(
   text: string,
   sessionId: string,
   workflowId: number,
-  cwd?: string,
+  ctx: { ui: { notify: (msg: string, type?: string) => void } },
 ): Promise<void> {
   const dbInst = mgr.getDB();
 
@@ -257,7 +184,7 @@ async function handleWithActiveWorkflow(
 
   // ① 验收信号 → completed
   if (await det.detectAccept(text)) {
-    mgr.setStatus(workflowId, "completed");
+    mgr.setStatus(workflowId, "completed", sessionId);
     mgr.recordEvent(workflowId, "completion_signal", text);
     return;
   }
@@ -265,14 +192,13 @@ async function handleWithActiveWorkflow(
   // ② 推翻信号（双分支：放弃 vs 演化）
   const reject = await det.detectReject(text);
   if (reject === "abandon") {
-    mgr.setStatus(workflowId, "abandoned");
+    mgr.setStatus(workflowId, "abandoned", sessionId);
     mgr.recordEvent(workflowId, "rejection_signal", text);
     return;
   }
   if (reject === "evolve") {
     const newId = mgr.createEvolutionWorkflow(workflowId, {
       sessionId,
-      cwd,
       title: text.slice(0, 100),
       description: text.slice(0, 500),
     });
@@ -281,15 +207,10 @@ async function handleWithActiveWorkflow(
     return;
   }
 
-  // ③ 方案确认信号 → LLM 结构化回填
+  // ③ 方案确认信号 → 从计划文件同步任务 + 状态推进（计划本体在文件，不 LLM 总结入表）
   if (PLAN_CONFIRM_REGEX.test(text)) {
     mgr.recordEvent(workflowId, "plan_confirm", text);
-    const events = dbInst.listEvents(workflowId);
-    const context = events
-      .slice(-15)
-      .map((e) => `[${e.event_type}] ${e.content}`)
-      .join("\n");
-    void mgr.fillStructuredFields(workflowId, context);
+    void mgr.syncTasksFromPlanFile(workflowId);
     return;
   }
 
@@ -303,7 +224,6 @@ async function handleWithActiveWorkflow(
   if (await det.detectChild(text)) {
     const childId = mgr.createChildWorkflow(workflowId, {
       sessionId,
-      cwd,
       title: text.slice(0, 100),
     });
     mgr.recordEvent(childId, "user_request", text);
@@ -324,18 +244,13 @@ async function handleWithActiveWorkflow(
   }
 
   // ⑦ 兜底：默认延续当前工作流（多数消息是讨论/执行/指示/收尾），
-  // 只有明确全新需求信号 + LLM 确认才创建新工作流（防误创建）
+  // 明确全新需求信号 + LLM 确认 → 提示用户手动创建新工作流（方案 B：不自动创建）
   mgr.recordEvent(workflowId, "user_request", text);
   if (await det.detectNewRequest(text)) {
-    void mgr.suspendSummary(workflowId);
-    const newId = mgr.createWorkflowFromMessage({
-      sessionId,
-      cwd,
-      title: text.slice(0, 100),
-      description: text.slice(0, 500),
-    });
-    mgr.getDB().setStatus(newId, "in_progress");
-    mgr.recordEvent(newId, "user_request", text);
+    ctx.ui.notify(
+      `检测到新需求意图：「${text.slice(0, 50)}」\n如需记录为新工作流，请使用 /workflow-start <标题> 创建`,
+      "info",
+    );
   }
 }
 
@@ -363,35 +278,16 @@ function isTitleMatch(message: string, title: string): boolean {
 const PLAN_CONFIRM_REGEX = /方案可以|按这个来|按这个方案|就这么办|没问题，就|同意这个|采用这个|批准|就按|可以开始|确认方案/;
 
 /**
- * 从 edit/write 工具输入提取改动摘要（代码层，零 LLM）
- * edit：取首个 edit 的 newText 首片段；write：取 content 首片段
- * @returns 首片段 80 字符（计划约定）
- */
-function extractChangeSummary(toolName: string, input: Record<string, unknown>): string {
-  let raw = "";
-  if (toolName === "write") {
-    raw = typeof input.content === "string" ? input.content : "";
-  } else if (toolName === "edit") {
-    const edits = input.edits;
-    if (Array.isArray(edits) && edits.length > 0) {
-      const first = edits[0] as Record<string, unknown>;
-      raw = typeof first.newText === "string" ? first.newText : "";
-    }
-  }
-  const clean = raw.replace(/\s+/g, " ").trim();
-  return clean.slice(0, 80) || "(空改动)";
-}
-
-/**
  * 构建续接注入内容（session_start 时调用）：
- * 存在活动工作流时，注入 改动文件清单 + 最近 N 条改动摘要 + 最近 N 条辅助上下文
+ * 存在活动工作流时，注入 最近 N 条辅助上下文
  * （verification/decisions 优先，pending 项优先）
  */
-function buildResumeContext(mgr: WorkflowManager): string | null {
+function buildResumeContext(mgr: WorkflowManager, sessionId?: string, cwd?: string): string | null {
   const dbInst = mgr.getDB();
-  const active = dbInst.getActiveWorkflow();
+  // 优先当前 session 的活跃工作流（指针）；无则按 cwd 找最近 in_progress（重启续接场景）
+  const active = dbInst.getActiveWorkflow(sessionId) ?? dbInst.getActiveWorkflow();
+  void cwd;
   if (!active) return null;
-  const changes = dbInst.listChanges(active.id).slice(-10);
   const contextRows = dbInst.listContext(active.id);
   // 排序：verified=0 优先，再按类别优先级（verification/decisions > pitfalls > api/config/commands/dependency）
   const CATEGORY_PRIORITY = ["verification", "decisions", "pitfalls", "api", "commands", "config", "dependency"];
@@ -405,14 +301,11 @@ function buildResumeContext(mgr: WorkflowManager): string | null {
   const lines: string[] = [];
   lines.push("<workflow-resume>");
   lines.push(`[工作流续接] 活动工作流 #${active.id}「${active.title}」（${active.status}）`);
+  if (active.plan_path) {
+    lines.push(`计划文件: ${active.plan_path}（计划本体，改方案请直接编辑该文件）`);
+  }
   if (active.progress) lines.push(`进度: ${active.progress}`);
   if (active.next_steps) lines.push(`下一步: ${active.next_steps}`);
-  if (changes.length > 0) {
-    lines.push("最近改动:");
-    for (const c of changes) {
-      lines.push(`  - ${c.change_type} ${c.file_path}: ${c.summary.slice(0, 60)}`);
-    }
-  }
   if (contextSlice.length > 0) {
     lines.push("辅助上下文:");
     for (const c of contextSlice) {

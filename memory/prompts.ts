@@ -112,6 +112,9 @@ const DEFAULT_PROMPTS: MemoryPrompts = {
     "If you decide to save → call load_memory_rules for full classification rules and scope list.\n" +
     "Uncertain → stage in .staging/, do not write directly.\n" +
     "\n[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (memory-reviewer, skill-reviewer, memory-organizer) " +
+    "are protected. ONLY use edit, NEVER write on these files.\n" +
+    "[Protected Files] C:\\Users\\leaf\\.pi\\agent\\extensions\\memory-system\\memory\\prompts\\*.md " +
+    "(keyword-extraction, filter, filter-relevance, save-guidelines, tool-reminder) " +
     "are protected. ONLY use edit, NEVER write on these files.",
 };
 

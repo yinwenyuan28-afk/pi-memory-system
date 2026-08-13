@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { loadPrompts } from "./prompts.js";
 
 const LLM_TIMEOUT_MS = 5000;
 
@@ -68,11 +69,7 @@ export class WorkflowDetector {
   async detectCreate(message: string): Promise<boolean> {
     if (!SIGNAL_REGEX.create.test(message)) return false;
     if (!this.model) return true;
-    const r = await this.confirm(
-      message,
-      "这条用户消息是否表达【产出意图】（要实现一个功能、产出文件/代码、设计产品/方案）？" +
-        "回答 JSON {\"yes\": true/false}",
-    );
+    const r = await this.confirm(message, loadPrompts().detect.create);
     return r === null ? true : r;
   }
 
@@ -83,11 +80,7 @@ export class WorkflowDetector {
   async detectAccept(message: string): Promise<boolean> {
     if (!SIGNAL_REGEX.accept.test(message)) return false;
     if (!this.model) return true;
-    const r = await this.confirm(
-      message,
-      "这条用户消息是否在【确认工作流完成/验收】（例如“可以了/完成了/就这样”）？" +
-        "注意：如果消息包含“还要/再改/还没/不行”则不是验收。回答 JSON {\"yes\": true/false}",
-    );
+    const r = await this.confirm(message, loadPrompts().detect.accept);
     return r === null ? true : r;
   }
 
@@ -98,13 +91,7 @@ export class WorkflowDetector {
   async detectReject(message: string): Promise<"abandon" | "evolve" | null> {
     if (!SIGNAL_REGEX.reject.test(message)) return null;
     if (!this.model) return "evolve";
-    const prompt =
-      "这条用户消息是否在推翻当前工作流的方案/设计？如果是，属于哪种：\n" +
-      "a) 完全放弃（“不做了/算了，不要这个了”）→ \"abandon\"\n" +
-      "b) 推翻部分设计但需求仍在（“重来但还要做/换方式实现”）→ \"evolve\"\n" +
-      "c) 不是推翻（只是普通否定/澄清）→ null\n" +
-      "回答 JSON {\"type\": \"abandon\"|\"evolve\"|null}";
-    const r = await this.confirm(message, prompt, true);
+    const r = await this.confirm(message, loadPrompts().detect.reject, true);
     if (r === null) return "evolve";
     return r;
   }
@@ -116,11 +103,7 @@ export class WorkflowDetector {
   async detectAdjust(message: string): Promise<boolean> {
     if (!SIGNAL_REGEX.adjust.test(message)) return false;
     if (!this.model) return true;
-    const r = await this.confirm(
-      message,
-      "这条用户消息是否属于【对当前工作流的需求/方案/目标做调整】（仍在同一工作流语境，不是全新需求）？" +
-        "回答 JSON {\"yes\": true/false}",
-    );
+    const r = await this.confirm(message, loadPrompts().detect.adjust);
     return r === null ? true : r;
   }
 
@@ -131,11 +114,7 @@ export class WorkflowDetector {
   async detectChild(message: string): Promise<boolean> {
     if (!SIGNAL_REGEX.child.test(message)) return false;
     if (!this.model) return false;
-    const r = await this.confirm(
-      message,
-      "这条用户消息提到的新需求，是【当前工作流的子任务/组成部分】，还是独立的新工作流？" +
-        "回答 JSON {\"child\": true/false}",
-    );
+    const r = await this.confirm(message, loadPrompts().detect.child);
     return r === null ? false : r;
   }
 
@@ -148,10 +127,7 @@ export class WorkflowDetector {
   async detectContinue(message: string): Promise<boolean> {
     if (!SIGNAL_REGEX.continue.test(message)) return false;
     if (!this.model) return true;
-    const r = await this.confirm(
-      message,
-      "这条用户消息是否在【延续当前工作流】（\"接着做/继续/下一步\"）？回答 JSON {\"yes\": true/false}",
-    );
+    const r = await this.confirm(message, loadPrompts().detect.continue);
     return r === null ? true : r;
   }
 
@@ -163,11 +139,7 @@ export class WorkflowDetector {
   async detectNewRequest(message: string): Promise<boolean> {
     if (!NEW_REQUEST_REGEX.test(message)) return false;
     if (!this.model) return false; // 保守：无模型时不创建
-    const r = await this.confirm(
-      message,
-      "这条用户消息是否在【开启一个与当前工作流无关的全新需求】？" +
-        "如果只是继续当前任务的讨论/指示/收尾（如提交、编译、检查），则不是。回答 JSON {\"yes\": true/false}",
-    );
+    const r = await this.confirm(message, loadPrompts().detect.newRequest);
     return r === null ? false : r;
   }
 
@@ -180,11 +152,7 @@ export class WorkflowDetector {
     // 明确验收信号直接确认完成
     if (SIGNAL_REGEX.accept.test(message)) return true;
     if (!this.model) return false;
-    const r = await this.confirm(
-      message,
-      "之前的工作流疑似完成（所有任务已完成）。这条新消息是在【继续修改/补充当前工作流】" +
-        "还是【转入新话题/没有异议】（可确认工作流完成）？回答 JSON {\"confirm\": true/false}",
-    );
+    const r = await this.confirm(message, loadPrompts().detect.implicitConfirm);
     return r === null ? false : r;
   }
 

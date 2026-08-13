@@ -9,6 +9,7 @@ Candidate memory sections (format: [file#order] section title + content preview)
 {{candidates}}
 
 Rules:
+
 - Keep only sections whose content is semantically relevant to the user question
 - Discard sections that merely share common words (e.g. both contain "流程" but talk about different things)
 - A single file may have multiple relevant sections; keep them all

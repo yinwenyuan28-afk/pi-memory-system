@@ -133,26 +133,6 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 		return id;
 	}
 
-	pi.on("agent_settled", async (_event, ctx) => {
-		if (!reviewScheduled) turnCount++;
-		if (turnCount >= REVIEW_INTERVAL && !reviewScheduled) {
-			turnCount = 0;
-			reviewScheduled = true;
-			ctx.ui.setStatus("memory", "Memory ⚙review...");
-			const paths = prepareReviewPaths(ctx);
-			const task = paths
-				? `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}`
-				: "No new conversation data to review.";
-			runPiSubagent("memory-reviewer", task, ctx)
-				.then(() => {
-					reviewScheduled = false;
-				})
-				.catch(() => {
-					reviewScheduled = false;
-				});
-		}
-	});
-
 	pi.registerCommand("remember", {
 		description: "Manually trigger a full memory review of the entire conversation.",
 		usage: "Usage: /remember",

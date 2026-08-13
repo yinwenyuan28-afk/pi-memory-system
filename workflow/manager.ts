@@ -13,11 +13,12 @@ import {
   type WorkflowRow,
   type EventType,
   type ContextCategory,
-  type ChangeType,
   type WorkflowStatus,
   type TaskStatus,
 } from "./db.js";
+import { readFileSync } from "node:fs";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { loadPrompts, renderPrompt } from "./prompts.js";
 
 const LLM_TIMEOUT_MS = 5000;
 
@@ -29,7 +30,7 @@ const LLM_TIMEOUT_MS = 5000;
  * WorkflowManager — 工作流生命周期管理器
  *
  * @param db WorkflowDB 实例（session 生命周期跟随）
- * 职责：创建/状态机/事件改动采集/结构化回填/挂起总结/隐式完成检测
+ * 职责：创建/状态机/事件记录/结构化回填/挂起总结/隐式完成检测
  */
 export class WorkflowManager {
   private db: WorkflowDB;
@@ -56,7 +57,7 @@ export class WorkflowManager {
 
   /**
    * 创建工作流（代码层，零 LLM）
-   * @param input sessionId/title/description/goal/background + 图结构
+   * @param input sessionId/title/description/planPath + 图结构
    * @returns 新工作流 id
    */
   createWorkflowFromMessage(input: {
@@ -64,8 +65,7 @@ export class WorkflowManager {
     cwd?: string;
     title: string;
     description?: string;
-    background?: string;
-    goal?: string;
+    planPath?: string;
     preNodeId?: number;
     parentNodeId?: number;
     diffFromPrev?: string;
@@ -83,6 +83,7 @@ export class WorkflowManager {
     cwd?: string;
     title: string;
     description?: string;
+    planPath?: string;
   }): number {
     const parent = this.db.getWorkflow(parentId);
     if (!parent) throw new Error(`父工作流 ${parentId} 不存在`);
@@ -90,7 +91,9 @@ export class WorkflowManager {
       ...input,
       parentNodeId: parentId,
     });
-    // 父工作流挂起总结（异步不阻塞）
+    // 父工作流保持 in_progress（生命周期不变，只是活跃指针移向子工作流）
+    // 触发挂起总结（异步不阻塞）
+    this.db.setActive(input.sessionId, childId);
     void this.suspendSummary(parentId);
     return childId;
   }
@@ -105,12 +108,14 @@ export class WorkflowManager {
     cwd?: string;
     title: string;
     description?: string;
+    planPath?: string;
   }): number {
     const prev = this.db.getWorkflow(prevId);
     if (!prev) throw new Error(`前版本工作流 ${prevId} 不存在`);
     const newId = this.db.createWorkflow({
       ...input,
       cwd: input.cwd ?? prev.cwd ?? undefined, // 继承父层级 cwd（规则 1）
+      planPath: input.planPath ?? prev.plan_path ?? undefined, // 演化继承前版本计划文件（用户在原文件上改）
       preNodeId: prevId,
       parentNodeId: prev.parent_node_id,
     });
@@ -119,6 +124,8 @@ export class WorkflowManager {
     }
     // 旧版本标记 superseded
     this.db.setStatus(prevId, "superseded");
+    // 新版本成为当前活跃（指针）
+    this.db.setActive(input.sessionId, newId);
     // 异步总结 diff_from_prev
     void this.summarizeDiff(prevId, newId);
     return newId;
@@ -127,11 +134,21 @@ export class WorkflowManager {
   // ────────────────────────── 状态转换 ──────────────────────────
 
   /** 状态转换（含 completed_at 记录） */
-  setStatus(id: number, status: WorkflowStatus): void {
+  setStatus(id: number, status: WorkflowStatus, sessionId?: string): void {
     this.db.setStatus(id, status);
+    // 终态（完成/放弃）：清除活跃指针（无活跃，不自动激活别的 in_progress）
+    if (sessionId && (status === "completed" || status === "abandoned")) {
+      this.db.clearActive(sessionId);
+    }
     if (status === "completed") {
       this.pendingCompletion.delete(id);
     }
+  }
+
+  /** 恢复工作流为活动（in_progress + setActive 指针） */
+  resumeWorkflow(id: number, sessionId: string): void {
+    this.db.setStatus(id, "in_progress");
+    this.db.setActive(sessionId, id);
   }
 
   /** 隐式完成检测：标记 pending（不立即关闭，下条消息 LLM 判断） */
@@ -162,77 +179,38 @@ export class WorkflowManager {
     }
   }
 
-  // ────────────────────────── 事件/改动记录 ──────────────────────────
+  // ────────────────────────── 事件记录 ──────────────────────────
 
   /** 追加事件（纯追加） */
   recordEvent(workflowId: number, eventType: EventType, content: string, msgId?: string): void {
     this.db.addEvent(workflowId, eventType, content, msgId);
   }
 
-  /** 追加改动记录（自动算 prev_change_id 链） */
-  recordChange(workflowId: number, filePath: string, changeType: ChangeType, summary: string, msgId?: string): void {
-    this.db.addChange(workflowId, filePath, changeType, summary, msgId);
-  }
-
-  // ────────────────────────── 结构化回填（方案确认） ──────────────────────────
+  // ────────────────────────── 方案确认（计划文件同步） ──────────────────────────
 
   /**
-   * 方案确认时 LLM 总结结构化字段并回填：
-   * approach/not_doing/risks/tasks/steps/file_changes/decisions_json/extra_json
-   * 同时状态 draft → approved（创建时若是 draft）或保持 in_progress
+   * 方案确认时从计划文件（plan_path）解析任务分解表落库：
+   * 计划本体存文件（人类可读可改），本方法只同步任务快照 + 状态推进
+   * 同时状态 draft → approved（创建时若是 draft）
    *
    * @param workflowId 工作流 id
-   * @param context 最近事件流文本（LLM 总结依据）
-   * @returns 是否成功（LLM 失败返回 false，不阻塞）
+   * @returns 是否成功（无计划文件/解析失败返回 false，不阻塞）
    */
-  async fillStructuredFields(workflowId: number, context: string): Promise<boolean> {
-    if (!this.model) return false;
+  async syncTasksFromPlanFile(workflowId: number): Promise<boolean> {
     const wf = this.db.getWorkflow(workflowId);
-    if (!wf) return false;
-    const prompt = `你是工作流信息提取助手。根据下面的工作流讨论记录，提取结构化字段，只输出合法 JSON（不要 markdown 代码块）。
-
-输出格式（全部字段必须存在，缺失用 null 或 []）：
-{
-  "approach": "方案/设计原则/核心取舍（字符串）",
-  "not_doing": "不做的事（字符串，多条用；分隔）",
-  "risks": "风险/待确认（字符串，多条用；分隔）",
-  "tasks": [{"task_no": 1, "title": "任务标题", "detail": "备注（可空）"}],
-  "steps": [{"order": 1, "title": "步骤标题", "detail": "细节（可空）"}],
-  "file_changes": [{"file": "文件路径", "change": "改动说明"}],
-  "decisions": [{"decision": "决策", "reason": "理由"}],
-  "extra": {"章节名": "内容"}  // 未映射章节（如接口设计/表结构/特有设计）
-}
-
-讨论记录：
-${context.slice(0, 12000)}`;
-
-    const result = await this.callLLM(prompt);
-    if (!result) return false;
+    if (!wf || !wf.plan_path) return false;
+    let content: string;
     try {
-      const obj = JSON.parse(result);
-      const now = new Date().toISOString();
-      const fields: Record<string, string> = {};
-      if (obj.approach !== undefined) fields.approach = String(obj.approach);
-      if (obj.not_doing !== undefined) fields.not_doing = String(obj.not_doing);
-      if (obj.risks !== undefined) fields.risks = String(obj.risks);
-      if (obj.decisions !== undefined && Array.isArray(obj.decisions)) {
-        fields.decisions_json = JSON.stringify(obj.decisions);
-      }
-      if (obj.steps !== undefined) fields.steps = JSON.stringify(obj.steps);
-      if (obj.file_changes !== undefined) fields.file_changes = JSON.stringify(obj.file_changes);
-      if (obj.extra !== undefined && obj.extra !== null) fields.extra_json = JSON.stringify(obj.extra);
-      this.db.updateWorkflow(workflowId, fields);
-      // 任务落库（先清空旧任务再写入）
-      if (Array.isArray(obj.tasks) && obj.tasks.length > 0) {
-        this.replaceTasks(workflowId, obj.tasks);
-      }
-      // 状态推进：draft → approved
-      if (wf.status === "draft") this.db.setStatus(workflowId, "approved");
-      this.db.updateWorkflow(workflowId, { updated_at: now });
-      return true;
+      content = readFileSync(wf.plan_path, "utf8");
     } catch {
       return false;
     }
+    const tasks = parseTaskTable(content);
+    if (tasks.length > 0) this.replaceTasks(workflowId, tasks);
+    // 状态推进：draft → approved
+    if (wf.status === "draft") this.db.setStatus(workflowId, "approved");
+    this.db.updateWorkflow(workflowId, { updated_at: new Date().toISOString() });
+    return true;
   }
 
   /** 替换任务列表（方案确认回填 / 需求调整重写时用） */
@@ -270,14 +248,10 @@ ${context.slice(0, 12000)}`;
     const taskText = tasks
       .map((t) => `${t.task_no}. [${t.status}] ${t.title}`)
       .join("\n");
-    const prompt = `你是工作流检查点总结助手。根据工作流当前状态总结进度和下一步，只输出 JSON：
-{"progress": "进度摘要（做了什么，一两句话）", "next_steps": "下一步/待办（多条用；分隔）"}
-
-当前任务：
-${taskText}
-
-最近事件：
-${evText.slice(0, 8000)}`;
+    const prompt = renderPrompt(loadPrompts().summary, {
+      tasks: taskText,
+      events: evText.slice(0, 8000),
+    });
 
     const result = await this.callLLM(prompt);
     if (!result) return;
@@ -300,11 +274,10 @@ ${evText.slice(0, 8000)}`;
     const prev = this.db.getWorkflow(prevId);
     const next = this.db.getWorkflow(newId);
     if (!prev || !next) return;
-    const prompt = `你是工作流版本差异总结助手。对比两个版本的同一工作流，总结新版本相对旧版本的需求/方案/范围变化，输出 JSON：
-{"diff": "变化描述（两三句话：需求改动/方案改动/范围增减）"}
-
-旧版本：${prev.title} — ${prev.approach ?? ""} ${prev.description ?? ""}
-新版本：${next.title} — ${next.description ?? ""}`;
+    const prompt = renderPrompt(loadPrompts().diff, {
+      prev: `${prev.title} — ${prev.description ?? ""}`,
+      next: `${next.title} — ${next.description ?? ""}`,
+    });
 
     const result = await this.callLLM(prompt);
     if (!result) return;
@@ -376,4 +349,36 @@ ${evText.slice(0, 8000)}`;
       clearTimeout(timer);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 计划文件解析
+// ---------------------------------------------------------------------------
+
+/**
+ * 从计划文件（PLAN.md）解析任务分解表
+ * 格式（plan-execute 协议）：markdown 表格 `| # | 任务 | 涉及文件 | 状态 | 备注 |`
+ * 只取编号+标题（+涉及文件作 detail），状态列以数据库为准不读
+ * @param content 计划文件全文
+ * @returns 任务列表（解析不到返回空数组，不阻塞）
+ */
+function parseTaskTable(content: string): Array<{ task_no: number; title: string; detail?: string }> {
+  const tasks: Array<{ task_no: number; title: string; detail?: string }> = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|")) continue;
+    const cells = trimmed
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
+    if (cells.length < 2) continue;
+    // 表头（#）与分隔行（---）跳过
+    if (/^#+$/.test(cells[0]) || /^-+$/.test(cells[0])) continue;
+    const num = Number(cells[0]);
+    if (!Number.isInteger(num) || num <= 0) continue;
+    const title = cells[1].replace(/\*\*/g, "").trim();
+    if (!title) continue;
+    tasks.push({ task_no: num, title, detail: cells[2] ?? undefined });
+  }
+  return tasks;
 }
