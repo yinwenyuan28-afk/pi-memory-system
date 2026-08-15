@@ -115,8 +115,17 @@ export function setupSkillReviewer(
 		return id;
 	}
 
-	pi.on("agent_settled", async (_event, ctx) => {
+	// ── 用户轮次计数 ─────────────────────────────────────────────
+	// 用 input 事件（source=interactive）计数，而非 agent_settled：
+	// agent_settled 也会被后台子代理完成通知（pi.sendMessage triggerTurn）触发，
+	// 会把 review 阈值提前推满（08-11 根因：reviewer 触发与状态栏倒计时不同步）。
+	// input 事件只在用户消息进入时触发，子代理通知不经 input。
+	pi.on("input", (event) => {
+		if (event.source !== "interactive") return;
 		if (!reviewScheduled) turnCount++;
+	});
+
+	pi.on("agent_settled", async (_event, ctx) => {
 		if (turnCount >= REVIEW_INTERVAL && !reviewScheduled) {
 			turnCount = 0;
 			const built = buildReviewTask(ctx);
