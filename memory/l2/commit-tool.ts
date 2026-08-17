@@ -10,6 +10,7 @@ import {
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { L2_CURSOR_FILE, SCENE_DIR_NAME, SCENE_INDEX_PATH } from "./config.js";
+import { MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  l2_commit 工具 —— 子代理场景写盘桥接
@@ -111,7 +112,7 @@ function atomicWrite(filePath: string, content: string): void {
  * 返回索引条目数组并写 scene_index.json。
  */
 export function syncSceneIndex(profilePath: string): Array<{ filename: string; summary: string; heat: number; created: string; updated: string }> {
-	const sceneDir = join(profilePath, SCENE_DIR_NAME);
+	const sceneDir = join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME);
 	const entries: Array<{ filename: string; summary: string; heat: number; created: string; updated: string }> = [];
 	if (existsSync(sceneDir)) {
 		for (const f of readdirSync(sceneDir)) {
@@ -126,8 +127,8 @@ export function syncSceneIndex(profilePath: string): Array<{ filename: string; s
 		}
 	}
 	entries.sort((a, b) => b.heat - a.heat);
-	const idxPath = join(profilePath, SCENE_INDEX_PATH);
-	const idxDir = join(profilePath, ".metadata");
+	const idxPath = join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH);
+	const idxDir = join(profilePath, MEMORY_DB_DIR, ".metadata");
 	if (!existsSync(idxDir)) mkdirSync(idxDir, { recursive: true });
 	writeFileSync(idxPath, JSON.stringify(entries, null, 2), "utf-8");
 	return entries;
@@ -139,17 +140,20 @@ export function syncSceneIndex(profilePath: string): Array<{ filename: string; s
  * 子代理调用参数：
  *  - sceneWrites: 场景写入数组 [{action, filename, meta, content}]
  *  - cursor: 推进到的 lastRecordId
+ *  - personaSignal: 可选，true 表示请求 L3 persona 更新（P1 触发）
+ *  - personaReason: 可选，persona 更新原因
  */
 export function registerL2CommitTool(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
+	onCommitted?: (opts: { personaSignal?: boolean; personaReason?: string }) => void,
 ): void {
 	pi.registerTool({
 		name: "l2_commit",
 		label: "L2 Commit Scene Writes",
 		description:
 			"Commit scene block writes and advance the L2 cursor. Called by the l2-scene-organizer subagent. " +
-			"Params: sceneWrites (array of {action: create|update|merge|delete, filename, meta: {created,updated,summary,heat}, content}), cursor (lastRecordId string).",
+			"Params: sceneWrites (array of {action: create|update|merge|delete, filename, meta: {created,updated,summary,heat}, content}), cursor (lastRecordId string), personaSignal (optional boolean), personaReason (optional string).",
 		parameters: {
 			type: "object",
 			properties: {
@@ -168,6 +172,8 @@ export function registerL2CommitTool(
 					},
 				},
 				cursor: { type: "string", description: "Advance L2 cursor to this record id" },
+				personaSignal: { type: "boolean", description: "Set true to request L3 persona update (P1 trigger)" },
+				personaReason: { type: "string", description: "Reason for persona update when personaSignal is true" },
 			},
 			required: ["sceneWrites", "cursor"],
 		},
@@ -183,7 +189,7 @@ export function registerL2CommitTool(
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "sceneWrites must be an array and cursor must be a string" }) }], details: {} };
 				}
 
-				const sceneDir = join(profilePath, SCENE_DIR_NAME);
+				const sceneDir = join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME);
 				if (!existsSync(sceneDir)) mkdirSync(sceneDir, { recursive: true });
 				const now = new Date().toISOString();
 
@@ -215,8 +221,8 @@ export function registerL2CommitTool(
 				const entries = syncSceneIndex(profilePath);
 
 				// 推进 L2 游标（原子写）
-				const cursorPath = join(profilePath, L2_CURSOR_FILE);
-				const tmpCursor = join(profilePath, `.tmp_l2_cursor_${Date.now()}`);
+				const cursorPath = join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE);
+				const tmpCursor = join(profilePath, MEMORY_DB_DIR, `.tmp_l2_cursor_${Date.now()}`);
 				writeFileSync(tmpCursor, JSON.stringify({ lastRecordId: cursor }, null, 2), "utf-8");
 				try {
 					rmSync(cursorPath, { force: true });
@@ -232,6 +238,14 @@ export function registerL2CommitTool(
 					rmSync(tmpCursor, { force: true });
 				} catch {
 					// ignore
+				}
+
+				const personaSignal = params?.personaSignal === true;
+				const personaReason = typeof params?.personaReason === "string" ? params.personaReason : undefined;
+				try {
+					onCommitted?.({ personaSignal, personaReason });
+				} catch {
+					// non-fatal
 				}
 
 				return {

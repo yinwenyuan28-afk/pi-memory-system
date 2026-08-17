@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.js";
+import { MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  l1_commit 工具 —— 子代理写盘桥接
@@ -22,8 +23,8 @@ function localDate(d: Date): string {
 
 /** 原子写 l1-cursor.json（tmp + rename）。 */
 function saveCursor(profilePath: string, lastRecordedAt: string): void {
-	const filePath = join(profilePath, CURSOR_FILE);
-	const tmpPath = join(profilePath, `.tmp_l1_cursor_${Date.now()}`);
+	const filePath = join(profilePath, MEMORY_DB_DIR, CURSOR_FILE);
+	const tmpPath = join(profilePath, MEMORY_DB_DIR, `.tmp_l1_cursor_${Date.now()}`);
 	writeFileSync(tmpPath, JSON.stringify({ lastRecordedAt }, null, 2), "utf-8");
 	try {
 		rmSync(filePath, { force: true });
@@ -60,7 +61,7 @@ function readFileSafe(p: string): string {
 export function registerL1CommitTool(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
-	onCommitted?: () => void,
+	onCommitted?: (written: number) => void,
 ): void {
 	pi.registerTool({
 		name: "l1_commit",
@@ -99,7 +100,7 @@ export function registerL1CommitTool(
 				// 1. 追加写 records 分片（按当前本地日期）
 				let written = 0;
 				if (records.length > 0) {
-					const recordsDir = join(profilePath, RECORDS_DIR_NAME);
+					const recordsDir = join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME);
 					if (!existsSync(recordsDir)) mkdirSync(recordsDir, { recursive: true });
 					const shardPath = join(recordsDir, `${localDate(new Date())}.jsonl`);
 					const lines = records.map((r) => JSON.stringify(r));
@@ -112,7 +113,7 @@ export function registerL1CommitTool(
 
 				// 3. 通知 L2 调度（L1 成功提交一批 → 攒批计数）
 				try {
-					onCommitted?.();
+					onCommitted?.(written);
 				} catch {
 					// 非致命
 				}

@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { decodeCwdFromSessionPath } from "../l0/index.js";
+import { L1_CONFIG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 配置 / 游标 / 分片清单（纯函数，无 pi 依赖，可单测）
@@ -35,7 +36,7 @@ export interface L1Config {
 
 /** 读取 L1 配置；无配置/非法时返回默认 code。 */
 export function loadL1Config(profilePath: string): L1Config {
-	const filePath = join(profilePath, CONFIG_FILE);
+	const filePath = join(profilePath, MEMORY_DB_DIR, CONFIG_FILE);
 	if (!existsSync(filePath)) return { mode: "code" };
 	try {
 		const data = JSON.parse(readFileSync(filePath, "utf-8")) as Partial<L1Config>;
@@ -48,8 +49,8 @@ export function loadL1Config(profilePath: string): L1Config {
 
 /** 写入 L1 模式（原子写：tmp + rename）。 */
 export function saveL1Mode(profilePath: string, mode: L1Mode): void {
-	const filePath = join(profilePath, CONFIG_FILE);
-	const tmpPath = join(profilePath, `.tmp_l1_config_${Date.now()}`);
+	const filePath = join(profilePath, MEMORY_DB_DIR, CONFIG_FILE);
+	const tmpPath = join(profilePath, MEMORY_DB_DIR, `.tmp_l1_config_${Date.now()}`);
 	writeFileSync(tmpPath, JSON.stringify({ mode } as L1Config, null, 2), "utf-8");
 	try {
 		rmSync(filePath, { force: true });
@@ -70,7 +71,7 @@ export function saveL1Mode(profilePath: string, mode: L1Mode): void {
 
 /** 读取 L1 游标 lastRecordedAt（ISO 字符串；无则返回空串）。 */
 export function loadL1Cursor(profilePath: string): string {
-	const filePath = join(profilePath, CURSOR_FILE);
+	const filePath = join(profilePath, MEMORY_DB_DIR, CURSOR_FILE);
 	if (!existsSync(filePath)) return "";
 	try {
 		const data = JSON.parse(readFileSync(filePath, "utf-8")) as { lastRecordedAt?: string };
@@ -85,7 +86,7 @@ export function loadL1Cursor(profilePath: string): string {
  * 游标为空 → 全部；有游标 → 只列游标日期及之后的分片（子代理再按行级 recordedAt 过滤）。
  */
 export function listL0Files(profilePath: string, lastRecordedAt: string): string[] {
-	const l0Dir = join(profilePath, L0_DIR_NAME);
+	const l0Dir = join(profilePath, MEMORY_DB_DIR, L0_DIR_NAME);
 	if (!existsSync(l0Dir)) return [];
 	let files: string[];
 	try {
@@ -110,8 +111,8 @@ export function buildL1Task(profilePath: string): string | null {
 	return [
 		"L1 extraction task",
 		`L0Files: ${l0Files.join(",")}`,
-		`CursorPath: ${join(profilePath, CURSOR_FILE)}`,
-		`RecordsDir: ${join(profilePath, RECORDS_DIR_NAME)}`,
+		`CursorPath: ${join(profilePath, MEMORY_DB_DIR, CURSOR_FILE)}`,
+		`RecordsDir: ${join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME)}`,
 		`PromptDir: ${PROMPT_DIR}`,
 		`Mode: ${mode}`,
 		`KnownProjects: ${listKnownProjects().join(",")}`,

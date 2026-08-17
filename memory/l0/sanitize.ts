@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L0 降噪规则（SanitizeRule 可扩展机制）
@@ -191,12 +192,12 @@ export function replaceBase64WithImage(text: string): string {
 // ── 外部规则加载 ──
 
 /**
- * 从 {profilePath}/l0-sanitize-rules.json 加载外部追加规则。
+ * 从 {memoryDB}/l0-sanitize-rules.json 加载外部追加规则。
  * 合并到内置表之后执行；重名 id 覆盖内置（外部优先）。
  * 文件不存在或非法时返回空数组（静默）。
  */
 export function loadExternalRules(profilePath: string): SanitizeRule[] {
-	const filePath = join(profilePath, "l0-sanitize-rules.json");
+	const filePath = join(profilePath, MEMORY_DB_DIR, "l0-sanitize-rules.json");
 	if (!existsSync(filePath)) return [];
 
 	try {

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 配置 / 游标 / 任务构造（纯函数，无 pi 依赖，可单测）
@@ -15,18 +16,18 @@ export const L2_SUBAGENT_TIMEOUT_MS = 600_000;
 export const MAX_SCENES = 15;
 
 /** L2 游标文件名（lastRecordId）。 */
-export const L2_CURSOR_FILE = "l2-cursor.json";
-/** 场景文件目录名（{profilePath}/scene_blocks）。 */
-export const SCENE_DIR_NAME = "scene_blocks";
-/** 场景索引路径（{profilePath}/.metadata/scene_index.json）。 */
-export const SCENE_INDEX_PATH = join(".metadata", "scene_index.json");
+export const L2_CURSOR_FILE = PATHS_L2_CURSOR;
+/** 场景文件目录名（{memoryDB}/scene_blocks）。 */
+export const SCENE_DIR_NAME = L2_SCENE_DIR;
+/** 场景索引路径（{memoryDB}/.metadata/scene_index.json）。 */
+export const SCENE_INDEX_PATH = L2_SCENE_INDEX_PATH;
 
 /** 规则文件目录（本模块同目录下的 prompts/）。 */
 export const PROMPT_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
 
 /** 读取 L2 游标 lastRecordId（字符串；无则空串）。 */
 export function loadL2Cursor(profilePath: string): string {
-	const filePath = join(profilePath, L2_CURSOR_FILE);
+	const filePath = join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE);
 	if (!existsSync(filePath)) return "";
 	try {
 		const data = JSON.parse(readFileSync(filePath, "utf-8")) as { lastRecordId?: string };
@@ -40,7 +41,7 @@ export function loadL2Cursor(profilePath: string): string {
 export function buildL2Task(profilePath: string): string {
 	// 枚举 records 下实际 JSONL 分片文件清单（子代理不需猜测 / 试错日期）——08-17 实测
 	// l2-scene-organizer 子代理默认不知道 records 分片命名格式，枚举列出避免它反复试日期。
-	const recordsDir = join(profilePath, "records");
+	const recordsDir = join(profilePath, MEMORY_DB_DIR, "records");
 	const recordsFiles = existsSync(recordsDir)
 		? readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f)).sort()
 		: [];
@@ -48,9 +49,9 @@ export function buildL2Task(profilePath: string): string {
 		"L2 organization task",
 		`RecordsDir: ${recordsDir}`,
 		`RecordsFiles: ${recordsFiles.join(",") || "(none)"}`,
-		`SceneDir: ${join(profilePath, SCENE_DIR_NAME)}`,
-		`IndexPath: ${join(profilePath, SCENE_INDEX_PATH)}`,
-		`CursorPath: ${join(profilePath, L2_CURSOR_FILE)}`,
+		`SceneDir: ${join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME)}`,
+		`IndexPath: ${join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH)}`,
+		`CursorPath: ${join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE)}`,
 		`PromptDir: ${PROMPT_DIR}`,
 	].join("\n");
 }

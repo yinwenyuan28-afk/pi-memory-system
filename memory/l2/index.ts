@@ -3,6 +3,7 @@ import { statSync, unwatchFile, watchFile } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task } from "./config.js";
+import { L1_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 场景记忆 —— 主进程调度
@@ -117,7 +118,7 @@ export function setupL2Organizer(
 			lastMtimeMs = 0;
 		}
 		// l1 游标文件名与 l1/config.ts 的 CURSOR_FILE = "l1-cursor.json" 对齐
-		const filePath = join(profilePath, "l1-cursor.json");
+		const filePath = join(profilePath, MEMORY_DB_DIR, L1_CURSOR_FILE);
 		watchedFile = filePath;
 		try {
 			lastMtimeMs = statSync(filePath).mtimeMs; // 启动时不计 "首次触发"
@@ -140,7 +141,7 @@ export function setupL2Organizer(
 	// profile 切换时重新监听（session_start 时 profile 可能换）
 	pi.on("session_start", () => {
 		const p = getProfilePath();
-		if (p && join(p, "l1-cursor.json") !== watchedFile) startWatch(p);
+		if (p && join(p, MEMORY_DB_DIR, L1_CURSOR_FILE) !== watchedFile) startWatch(p);
 	});
 
 	// 缓存 ctx + 兜底执行挂起触发

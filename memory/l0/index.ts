@@ -10,6 +10,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { parseSessionLines } from "./session-parser.js";
 import { buildRuleSet, replaceBase64WithImage, sanitizeText, shouldCaptureL0 } from "./sanitize.js";
+import { L0_CONVERSATIONS_DIR, L0_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L0 净化归档层
@@ -26,9 +27,9 @@ import { buildRuleSet, replaceBase64WithImage, sanitizeText, shouldCaptureL0 } f
 // ══════════════════════════════════════════════════════════════
 
 /** 游标文件名（独立于 review-cursor.json——两个消费者推进节奏不同）。 */
-const CURSOR_FILE = "l0-cursor.json";
-/** 分片目录（{profilePath}/conversations/）。 */
-const CONVERSATIONS_DIR = "conversations";
+const CURSOR_FILE = L0_CURSOR_FILE;
+/** 分片目录（{memoryDB}/conversations/）。 */
+const CONVERSATIONS_DIR = L0_CONVERSATIONS_DIR;
 
 /** 一次 L0 增量归档的结果。 */
 export interface L0ArchiveResult {
@@ -63,7 +64,7 @@ interface L0CursorEntry {
  * 读取某 session 的 L0 游标行号；无游标或 session 不匹配返回 0。
  */
 function loadL0Cursor(profilePath: string, sessionPath: string): number {
-	const filePath = join(profilePath, CURSOR_FILE);
+	const filePath = join(profilePath, MEMORY_DB_DIR, CURSOR_FILE);
 	if (!existsSync(filePath)) return 0;
 	try {
 		const data = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, L0CursorEntry>;
@@ -79,7 +80,7 @@ function loadL0Cursor(profilePath: string, sessionPath: string): number {
  * 原子写游标（tmp + rename，复用 review-cursor 的 saveCursor 模式）。
  */
 function saveL0Cursor(profilePath: string, sessionPath: string, line: number): void {
-	const filePath = join(profilePath, CURSOR_FILE);
+	const filePath = join(profilePath, MEMORY_DB_DIR, CURSOR_FILE);
 	let data: Record<string, L0CursorEntry> = {};
 	if (existsSync(filePath)) {
 		try {
@@ -89,7 +90,7 @@ function saveL0Cursor(profilePath: string, sessionPath: string, line: number): v
 		}
 	}
 	data[sessionPath] = { sessionPath, line };
-	const tmpPath = join(profilePath, `.tmp_l0_cursor_${Date.now()}`);
+	const tmpPath = join(profilePath, MEMORY_DB_DIR, `.tmp_l0_cursor_${Date.now()}`);
 	writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
 	try {
 		rmSync(filePath, { force: true });
@@ -210,7 +211,7 @@ export function archiveSessionIncrement(sessionPath: string, profilePath: string
 
 	// 写入分片（本地日期，跨 session 混排）
 	if (records.length > 0) {
-		const shardDir = join(profilePath, CONVERSATIONS_DIR);
+		const shardDir = join(profilePath, MEMORY_DB_DIR, CONVERSATIONS_DIR);
 		if (!existsSync(shardDir)) mkdirSync(shardDir, { recursive: true });
 		const shardPath = join(shardDir, `${localDate(now)}.jsonl`);
 		appendFileSync(shardPath, records.join("\n") + "\n", "utf-8");
