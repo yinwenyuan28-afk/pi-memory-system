@@ -10,7 +10,9 @@ import { setupMemoryReviewer } from "./memory/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
 import { LLMKeywordSearcher } from "./memory/searcher.js";
 import { loadMemoryPrompts } from "./memory/prompts.js";
-import { setupWorkflowSystem } from "./workflow/index.js";
+// [DISABLED] workflow 保存系统已禁用（保留代码，恢复时取消注释即可）
+// import { setupWorkflowSystem } from "./workflow/index.js";
+import { archiveSessionIncrement } from "./memory/l0.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -21,11 +23,11 @@ export default function (pi: ExtensionAPI) {
   const agentDir = getAgentDir();
   const manager = new MemoryManager(agentDir);
   const searcher = new LLMKeywordSearcher();
-  // workflow 保存系统控制器（扩展加载时注册命令/事件，session_start 时 init）
-  const workflowController = setupWorkflowSystem(pi, {
-    getProfilePath: () => manager?.getProfileManager().getActiveProfile()?.path,
-    getSessionId: () => sessionId,
-  });
+  // [DISABLED] workflow 保存系统控制器已禁用（保留代码，恢复时取消注释）
+  // const workflowController = setupWorkflowSystem(pi, {
+  //   getProfilePath: () => manager?.getProfileManager().getActiveProfile()?.path,
+  //   getSessionId: () => sessionId,
+  // });
   let skillManager: SkillManager | undefined;
   let profileSkillsPath: string | undefined;
   let loadedSkillsThisSession: Set<string> = new Set();
@@ -83,8 +85,8 @@ export default function (pi: ExtensionAPI) {
       reviewersInitialized = true;
     }
 
-    // 初始化工作流保存系统（session_start 时重建 db，跟随 profile）
-    workflowController.init(ctx);
+    // [DISABLED] 初始化工作流保存系统已禁用（保留代码，恢复时取消注释）
+    // workflowController.init(ctx);
 
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
 
@@ -116,7 +118,7 @@ export default function (pi: ExtensionAPI) {
     manager.shutdown();
     skillManager = undefined;
     profileSkillsPath = undefined;
-    workflowController.shutdown();
+    // [DISABLED] workflowController.shutdown();
   });
 
   // ── 状态显示 + 关键词刷新 ──────────────────────────────────
@@ -129,6 +131,22 @@ export default function (pi: ExtensionAPI) {
     if (searcher.incrementTurn()) {
       const ctxText = buildSearcherContext(ctx);
       searcher.refreshKeywords(ctxText).catch(() => {});
+    }
+
+    // L0 净化归档：每轮增量把 session 新消息写入 {profile}/conversations/YYYY-MM-DD.jsonl
+    // （去重=行号游标；降噪=SanitizeRule 规则集；分片=本地日期）。
+    // 同步执行（毫秒级），异常不阻塞主流程。
+    try {
+      const sessionFile = ctx.sessionManager.getSessionFile();
+      const profile = manager?.getProfileManager().getActiveProfile();
+      if (sessionFile && profile) {
+        const result = archiveSessionIncrement(sessionFile, profile.path);
+        if (result.error) {
+          console.warn(`[memory-system][l0] ${result.error}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[memory-system][l0] archive failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   });
 
@@ -543,9 +561,9 @@ export default function (pi: ExtensionAPI) {
           searcher.setProfilePath(profile.path);
           searcher.clearKeywords();
           searcher.resetTurn();
-          // workflow 系统跟随 profile 重建（数据库文件在 profile 目录下）
-          workflowController.shutdown();
-          workflowController.init();
+          // [DISABLED] workflow 系统跟随 profile 重建已禁用（保留代码，恢复时取消注释）
+          // workflowController.shutdown();
+          // workflowController.init();
           ctx.ui.notify(`Switched to profile: ${parts[1]}`, "info");
         } catch (e) {
           ctx.ui.notify(`Failed: ${e instanceof Error ? e.message : String(e)}`, "error");
