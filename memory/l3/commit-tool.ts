@@ -100,8 +100,35 @@ export function registerL3CommitTool(
 					};
 				}
 
-				// 写 USER.md（单条目文档，无 ENTRY_DELIMITER）
-				atomicWrite(join(profilePath, USER_FILE), sanitized);
+				// ── 结构完整性硬保护（防止 LLM 全量重写丢失 USER.md 历史信息）──
+				// 读现有 USER.md，若存在则检查新 content 是否保留关键结构标记。
+				// 冷启动（USER.md 不存在）时跳过校验（允许首次创建）。
+				const userMdPath = join(profilePath, USER_FILE);
+				if (existsSync(userMdPath)) {
+					const existing = readFileSync(userMdPath, "utf-8");
+					// 必须保留的结构标记（腾讯四层深度扫描模板的核心骨架）
+					const requiredMarkers = [
+						"Archetype",
+						"Chapter 1",
+						"Chapter 3",
+					];
+					const missing = requiredMarkers.filter((m) => !sanitized.includes(m));
+					if (missing.length > 0) {
+						return {
+							content: [{
+								type: "text",
+								text: JSON.stringify({
+									success: false,
+									error: `USER.md 结构不完整：缺失 ${missing.join(", ")}。禁止全量重写，必须保留现有 USER.md 的有效信息和结构骨架（Archetype/Chapter 1-4）。请基于现有内容编辑后重试。`,
+								} satisfies L3CommitResult),
+						}],
+						details: {},
+					};
+				}
+			}
+
+			// 写 USER.md（单条目文档，无 ENTRY_DELIMITER）
+			atomicWrite(userMdPath, sanitized);
 
 				// 更新 L3 游标
 				const now = new Date().toISOString();
