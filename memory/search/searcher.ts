@@ -58,6 +58,26 @@ const JACCARD_WEIGHT = 0.6;
  *   - agent_settled 每 5 轮刷新一次
  *   - get_memory 工具强制不走缓存
  */
+/**
+ * 解析 LLM 语义过滤响应中的 keep 标识列表（模块级，供 filterMemories 等复用）。
+ *
+ * @param raw LLM 返回的文本（可能是 JSON 或代码块包裹）
+ * @returns keep 标识数组（`file#order`），解析失败返回空数组（调用方走保底）
+ */
+function parseKeepKeys(raw: string): string[] {
+	try {
+		const jsonMatch = raw.match(/\{[\s\S]*\}/);
+		if (!jsonMatch) return [];
+		const parsed = JSON.parse(jsonMatch[0]);
+		if (Array.isArray(parsed.keep)) {
+			return parsed.keep.map((k: unknown) => String(k));
+		}
+	} catch {
+		// 解析失败 → 空数组，调用方走保底逻辑
+	}
+	return [];
+}
+
 export class LLMKeywordSearcher {
 	private cachedKeywords: string[] = [];
 	private cachedAt = 0;
@@ -278,6 +298,17 @@ export class LLMKeywordSearcher {
 	 * @param queryText 用户问题
 	 * @returns 过滤后的章节（按 LLM 相关度降序，最多 MAX_INJECT_SECTIONS 个）
 	 */
+	/**
+	 * 解析 LLM 语义过滤响应中的 keep 标识列表。
+	 *
+	 * 修复（2026-08-17）：原调用 `parseFilterKeep(raw)` 未定义（存量笔误，应为
+	 * inverted-index 的 parseFilterResponse，但后者语义是文件级过滤、candidates 为
+	 * 字符串数组，与本章节级过滤 `{file, order}` 不匹配）——运行时会抛
+	 * ReferenceError 被 catch 吞掉，导致 LLM 语义过滤永远走降级分支。
+	 *
+	 * @param raw LLM 返回的文本（可能是 JSON 或代码块包裹）
+	 * @returns keep 标识数组（`file#order`），解析失败返回空数组（调用方走保底）
+	 */
 	async filterMemories(
 		candidates: SectionCandidate[],
 		queryText: string,
@@ -307,7 +338,7 @@ export class LLMKeywordSearcher {
 			const raw = typeof result.content === "string"
 				? result.content
 				: JSON.stringify(result.content);
-			const keep = parseFilterKeep(raw);
+			const keep = parseKeepKeys(raw);
 			if (keep.length > 0) {
 				// 按 LLM 相关度降序输出顺序保留（截断依据）
 				const keySet = new Set(keep);
