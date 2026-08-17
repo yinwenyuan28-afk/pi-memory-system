@@ -693,6 +693,21 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // /l2-trigger：手动触发一次 L2 场景组织（绕过攒批）——供调试/验证使用。
+  // 需 setupL2Organizer 已初始化，否则提示重启 pi 加载新扩展。
+  pi.registerCommand("l2-trigger", {
+    description: "手动触发一次 L2 场景组织（绕过 L2_BATCH 攒批）。Usage: /l2-trigger",
+    handler: async (_args, ctx) => {
+      if (!l2Controls) {
+        ctx.ui.notify("L2 调度器未初始化（扩展加载中或未启用）", "error");
+        return;
+      }
+      ctx.ui.notify("正在手动触发 L2 场景组织...", "info");
+      ctx.ui.setStatus("memory", "Memory ⚙L2 (manual)...");
+      l2Controls.triggerManual();
+    },
+  });
+
   // ── /rebuild-index Command ─────────────────────────────────
 
   pi.registerCommand("rebuild-index", {

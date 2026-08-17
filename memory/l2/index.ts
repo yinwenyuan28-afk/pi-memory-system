@@ -67,7 +67,7 @@ async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext)
 export function setupL2Organizer(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
-): { reset: () => void } {
+): { reset: () => void; triggerManual: () => void } {
 	let pendingBatches = 0;
 	let scheduled = false;
 	let pendingTrigger = false;
@@ -152,6 +152,12 @@ export function setupL2Organizer(
 		}
 	});
 
+	/** 手动触发一次 L2（绕过攒批 / 跳过 fs.watchFile 监听）。 */
+	function triggerManual(): void {
+		if (scheduled) return;
+		queueTrigger();
+	}
+
 	return {
 		reset: () => {
 			pendingBatches = 0;
@@ -162,5 +168,6 @@ export function setupL2Organizer(
 				watchedFile = undefined;
 			}
 		},
+		triggerManual,
 	};
 }
