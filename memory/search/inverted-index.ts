@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Jieba } from "@node-rs/jieba";
-import type { InvertedIndexData } from "./types.js";
-import { loadMemoryPrompts, renderPrompt } from "./prompts.js";
+import type { InvertedIndexData } from "../core/types.js";
+import { loadMemoryPrompts, renderPrompt } from "../prompts.js";
 
 const INDEX_FILE = "memory-index.json";
 const INDEX_VERSION = 1;

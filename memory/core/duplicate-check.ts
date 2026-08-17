@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { InvertedIndex } from "./inverted-index.js";
+import type { InvertedIndex } from "../search/inverted-index.js";
 import type { DuplicateResult } from "./types.js";
 
 /**

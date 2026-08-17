@@ -8,7 +8,7 @@ export { MEMORY_SCHEMA } from "./tool.js";
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { InvertedIndex } from "./inverted-index.js";
+import { InvertedIndex } from "../search/inverted-index.js";
 
 /**
  * 将记忆内容包装为标准的 <memory-context> 注入块。

@@ -2,10 +2,10 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { ContentFilter } from "./content-filter.js";
 import { checkDuplicate } from "./duplicate-check.js";
-import type { InvertedIndex } from "./inverted-index.js";
+import type { InvertedIndex } from "../search/inverted-index.js";
 import type { MemoryStore } from "./store.js";
 import type { FilterResult, MemorySaveLog, Target } from "./types.js";
-import { loadMemoryPrompts } from "./prompts.js";
+import { loadMemoryPrompts } from "../prompts.js";
 
 const contentFilter = new ContentFilter();
 

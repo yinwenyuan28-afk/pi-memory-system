@@ -2,7 +2,7 @@ import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InvertedIndex } from "./inverted-index.js";
-import { loadMemoryPrompts, renderPrompt } from "./prompts.js";
+import { loadMemoryPrompts, renderPrompt } from "../prompts.js";
 import { splitSections } from "./sections.js";
 
 /**

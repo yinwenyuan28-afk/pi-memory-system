@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { MemoryManager } from "./manager.js";
+import type { MemoryManager } from "../core/manager.js";
 import {
   computeReviewRange,
   hasCompleteEnding,

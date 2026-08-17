@@ -7,7 +7,7 @@ import {
   loadCursor,
   saveCursor,
   scanSessionFile,
-} from "../memory/review-cursor.js";
+} from "../memory/review/review-cursor.js";
 
 /**
  * Skill 审查子代理调度模块。

@@ -1,11 +1,11 @@
-export { ContentFilter } from "./content-filter.js";
-export { checkDuplicate } from "./duplicate-check.js";
-export { buildFilterPrompt, InvertedIndex, type LLMFilterCallback, parseFilterResponse } from "./inverted-index.js";
-export { MEMORY_SCHEMA, MemoryManager } from "./manager.js";
-export { ProfileManager } from "./profile.js";
-export { MemoryRouter } from "./router.js";
-export { MemoryStore } from "./store.js";
-export { handleMemoryTool } from "./tool.js";
+export { ContentFilter } from "./core/content-filter.js";
+export { checkDuplicate } from "./core/duplicate-check.js";
+export { buildFilterPrompt, InvertedIndex, type LLMFilterCallback, parseFilterResponse } from "./search/inverted-index.js";
+export { MEMORY_SCHEMA, MemoryManager } from "./core/manager.js";
+export { ProfileManager } from "./core/profile.js";
+export { MemoryRouter } from "./core/router.js";
+export { MemoryStore } from "./core/store.js";
+export { handleMemoryTool } from "./core/tool.js";
 export {
 	DEFAULT_MEMORY_CHAR_LIMIT,
 	DEFAULT_PROFILE,
@@ -21,4 +21,4 @@ export {
 	type RouteMatch,
 	type RouteResult,
 	type ToolSchema,
-} from "./types.js";
+} from "./core/types.js";

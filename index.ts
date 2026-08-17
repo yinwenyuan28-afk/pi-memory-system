@@ -6,13 +6,13 @@ import {
   SkillManager,
   setBundledSkillsPaths,
 } from "./skill/index.js";
-import { setupMemoryReviewer } from "./memory/reviewer.js";
+import { setupMemoryReviewer } from "./memory/review/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
-import { LLMKeywordSearcher } from "./memory/searcher.js";
+import { LLMKeywordSearcher } from "./memory/search/searcher.js";
 import { loadMemoryPrompts } from "./memory/prompts.js";
 // [DISABLED] workflow 保存系统已禁用（保留代码，恢复时取消注释即可）
 // import { setupWorkflowSystem } from "./workflow/index.js";
-import { archiveSessionIncrement } from "./memory/l0.js";
+import { archiveSessionIncrement } from "./memory/l0/index.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";

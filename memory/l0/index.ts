@@ -8,7 +8,7 @@ import {
 	appendFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { parseSessionLines } from "./review-cursor.js";
+import { parseSessionLines } from "./session-parser.js";
 import { buildRuleSet, replaceBase64WithImage, sanitizeText, shouldCaptureL0 } from "./sanitize.js";
 
 // ══════════════════════════════════════════════════════════════
