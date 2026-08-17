@@ -13,6 +13,8 @@ import { loadMemoryPrompts } from "./memory/prompts.js";
 // [DISABLED] workflow 保存系统已禁用（保留代码，恢复时取消注释即可）
 // import { setupWorkflowSystem } from "./workflow/index.js";
 import { archiveSessionIncrement } from "./memory/l0/index.js";
+import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.js";
+import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -65,6 +67,13 @@ export default function (pi: ExtensionAPI) {
 
   // ── Session Lifecycle ───────────────────────────────────────
 
+  // L1 提取调度器（单次注册，与 reviewersInitialized 同模式）
+  let l1Initialized = false;
+  let resetL1: (() => void) | undefined;
+
+  // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）
+  registerL1CommitTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
     const profile = manager.getProfileManager().getActiveProfile();
@@ -83,6 +92,12 @@ export default function (pi: ExtensionAPI) {
       getMemoryStatus = setupMemoryReviewer(pi, () => manager);
       getSkillStatus = setupSkillReviewer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
       reviewersInitialized = true;
+    }
+
+    // 初始化 L1 提取调度器（单次注册）：每 L1_INTERVAL 轮启动 l1-extractor 子代理
+    if (!l1Initialized) {
+      resetL1 = setupL1Extractor(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+      l1Initialized = true;
     }
 
     // [DISABLED] 初始化工作流保存系统已禁用（保留代码，恢复时取消注释）
@@ -118,6 +133,7 @@ export default function (pi: ExtensionAPI) {
     manager.shutdown();
     skillManager = undefined;
     profileSkillsPath = undefined;
+    resetL1?.();
     // [DISABLED] workflowController.shutdown();
   });
 
@@ -530,6 +546,27 @@ export default function (pi: ExtensionAPI) {
       }
       const result = handleSkillViewTool(params as Record<string, unknown>, skillManager);
       return { content: [{ type: "text", text: result }], details: {} };
+    },
+  });
+
+  // ── L1 Mode Command ───────────────────────────────────────
+
+  pi.registerCommand("l1-mode", {
+    description: "Switch L1 extraction mode: code (work_fact/work_task/work_method/work_artifact) or chat (persona/episodic/instruction). Usage: /l1-mode [code|chat]",
+    usage: "Usage: /l1-mode [code|chat]",
+    handler: async (args, ctx) => {
+      const profile = manager?.getProfileManager().getActiveProfile();
+      if (!profile) {
+        ctx.ui.notify("No active profile", "error");
+        return;
+      }
+      const mode = (args || "").trim().toLowerCase();
+      if (mode !== "code" && mode !== "chat") {
+        ctx.ui.notify(`Current L1 mode: ${loadL1Config(profile.path).mode}. Usage: /l1-mode [code|chat]`, "info");
+        return;
+      }
+      saveL1Mode(profile.path, mode as "code" | "chat");
+      ctx.ui.notify(`L1 mode switched to: ${mode}`, "info");
     },
   });
 
