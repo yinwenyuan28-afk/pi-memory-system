@@ -170,13 +170,13 @@ export default function (pi: ExtensionAPI) {
     }
 
     // L0 净化归档：每轮增量把 session 新消息写入 {profile}/conversations/YYYY-MM-DD.jsonl
-    // （去重=行号游标；降噪=SanitizeRule 规则集；分片=本地日期）。
+    // （去重=行号游标；降噪=SanitizeRule 规则集；分片=本地日期；cwd=ctx.cwd 精确值）。
     // 同步执行（毫秒级），异常不阻塞主流程。
     try {
       const sessionFile = ctx.sessionManager.getSessionFile();
       const profile = manager?.getProfileManager().getActiveProfile();
       if (sessionFile && profile) {
-        const result = archiveSessionIncrement(sessionFile, profile.path);
+        const result = archiveSessionIncrement(sessionFile, profile.path, ctx.cwd);
         if (result.error) {
           console.warn(`[memory-system][l0] ${result.error}`);
         }

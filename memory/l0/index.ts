@@ -7,7 +7,7 @@ import {
 	writeFileSync,
 	appendFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parseSessionLines } from "./session-parser.js";
 import { buildRuleSet, replaceBase64WithImage, sanitizeText, shouldCaptureL0 } from "./sanitize.js";
 
@@ -112,6 +112,26 @@ function saveL0Cursor(profilePath: string, sessionPath: string, line: number): v
 // ── 主流程 ──
 
 /**
+ * 从 session 文件路径启发式解码 cwd（pi 编码不可逆，仅兜底用）。
+ *
+ * pi 的编码（session-manager.ts getDefaultSessionDirPath）：
+ *   `--${cwd.replace(/^[\/\\]/, "").replace(/[\/\\:]/g, "-")}--`
+ * 即目录名 = `--C--dev-code_java-wangxin-backend-A104527--`（`/`、`\`、`:` 全→`-`）。
+ * 解码：去首尾 `--` → 首个字母后跟 `-` 视为盘符冒号 → 其余 `-` 视为 `/`。
+ * 局限：原路径含 `-` 时失真（如 my-project → my/project）；有 ctx.cwd 时勿用此路径。
+ */
+export function decodeCwdFromSessionPath(sessionPath: string): string {
+	const parentDir = basename(dirname(sessionPath));
+	if (!parentDir.startsWith("--") || !parentDir.endsWith("--")) return "";
+	let inner = parentDir.slice(2, -2);
+	// 盘符：首字母 + 紧跟的 `-` → `:`（如 C- → C:）
+	if (/^[a-zA-Z]-/.test(inner)) {
+		inner = inner[0] + ":" + inner.slice(2);
+	}
+	return inner.replace(/-/g, "/");
+}
+
+/**
  * 增量归档一个 session 的新增消息到 L0 分片。
  *
  * 幂等性：游标记录上次处理到的行号；本次只处理游标之后的增量行。
@@ -119,9 +139,11 @@ function saveL0Cursor(profilePath: string, sessionPath: string, line: number): v
  *
  * @param sessionPath  session JSONL 文件绝对路径
  * @param profilePath  当前 profile 目录（L0 数据与游标都存这里，跟随 profile）
+ * @param cwd          工作目录（可选；从扩展 ctx.cwd 传入，精确值。缺省时从
+ *                     session 目录名启发式解码——pi 的编码不可逆，含 `-` 的路径会失真）
  * @returns L0ArchiveResult
  */
-export function archiveSessionIncrement(sessionPath: string, profilePath: string): L0ArchiveResult {
+export function archiveSessionIncrement(sessionPath: string, profilePath: string, cwd?: string): L0ArchiveResult {
 	if (!existsSync(sessionPath)) {
 		return { recorded: 0, filtered: 0, error: `session file not found: ${sessionPath}` };
 	}
@@ -144,6 +166,9 @@ export function archiveSessionIncrement(sessionPath: string, profilePath: string
 
 	// 规则集：内置 + 外部 l0-sanitize-rules.json（每轮构建一次，规则数少开销可忽略）
 	const rules = buildRuleSet(profilePath);
+
+	// cwd：优先显式传入（ctx.cwd 精确）；兜底从 session 目录名启发式解码
+	const effectiveCwd = cwd || decodeCwdFromSessionPath(sessionPath);
 
 	const records: string[] = [];
 	const now = new Date();
@@ -178,6 +203,7 @@ export function archiveSessionIncrement(sessionPath: string, profilePath: string
 				role: msg.role,
 				content,
 				timestamp: msg.timestamp ?? null,
+				cwd: effectiveCwd,
 			}),
 		);
 	}

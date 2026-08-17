@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSyn
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { decodeCwdFromSessionPath } from "../l0/index.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 配置 / 游标 / 分片清单（纯函数，无 pi 依赖，可单测）
@@ -113,5 +114,43 @@ export function buildL1Task(profilePath: string): string | null {
 		`RecordsDir: ${join(profilePath, RECORDS_DIR_NAME)}`,
 		`PromptDir: ${PROMPT_DIR}`,
 		`Mode: ${mode}`,
+		`KnownProjects: ${listKnownProjects().join(",")}`,
 	].join("\n");
+}
+
+/**
+ * 枚举 ~/.pi/agent/sessions/ 下所有 cwd（跨前后端多项目场景：session 工作目录
+ * 可能与被操作代码目录不同，子代理按消息内容匹配 KnownProjects 修正记忆归属）。
+ *
+ * 优先读 session 文件第一行（type=session 的 header.cwd，真实精确值）；
+ * 读不到时回退 decodeCwdFromSessionPath（启发式解码，含 `-` 的路径会失真）。
+ */
+export function listKnownProjects(): string[] {
+	const home = process.env.PI_CODING_AGENT_DIR ||
+		process.env.HOME || process.env.USERPROFILE || "";
+	const sessionsDir = join(home, ".pi", "agent", "sessions");
+	if (!existsSync(sessionsDir)) return [];
+	const result: string[] = [];
+	try {
+		for (const d of readdirSync(sessionsDir)) {
+			if (!d.startsWith("--") || !d.endsWith("--")) continue;
+			const sessionDirPath = join(sessionsDir, d);
+			// 优先读该目录下第一个 session 文件的 header.cwd（真实值）
+			let cwd = "";
+			try {
+				const firstFile = readdirSync(sessionDirPath).find((f) => f.endsWith(".jsonl"));
+				if (firstFile) {
+					const header = JSON.parse(readFileSync(join(sessionDirPath, firstFile), "utf-8").split(/\r?\n/)[0]);
+					if (typeof header?.cwd === "string" && header.cwd) cwd = header.cwd;
+				}
+			} catch {
+				// 回退解码
+			}
+			if (!cwd) cwd = decodeCwdFromSessionPath(join(sessionDirPath, "x.jsonl"));
+			if (cwd && cwd !== "/" && cwd !== "C:/") result.push(cwd);
+		}
+	} catch {
+		return result;
+	}
+	return result;
 }
