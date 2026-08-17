@@ -79,7 +79,7 @@ export default function (pi: ExtensionAPI) {
 
   // L2 场景组织调度器（单次注册）：主进程轮询 l1-cursor.json mtime 变化触发计数（08-17 修复回调跨进程断裂）
   let l2Initialized = false;
-  let l2Controls: { reset: () => void } | undefined;
+  let l2Controls: { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void } | undefined;
 
   // L3 persona 调度器（单次注册）：L2 提交后评估触发
   let l3Initialized = false;
@@ -703,8 +703,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       ctx.ui.notify("正在手动触发 L2 场景组织...", "info");
-      ctx.ui.setStatus("memory", "Memory ⚙L2 (manual)...");
-      l2Controls.triggerManual();
+      // 传 ctx 绕过 cachedCtx 依赖（命令路径保证 ctx 可用）
+      l2Controls.triggerManual(ctx);
     },
   });
 
