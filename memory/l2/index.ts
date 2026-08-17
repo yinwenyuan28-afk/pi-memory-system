@@ -1,18 +1,26 @@
 import { randomUUID } from "node:crypto";
+import { statSync, unwatchFile, watchFile } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task } from "./config.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 场景记忆 —— 主进程调度
 //
-//  触发链（用户拍板攒批）：L1 每成功提交一批（l1_commit 成功）回调
-//  onL1Committed() 计数 → 累计 L2_BATCH 批且无进行中任务 → 启动
-//  l2-scene-organizer 子代理（globalThis 桥接）→ await 完成。
+//  触发链：l1_commit 写入 {profile}/l1-cursor.json → 主进程 fs.watchFile 轮询
+//  该文件 mtime 变化 → 累计 L2_BATCH 批且无进行中任务 → 启动 l2-scene-organizer
+//  子代理（globalThis 桥接）→ await 完成。
+//
+//  为什么不用 l1_commit 的回调（onCommitted）：
+//    l1-extractor 是【独立子进程】（pi-subagents 用 --extension 启动新进程，
+//    pid 与主进程不同）。回调里的 l2Controls 闭包是子进程扩展实例的变量 =
+//    undefined（子进程不跑 setupL2Organizer），可选链静默丢弃。
+//    改为监听文件变化（l1-cursor.json 每次 L1 提交都原子写），跨进程天然
+//    穿透，彻底绕开回调链断裂问题（2026-08-17 实测修复）。
+//
 //  游标/场景文件/索引由子代理通过 l2_commit 提交、主进程落盘。
 //
-//  ctx 获取：子代理桥接需要 ExtensionContext，缓存最近一次
-//  agent_settled 的 ctx（l1_commit 总是发生在 agent 运行中，必然
-//  有已缓存的 ctx；agent_settled 兜底执行挂起触发）。
+//  ctx 获取：缓存最近一次 agent_settled 的 ctx，agent_settled 兜底执行挂起触发。
 //
 //  配置/游标纯函数在 ./config.ts；写盘逻辑在 ./commit-tool.ts。
 // ══════════════════════════════════════════════════════════════
@@ -51,17 +59,21 @@ async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext)
  *
  * @param pi                ExtensionAPI
  * @param getProfilePath    当前 profile 路径
- * @returns { onL1Committed, reset }：onL1Committed 由 l1_commit 成功后调用；
- *          reset 在切换 profile / 会话结束时调用
+ * @returns { reset }：reset 在切换 profile / 会话结束时调用
+ *
+ * 取消 onL1Committed 回调（08-17 根因：子代理进程独立加载扩展，回调闭包
+ * 跨进程断裂）；改为 fs.watchFile 轮询 l1-cursor.json mtime 变化触发计数。
  */
 export function setupL2Organizer(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
-): { onL1Committed: () => void; reset: () => void } {
+): { reset: () => void } {
 	let pendingBatches = 0;
 	let scheduled = false;
 	let pendingTrigger = false;
 	let cachedCtx: ExtensionContext | undefined;
+	let watchedFile: string | undefined;
+	let lastMtimeMs = 0;
 
 	async function runTask(task: string, ctx: ExtensionContext): Promise<void> {
 		scheduled = true;
@@ -87,8 +99,8 @@ export function setupL2Organizer(
 		}
 	}
 
-	/** L1 提交成功后调用：累计批数，达 L2_BATCH 触发一次 L2。 */
-	function onL1Committed(): void {
+	/** 文件变化计数：l1-cursor.json mtime 变了 → +1；达 L2_BATCH 触发 L2。 */
+	function onCursorChanged(): void {
 		if (scheduled) return;
 		pendingBatches++;
 		if (pendingBatches >= L2_BATCH) {
@@ -96,6 +108,40 @@ export function setupL2Organizer(
 			queueTrigger();
 		}
 	}
+
+	/** 启动轮询监听（切换 profile 时重新指向）。 */
+	function startWatch(profilePath: string): void {
+		if (watchedFile) {
+			unwatchFile(watchedFile);
+			watchedFile = undefined;
+			lastMtimeMs = 0;
+		}
+		// l1 游标文件名与 l1/config.ts 的 CURSOR_FILE = "l1-cursor.json" 对齐
+		const filePath = join(profilePath, "l1-cursor.json");
+		watchedFile = filePath;
+		try {
+			lastMtimeMs = statSync(filePath).mtimeMs; // 启动时不计 "首次触发"
+		} catch {
+			lastMtimeMs = 0;
+		}
+		// interval=2000ms 轮询（够用且不耗 CPU）
+		watchFile(filePath, { interval: 2000 }, (curr) => {
+			const newMtime = curr.mtimeMs;
+			if (newMtime !== lastMtimeMs) {
+				lastMtimeMs = newMtime;
+				onCursorChanged();
+			}
+		});
+	}
+
+	const initProfile = getProfilePath();
+	if (initProfile) startWatch(initProfile);
+
+	// profile 切换时重新监听（session_start 时 profile 可能换）
+	pi.on("session_start", () => {
+		const p = getProfilePath();
+		if (p && join(p, "l1-cursor.json") !== watchedFile) startWatch(p);
+	});
 
 	// 缓存 ctx + 兜底执行挂起触发
 	pi.on("agent_settled", (_e, ctx) => {
@@ -107,11 +153,14 @@ export function setupL2Organizer(
 	});
 
 	return {
-		onL1Committed,
 		reset: () => {
 			pendingBatches = 0;
 			scheduled = false;
 			pendingTrigger = false;
+			if (watchedFile) {
+				unwatchFile(watchedFile);
+				watchedFile = undefined;
+			}
 		},
 	};
 }

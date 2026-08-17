@@ -19,6 +19,8 @@ import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
 import { registerReadL0IncrementTool } from "./memory/l1/read-tool.js";
 import { setupL2Organizer } from "./memory/l2/index.js";
 import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
+import { setupL3Persona } from "./memory/l3/index.js";
+import { registerL3CommitTool } from "./memory/l3/commit-tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -75,19 +77,42 @@ export default function (pi: ExtensionAPI) {
   let l1Initialized = false;
   let resetL1: (() => void) | undefined;
 
-  // L2 场景组织调度器（单次注册）：L1 提交攒批后触发
+  // L2 场景组织调度器（单次注册）：主进程轮询 l1-cursor.json mtime 变化触发计数（08-17 修复回调跨进程断裂）
   let l2Initialized = false;
-  let l2Controls: { onL1Committed: () => void; reset: () => void } | undefined;
+  let l2Controls: { reset: () => void } | undefined;
 
-  // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）；
-  // 成功提交后回调 onCommitted → L2 攒批计数
+  // L3 persona 调度器（单次注册）：L2 提交后评估触发
+  let l3Initialized = false;
+  let l3Controls: {
+    onL1Committed: (recordCount: number) => void;
+    onL2Committed: (opts?: { personaSignal?: boolean; personaReason?: string }) => void;
+    triggerManual: () => void;
+    reset: () => void;
+  } | undefined;
+
+  // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）。
+  // 回调仅供主进程内（其他扩展模块）同步用，不依赖回调通知 L2 调度：
+  // L2 调度已改为主进程轮询 l1-cursor.json mtime 变化（08-17 修复回调跨进程断裂）。
   registerL1CommitTool(
     pi,
     () => manager?.getProfileManager().getActiveProfile()?.path,
-    () => l2Controls?.onL1Committed(),
+    (written) => {
+      // l2Controls?.onL1Committed(); // 已废弃：回调闭包在子代理进程 = undefined，静默丢弃
+      l3Controls?.onL1Committed(written);
+    },
   );
-  // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接
-  registerL2CommitTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+  // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接；personaSignal → L3 P1
+  registerL2CommitTool(
+    pi,
+    () => manager?.getProfileManager().getActiveProfile()?.path,
+    (opts) => l3Controls?.onL2Committed(opts),
+  );
+  // l3_commit 工具：l3-persona-generator 子代理的 USER.md 写盘桥接
+  registerL3CommitTool(
+    pi,
+    () => manager?.getProfileManager().getActiveProfile()?.path,
+    () => manager,
+  );
   // read_l0_increment 工具：l1-extractor 子代理一次读取游标后增量（替代逐段 read，性能修复）
   registerReadL0IncrementTool(pi);
 
@@ -121,6 +146,12 @@ export default function (pi: ExtensionAPI) {
     if (!l2Initialized) {
       l2Controls = setupL2Organizer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
       l2Initialized = true;
+    }
+
+    // 初始化 L3 persona 调度器（单次注册）：L2 提交后评估触发
+    if (!l3Initialized) {
+      l3Controls = setupL3Persona(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+      l3Initialized = true;
     }
 
     // [DISABLED] 初始化工作流保存系统已禁用（保留代码，恢复时取消注释）
@@ -161,6 +192,7 @@ export default function (pi: ExtensionAPI) {
     profileSkillsPath = undefined;
     resetL1?.();
     l2Controls?.reset();
+    l3Controls?.reset();
     // [DISABLED] workflowController.shutdown();
   });
 
@@ -362,11 +394,11 @@ export default function (pi: ExtensionAPI) {
     label: "Memory",
     description:
       "WRITE TO PERSISTENT MEMORY. Use the CORRECT target.\n" +
-      "  1. User preference/habit → target='user'\n" +
-      "  2. Global env fact → target='memory'\n" +
+      "  1. User preference/habit/style correction → target='user'\n" +
+      "  2. Global env fact or behavior constraint → target='memory'\n" +
       "  3. Project-specific info → target='sub-memory', path='{category}/{name}.md'\n" +
-      "  4. Workflow → create a skill, not memory\n" +
-      "RULE: project path in message = sub-memory, NOT memory/user.",
+      "  4. Bounded-task-class executable SOP → skill_manage, NOT memory\n" +
+      "RULE: preferences/instructions → memory; executable workflows → skill; project path → sub-memory.",
     parameters: {
       type: "object",
       properties: {
@@ -601,6 +633,21 @@ export default function (pi: ExtensionAPI) {
       }
       saveL1Mode(profile.path, mode as "code" | "chat");
       ctx.ui.notify(`L1 mode switched to: ${mode}`, "info");
+    },
+  });
+
+  // ── L3 Persona Command ─────────────────────────────────────
+
+  pi.registerCommand("persona", {
+    description: "Manually trigger L3 persona generation (updates USER.md from L2 scenes).",
+    usage: "Usage: /persona",
+    handler: async (_args, ctx) => {
+      if (!l3Controls) {
+        ctx.ui.notify("L3 persona scheduler not initialized", "error");
+        return;
+      }
+      ctx.ui.notify("L3 persona generation queued", "info");
+      l3Controls.triggerManual();
     },
   });
 
