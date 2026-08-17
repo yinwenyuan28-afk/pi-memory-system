@@ -15,6 +15,8 @@ import { loadMemoryPrompts } from "./memory/prompts.js";
 import { archiveSessionIncrement } from "./memory/l0/index.js";
 import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.js";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
+import { setupL2Organizer } from "./memory/l2/index.js";
+import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -71,8 +73,19 @@ export default function (pi: ExtensionAPI) {
   let l1Initialized = false;
   let resetL1: (() => void) | undefined;
 
-  // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）
-  registerL1CommitTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+  // L2 场景组织调度器（单次注册）：L1 提交攒批后触发
+  let l2Initialized = false;
+  let l2Controls: { onL1Committed: () => void; reset: () => void } | undefined;
+
+  // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）；
+  // 成功提交后回调 onCommitted → L2 攒批计数
+  registerL1CommitTool(
+    pi,
+    () => manager?.getProfileManager().getActiveProfile()?.path,
+    () => l2Controls?.onL1Committed(),
+  );
+  // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接
+  registerL2CommitTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
 
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
@@ -98,6 +111,12 @@ export default function (pi: ExtensionAPI) {
     if (!l1Initialized) {
       resetL1 = setupL1Extractor(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
       l1Initialized = true;
+    }
+
+    // 初始化 L2 场景组织调度器（单次注册）：L1 提交 L2_BATCH 批后触发
+    if (!l2Initialized) {
+      l2Controls = setupL2Organizer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+      l2Initialized = true;
     }
 
     // [DISABLED] 初始化工作流保存系统已禁用（保留代码，恢复时取消注释）
@@ -134,6 +153,7 @@ export default function (pi: ExtensionAPI) {
     skillManager = undefined;
     profileSkillsPath = undefined;
     resetL1?.();
+    l2Controls?.reset();
     // [DISABLED] workflowController.shutdown();
   });
 

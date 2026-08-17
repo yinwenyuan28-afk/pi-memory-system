@@ -60,6 +60,7 @@ function readFileSafe(p: string): string {
 export function registerL1CommitTool(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
+	onCommitted?: () => void,
 ): void {
 	pi.registerTool({
 		name: "l1_commit",
@@ -108,6 +109,13 @@ export function registerL1CommitTool(
 
 				// 2. 回写游标
 				saveCursor(profilePath, cursor);
+
+				// 3. 通知 L2 调度（L1 成功提交一批 → 攒批计数）
+				try {
+					onCommitted?.();
+				} catch {
+					// 非致命
+				}
 
 				return {
 					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor }) }],
