@@ -10,11 +10,13 @@ import { setupMemoryReviewer } from "./memory/review/reviewer.js";
 import { setupSkillReviewer } from "./skill/reviewer.js";
 import { LLMKeywordSearcher } from "./memory/search/searcher.js";
 import { loadMemoryPrompts } from "./memory/prompts.js";
+import { resolveConfiguredModel } from "./config/model-config.js";
 // [DISABLED] workflow 保存系统已禁用（保留代码，恢复时取消注释即可）
 // import { setupWorkflowSystem } from "./workflow/index.js";
 import { archiveSessionIncrement } from "./memory/l0/index.js";
 import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.js";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
+import { registerReadL0IncrementTool } from "./memory/l1/read-tool.js";
 import { setupL2Organizer } from "./memory/l2/index.js";
 import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
@@ -86,6 +88,8 @@ export default function (pi: ExtensionAPI) {
   );
   // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接
   registerL2CommitTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+  // read_l0_increment 工具：l1-extractor 子代理一次读取游标后增量（替代逐段 read，性能修复）
+  registerReadL0IncrementTool(pi);
 
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
@@ -124,11 +128,14 @@ export default function (pi: ExtensionAPI) {
 
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
 
+    // 2026-08-08：后台 LLM 调用统一用配置模型（默认 minimax-cn/MiniMax-M3），
+    // 不跟随前台会话切换。配置缺失/无效 → fallback ctx.model。
+    const configuredModel = resolveConfiguredModel(agentDir, ctx.model) as Parameters<typeof completeSimple>[0];
+
     // Wire up LLM filter for inverted index (async, non-blocking)
-    const currentModel = ctx.model;
     manager.invertedIndexInstance.setLLMFilter(async (prompt: string) => {
       try {
-        const result = await completeSimple(currentModel, {
+        const result = await completeSimple(configuredModel, {
           systemPrompt: "You respond only with JSON.",
           messages: [{ role: "user", content: prompt }],
         });
@@ -139,7 +146,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     // 初始化 LLMKeywordSearcher
-    searcher.setModel(currentModel);
+    searcher.setModel(configuredModel);
     searcher.setInvertedIndex(manager.invertedIndexInstance);
     searcher.setProfilePath(profile.path);
     searcher.resetTurn();
@@ -155,6 +162,13 @@ export default function (pi: ExtensionAPI) {
     resetL1?.();
     l2Controls?.reset();
     // [DISABLED] workflowController.shutdown();
+  });
+
+  // ── model_select：后台调用不跟随前台切换（2026-08-08）────────
+  // 背景：记忆系统后台 LLM 调用走配置模型（默认 minimax-cn/MiniMax-M3），
+  // 用户在 TUI 切换前台模型不应影响后台。预留 hook 不重写 searcher/wf 模型。
+  pi.on("model_select", (_event) => {
+    /* no-op by design: 后台模型与前台模型解耦 */
   });
 
   // ── 状态显示 + 关键词刷新 ──────────────────────────────────
