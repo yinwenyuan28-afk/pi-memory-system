@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -38,9 +38,16 @@ export function loadL2Cursor(profilePath: string): string {
 
 /** 构造 l2-scene-organizer 子代理任务消息。 */
 export function buildL2Task(profilePath: string): string {
+	// 枚举 records 下实际 JSONL 分片文件清单（子代理不需猜测 / 试错日期）——08-17 实测
+	// l2-scene-organizer 子代理默认不知道 records 分片命名格式，枚举列出避免它反复试日期。
+	const recordsDir = join(profilePath, "records");
+	const recordsFiles = existsSync(recordsDir)
+		? readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f)).sort()
+		: [];
 	return [
 		"L2 organization task",
-		`RecordsDir: ${join(profilePath, "records")}`,
+		`RecordsDir: ${recordsDir}`,
+		`RecordsFiles: ${recordsFiles.join(",") || "(none)"}`,
 		`SceneDir: ${join(profilePath, SCENE_DIR_NAME)}`,
 		`IndexPath: ${join(profilePath, SCENE_INDEX_PATH)}`,
 		`CursorPath: ${join(profilePath, L2_CURSOR_FILE)}`,
