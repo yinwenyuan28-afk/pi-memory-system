@@ -144,39 +144,34 @@ export function computeReviewRange(
 }
 
 /**
- * 轻量检测：session 末尾工作流是否已完成。
- * 只读最后一段（默认 200 行），用于 agent_settled 快速跳过半途状态，避免全量扫描。
- * 返回 true 表示末尾有完整的 assistant text 回复（或文件过小无法判断）。
+ * 轻量检测：L0 分片末尾工作流是否已完成。
+ * L0 分片格式：{"role":"user","content":"...","recordedAt":"..."}（简化版，角色在顶层）。
+ * 返回 true 表示末尾有完整的 assistant 回复。
  */
-export function hasCompleteEnding(sessionPath: string, tailLines = 200): boolean {
-	if (!existsSync(sessionPath)) return true;
+export function hasCompleteEnding(l0Files: string, tailLines = 50): boolean {
+	// L0Files 是逗号分隔的分片路径
+	const files = l0Files.split(",").map((s) => s.trim()).filter(Boolean);
+	if (files.length === 0) return true;
+	// 只读最后一个分片的末尾
+	const lastFile = files[files.length - 1];
+	if (!existsSync(lastFile)) return true;
 	try {
-		const raw = readFileSync(sessionPath, "utf-8");
+		const raw = readFileSync(lastFile, "utf-8");
 		const lines = raw.split(/\r?\n/).filter((l) => l.trim());
 		const tail = lines.slice(-tailLines);
-
 		let lastAssistantHasText = false;
 		for (const line of tail) {
 			let entry: any;
-			try {
-				entry = JSON.parse(line);
-			} catch {
-				continue;
-			}
-			if (entry?.type !== "message") continue;
-			const msg = entry.message;
-			if (!msg) continue;
-			if (msg.role === "user") {
+			try { entry = JSON.parse(line); } catch { continue; }
+			if (entry?.role === "user") {
 				lastAssistantHasText = false;
-			} else if (msg.role === "assistant") {
-				const content = msg.content;
-				if (Array.isArray(content)) {
-					const hasText = content.some((p: any) => p?.type === "text" && p?.text);
-					const hasToolCall = content.some((p: any) => p?.type === "toolCall");
-					if (hasText) lastAssistantHasText = true;
-					else if (hasToolCall) lastAssistantHasText = false;
-				} else if (typeof content === "string" && content.trim()) {
+			} else if (entry?.role === "assistant") {
+				const content = entry.content;
+				if (typeof content === "string" && content.trim()) {
 					lastAssistantHasText = true;
+				} else if (Array.isArray(content)) {
+					const hasText = content.some((p: any) => p?.type === "text" && p?.text);
+					lastAssistantHasText = hasText;
 				}
 			}
 		}
@@ -187,8 +182,8 @@ export function hasCompleteEnding(sessionPath: string, tailLines = 200): boolean
 }
 
 /**
- * 读取 session 文件并解析审查所需的结构信息。
- * 返回 null 表示文件不可读。
+ * 读取 L0 分片并解析审查所需的结构信息。
+ * L0 分片格式：{"sessionKey","recordedAt","id","role","content","timestamp","cwd"}（每行 JSON）。
  */
 export function scanSessionFile(sessionPath: string): {
 	totalLines: number;
@@ -201,35 +196,24 @@ export function scanSessionFile(sessionPath: string): {
 		const lines = raw.split(/\r?\n/);
 		const userMessageLines: number[] = [];
 		let lastAssistantHasText = false;
-
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i].trim();
 			if (!line) continue;
 			let entry: any;
-			try {
-				entry = JSON.parse(line);
-			} catch {
-				continue;
-			}
-			if (entry?.type !== "message") continue;
-			const msg = entry.message;
-			if (!msg) continue;
-			if (msg.role === "user") {
+			try { entry = JSON.parse(line); } catch { continue; }
+			if (entry?.role === "user") {
 				userMessageLines.push(i + 1);
-				lastAssistantHasText = false; // 用户发言后重置
-			} else if (msg.role === "assistant") {
-				const content = msg.content;
-				if (Array.isArray(content)) {
-					const hasText = content.some((p: any) => p?.type === "text" && p?.text);
-					const hasToolCall = content.some((p: any) => p?.type === "toolCall");
-					if (hasText) lastAssistantHasText = true;
-					else if (hasToolCall) lastAssistantHasText = false; // 只有工具调用 → 未完成
-				} else if (typeof content === "string" && content.trim()) {
+				lastAssistantHasText = false;
+			} else if (entry?.role === "assistant") {
+				const content = entry.content;
+				if (typeof content === "string" && content.trim()) {
 					lastAssistantHasText = true;
+				} else if (Array.isArray(content)) {
+					const hasText = content.some((p: any) => p?.type === "text" && p?.text);
+					lastAssistantHasText = hasText;
 				}
 			}
 		}
-
 		return { totalLines: lines.length, userMessageLines, lastAssistantHasText };
 	} catch {
 		return null;
