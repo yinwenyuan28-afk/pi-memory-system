@@ -16,7 +16,6 @@ import { loadAllL1Records } from "./record-loader.js";
 import { getEmbeddingService } from "./service.js";
 import { getVectorStore } from "../vector-store/store.js";
 import { loadEmbeddingConfig } from "./config.js";
-import { isVectorizationReady } from "./vectorization-config.js";
 import type { L1Record } from "./record-loader.js";
 
 /** 向量化状态查询结果 */
@@ -56,9 +55,10 @@ export async function getVectorizationStatus(
   const vectorizedIds = allRecordIds.filter((id) => vectorizedIdsSet.has(id));
   const unVectorizedIds = allRecordIds.filter((id) => !vectorizedIdsSet.has(id));
 
-  // 4. 检查回填前置条件
+  // 4. 检查回填前置条件（只检查 embedding.json 存在 + 有未向量化 records；
+  // 不检查 enabled 标志——回填是手动一次性操作，不受业务开关控制）
   const readyForBackfill =
-    isVectorizationReady(profilePath) &&
+    loadEmbeddingConfig(profilePath) !== null &&
     (await vecStore.isAvailable()) &&
     unVectorizedIds.length > 0;
 
@@ -109,7 +109,9 @@ export async function backfillMissingVectors(
   const startTime = Date.now();
   const errors: string[] = [];
 
-  // 1. 检查前置条件
+  // 1. 检查前置条件（只检查 embedding.json 存在，不检查 enabled 标志）
+  // 设计原则：回填是手动一次性操作，不受 enabled 业务开关控制。
+  // enabled 标志只影响 l1_commit 的自动向量化（l1/commit-tool.ts）。
   const embConfig = loadEmbeddingConfig(profilePath);
   if (!embConfig) {
     return {
@@ -118,16 +120,6 @@ export async function backfillMissingVectors(
       failed: 0,
       durationMs: 0,
       errors: ["embedding.json 未配置，无法回填"],
-    };
-  }
-
-  if (!isVectorizationReady(profilePath)) {
-    return {
-      total: 0,
-      embedded: 0,
-      failed: 0,
-      durationMs: 0,
-      errors: ["VECTORIZATION_ENABLED=false 或未达阈值，跳过回填"],
     };
   }
 
