@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "../l2/config.js";
+import { loadL1Config, type L1Mode } from "../l1/config.js";
 import { L3_CURSOR_FILE as PATHS_L3_CURSOR, MEMORY_DB_DIR } from "../paths.js";
 
 /** P4 记忆阈值（L2 尚未稳定，高于腾讯默认 20）。 */
@@ -11,6 +12,8 @@ export const L3_INTERVAL = 30;
 export const L3_SUBAGENT_TIMEOUT_MS = 600_000;
 /** USER.md 字符硬限额（与 DEFAULT_USER_CHAR_LIMIT 一致）。 */
 export const USER_CHAR_LIMIT = 1375;
+/** code 模式软限额（对齐腾讯 Team Operating Doctrine 1200 字）。 */
+export const CODE_PERSONA_CHAR_LIMIT = 1200;
 
 export const L3_CURSOR_FILE = PATHS_L3_CURSOR;
 export const USER_FILE = "USER.md";
@@ -98,10 +101,11 @@ export function getChangedScenes(profilePath: string, lastPersonaUpdate: string)
 	});
 }
 
-/** 构造 l3-persona-generator 子代理任务消息。 */
+/** 构造 l3-persona-generator 子代理任务消息。Mode 与 L1 配置（/l1-mode）同步。 */
 export function buildL3Task(profilePath: string, triggerReason: string, changedScenes: SceneIndexEntry[]): string | null {
 	const scenes = changedScenes.length > 0 ? changedScenes : readSceneIndex(profilePath);
 	if (scenes.length === 0) return null;
+	const mode: L1Mode = loadL1Config(profilePath).mode;
 	const filenames = scenes.map((e) => e.filename).join(",");
 	return [
 		"L3 persona generation task",
@@ -111,8 +115,9 @@ export function buildL3Task(profilePath: string, triggerReason: string, changedS
 		`SceneDir: ${join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME)}`,
 		`IndexPath: ${join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH)}`,
 		`PromptDir: ${PROMPT_DIR}`,
+		`PromptFile: persona-generation-${mode}.md`,
 		`ChangedScenes: ${filenames}`,
 		`TriggerReason: ${triggerReason}`,
-		`Mode: chat`,
+		`Mode: ${mode}`,
 	].join("\n");
 }
