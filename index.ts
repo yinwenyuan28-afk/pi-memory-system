@@ -754,9 +754,9 @@ export default function (pi: ExtensionAPI) {
 
   // ── L3 Persona Command ─────────────────────────────────────
 
-  pi.registerCommand("my-memory:persona", {
-    description: "Manually trigger L3 persona generation (updates USER.md from L2 scenes).",
-    usage: "Usage: /my-memory:persona",
+  pi.registerCommand("my-memory:l3-trigger", {
+    description: "Manually trigger L3 persona generation (updates USER.md from L2 scenes). Usage: /my-memory:l3-trigger",
+    usage: "Usage: /my-memory:l3-trigger",
     handler: async (_args, ctx) => {
       if (!l3Controls) {
         ctx.ui.notify("L3 persona scheduler not initialized", "error");
