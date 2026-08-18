@@ -734,8 +734,8 @@ export default function (pi: ExtensionAPI) {
   // ── L1 Mode Command ───────────────────────────────────────
 
   pi.registerCommand("my-memory:l1-mode", {
-    description: "Switch L1 extraction mode: code (work_fact/work_task/work_method/work_artifact) or chat (persona/episodic/instruction). Usage: /my-memory:l1-mode [code|chat]",
-    usage: "Usage: /my-memory:l1-mode [code|chat]",
+    description: "切换 L1 提取模式：code（work_fact/work_task/work_method/work_artifact）或 chat（persona/episodic/instruction）。用法：/my-memory:l1-mode [code|chat]",
+    usage: "用法：/my-memory:l1-mode [code|chat]",
     handler: async (args, ctx) => {
       const profile = manager?.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -744,7 +744,7 @@ export default function (pi: ExtensionAPI) {
       }
       const mode = (args || "").trim().toLowerCase();
       if (mode !== "code" && mode !== "chat") {
-        ctx.ui.notify(`Current L1 mode: ${loadL1Config(profile.path).mode}. Usage: /my-memory:l1-mode [code|chat]`, "info");
+        ctx.ui.notify(`当前 L1 模式: ${loadL1Config(profile.path).mode}。用法：/my-memory:l1-mode [code|chat]`, "info");
         return;
       }
       saveL1Mode(profile.path, mode as "code" | "chat");
@@ -755,8 +755,8 @@ export default function (pi: ExtensionAPI) {
   // ── L3 Persona Command ─────────────────────────────────────
 
   pi.registerCommand("my-memory:l3-trigger", {
-    description: "Manually trigger L3 persona generation (updates USER.md from L2 scenes). Usage: /my-memory:l3-trigger",
-    usage: "Usage: /my-memory:l3-trigger",
+    description: "手动触发 L3 Persona 生成（从 L2 场景更新 USER.md）。用法：/my-memory:l3-trigger",
+    usage: "用法：/my-memory:l3-trigger",
     handler: async (_args, ctx) => {
       if (!l3Controls) {
         ctx.ui.notify("L3 persona scheduler not initialized", "error");
@@ -770,7 +770,7 @@ export default function (pi: ExtensionAPI) {
   // ── /profile Command ────────────────────────────────────────
 
   pi.registerCommand("my-memory:profile", {
-    description: "List or switch memory profiles. Usage: /my-memory:profile [list|switch <name>]",
+    description: "列出或切换记忆 profile。用法：/my-memory:profile [list|switch <name>]",
     handler: async (args, ctx) => {
       const parts = (args || "").trim().split(/\s+/);
       const sub = parts[0];
@@ -779,7 +779,7 @@ export default function (pi: ExtensionAPI) {
         const profiles = manager.listProfiles();
         const active = manager.activeProfile;
         const lines = profiles.map((p) => p.name === active ? `* ${p.name} (active)` : `  ${p.name}`);
-        ctx.ui.notify(`Profiles:\n${lines.join("\n")}`, "info");
+        ctx.ui.notify(`Profiles（当前激活标 *）:\n${lines.join("\n")}`, "info");
         return;
       }
 
@@ -805,14 +805,14 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      ctx.ui.notify("Usage: /my-memory:profile [list|switch <name>]", "info");
+      ctx.ui.notify("用法：/my-memory:profile [list|switch <name>]", "info");
     },
   });
 
   // /l2-trigger：手动触发一次 L2 场景组织（绕过攒批）——供调试/验证使用。
   // 需 setupL2Organizer 已初始化，否则提示重启 pi 加载新扩展。
   pi.registerCommand("my-memory:l2-trigger", {
-    description: "手动触发一次 L2 场景组织（绕过 L2_BATCH 攒批）。Usage: /my-memory:l2-trigger",
+    description: "手动触发一次 L2 场景组织（绕过 L2_BATCH 攒批）。用法：/my-memory:l2-trigger",
     handler: async (_args, ctx) => {
       if (!l2Controls) {
         ctx.ui.notify("L2 调度器未初始化（扩展加载中或未启用）", "error");
@@ -827,7 +827,7 @@ export default function (pi: ExtensionAPI) {
   // /l1-trigger：手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）——供调试/验证使用。
   // 需 setupL1Extractor 已初始化，否则提示重启 pi 加载新扩展。
   pi.registerCommand("my-memory:l1-trigger", {
-    description: "手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。Usage: /my-memory:l1-trigger",
+    description: "手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。用法：/my-memory:l1-trigger",
     handler: async (_args, ctx) => {
       if (!l1Controls) {
         ctx.ui.notify("L1 调度器未初始化（扩展加载中或未启用）", "error");
@@ -842,7 +842,7 @@ export default function (pi: ExtensionAPI) {
   // 查询 L1 records 向量化状态：哪些已向量化、哪些未向量化。
   // 从 vector store 的 l1_vector_index 辅助映射表读已向量化清单，与 records/ JSONL 对比。
   pi.registerCommand("my-memory:l1:embedding:list", {
-    description: "查询 L1 records 向量化状态。Usage: /my-memory:l1:embedding:list [limit=10]",
+    description: "查询 L1 records 向量化状态。用法：/my-memory:l1:embedding:list [limit=10]",
     handler: async (args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -865,7 +865,7 @@ export default function (pi: ExtensionAPI) {
   // 前置条件：vectorization.json 中 enabled=true + embedding.json 可读。
   // 注意：需重启 pi 才能使用本命令（memory-system.ts 改动需重启加载）。
   pi.registerCommand("my-memory:l1:embedding:backfill", {
-    description: "批量将未向量化的 L1 records 嵌入向量并入库。Usage: /my-memory:l1:embedding:backfill",
+    description: "批量将未向量化的 L1 records 嵌入向量并入库。用法：/my-memory:l1:embedding:backfill",
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -903,7 +903,7 @@ export default function (pi: ExtensionAPI) {
   // 用途：embedding 模型/维度变更后重算、修复 vector store 污染（如 POC 残留）、修复未归一化旧嵌入。
   // 注意：需重启 pi 加载归一化后的 service.ts 才能使新嵌入生效。
   pi.registerCommand("my-memory:l1:embedding:rebuild", {
-    description: "清空 vector store 并重新嵌入所有 L1 records（解决旧嵌入污染）。Usage: /my-memory:l1:embedding:rebuild",
+    description: "清空 vector store 并重新嵌入所有 L1 records（解决旧嵌入污染）。用法：/my-memory:l1:embedding:rebuild",
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -932,7 +932,7 @@ export default function (pi: ExtensionAPI) {
   // ── /rebuild-index Command ─────────────────────────────────
 
   pi.registerCommand("my-memory:rebuild-index", {
-    description: "Rebuild inverted index from all memory files (deletes old index). Usage: /my-memory:rebuild-index",
+    description: "重建倒排索引（删除旧索引后重新构建全部记忆文件）。用法：/my-memory:rebuild-index",
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       const index = manager.invertedIndexInstance;
