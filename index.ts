@@ -76,7 +76,7 @@ export default function (pi: ExtensionAPI) {
 
   // L1 提取调度器（单次注册，与 reviewersInitialized 同模式）
   let l1Initialized = false;
-  let resetL1: (() => void) | undefined;
+  let l1Controls: { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void } | undefined;
 
   // L2 场景组织调度器（单次注册）：主进程轮询 l1-cursor.json mtime 变化触发计数（08-17 修复回调跨进程断裂）
   let l2Initialized = false;
@@ -141,7 +141,7 @@ export default function (pi: ExtensionAPI) {
 
     // 初始化 L1 提取调度器（单次注册）：每 L1_INTERVAL 轮启动 l1-extractor 子代理
     if (!l1Initialized) {
-      resetL1 = setupL1Extractor(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+      l1Controls = setupL1Extractor(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
       l1Initialized = true;
     }
 
@@ -193,7 +193,7 @@ export default function (pi: ExtensionAPI) {
     manager.shutdown();
     skillManager = undefined;
     profileSkillsPath = undefined;
-    resetL1?.();
+    l1Controls?.reset();
     l2Controls?.reset();
     l3Controls?.reset();
     // [DISABLED] workflowController.shutdown();
@@ -753,6 +753,20 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify("正在手动触发 L2 场景组织...", "info");
       // 传 ctx 绕过 cachedCtx 依赖（命令路径保证 ctx 可用）
       l2Controls.triggerManual(ctx);
+    },
+  });
+
+  // /l1-trigger：手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）——供调试/验证使用。
+  // 需 setupL1Extractor 已初始化，否则提示重启 pi 加载新扩展。
+  pi.registerCommand("l1-trigger", {
+    description: "手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。Usage: /l1-trigger",
+    handler: async (_args, ctx) => {
+      if (!l1Controls) {
+        ctx.ui.notify("L1 调度器未初始化（扩展加载中或未启用）", "error");
+        return;
+      }
+      ctx.ui.notify("正在手动触发 L1 提取...", "info");
+      l1Controls.triggerManual(ctx);
     },
   });
 

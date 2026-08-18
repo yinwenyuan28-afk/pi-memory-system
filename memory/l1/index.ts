@@ -71,7 +71,10 @@ async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext)
 export function setupL1Extractor(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
-): () => void {
+): {
+	reset: () => void;
+	triggerManual: (ctx?: ExtensionContext) => void;
+} {
 	let turnCount = 0;
 	let scheduled = false;
 
@@ -102,9 +105,39 @@ export function setupL1Extractor(
 		}
 	});
 
-	return () => {
-		turnCount = 0;
-		scheduled = false;
+	// 手动触发一轮 L1 提取（供 /l1-trigger 命令调用）
+	const triggerManual = async (ctx?: ExtensionContext) => {
+		if (scheduled) {
+			console.warn("[memory-system][l1] 已有一个提取任务在进行中");
+			return;
+		}
+		const profilePath = getProfilePath();
+		if (!profilePath) {
+			console.warn("[memory-system][l1] 无有效 profile，跳过手动触发");
+			return;
+		}
+		const task = buildL1Task(profilePath);
+		if (!task) {
+			console.warn("[memory-system][l1] 无 L0 增量数据，跳过手动触发");
+			return;
+		}
+		scheduled = true;
+		if (ctx) ctx.ui.setStatus("memory", "Memory ⚙L1 (manual)...");
+		try {
+			await runPiSubagent("l1-extractor", task, ctx);
+		} catch (err) {
+			console.warn(`[memory-system][l1] manual extract failed: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			scheduled = false;
+		}
+	};
+
+	return {
+		reset: () => {
+			turnCount = 0;
+			scheduled = false;
+		},
+		triggerManual,
 	};
 }
 
