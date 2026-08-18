@@ -773,8 +773,8 @@ export default function (pi: ExtensionAPI) {
   // ── /vectorize-list Command ─────────────────────────────────
   // 查询 L1 records 向量化状态：哪些已向量化、哪些未向量化。
   // 从 vector store 的 l1_vector_index 辅助映射表读已向量化清单，与 records/ JSONL 对比。
-  pi.registerCommand("my-memory:vectorize-list", {
-    description: "查询 L1 records 向量化状态。Usage: /my-memory:vectorize-list [limit=10]",
+  pi.registerCommand("my-memory:l1:embedding:list", {
+    description: "查询 L1 records 向量化状态。Usage: /my-memory:l1:embedding:list [limit=10]",
     handler: async (args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -796,8 +796,8 @@ export default function (pi: ExtensionAPI) {
   // 批量回填未向量化的 L1 records。
   // 前置条件：vectorization.json 中 enabled=true + embedding.json 可读。
   // 注意：需重启 pi 才能使用本命令（memory-system.ts 改动需重启加载）。
-  pi.registerCommand("my-memory:vectorize-backfill", {
-    description: "批量将未向量化的 L1 records 嵌入向量并入库。Usage: /my-memory:vectorize-backfill",
+  pi.registerCommand("my-memory:l1:embedding:backfill", {
+    description: "批量将未向量化的 L1 records 嵌入向量并入库。Usage: /my-memory:l1:embedding:backfill",
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
