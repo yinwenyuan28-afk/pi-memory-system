@@ -92,6 +92,63 @@ export default function (pi: ExtensionAPI) {
     reset: () => void;
   } | undefined;
 
+  // ── Tool schema normalization（修复严格 OpenAI 兼容 provider 报错）────────────
+  // pi 在转发工具给 OpenAI 兼容接口时，把 tool.parameters 原样当作函数 JSON Schema
+  // 发出（openai-completions.ts: `parameters: tool.parameters`）。本扩展里部分工具的
+  // parameters 写成了扁平 map：{ paramName: { type, description } }，缺顶层
+  // type:"object"，导致 DeepSeek / opencode(Console Go) 等严格 provider 拒绝并报：
+  //   "schema must be a JSON Schema of 'type: "object"', got 'type: null'"。
+  // 这里把 registerTool 包一层，自动把扁平 map 升级成正规 JSON Schema 对象。
+  // 已经是正规 JSON Schema（含 type:"object"）或 TypeBox schema（含 TypeBox.Kind）的
+  // 工具不受影响，原样透传。
+  const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
+  const _origRegisterTool = pi.registerTool.bind(pi);
+  (pi as { registerTool: (tool: any) => void }).registerTool = (tool: any) => {
+    const params = tool?.parameters;
+    const isFlatMap =
+      params &&
+      typeof params === "object" &&
+      !Array.isArray(params) &&
+      !params.type &&
+      !Object.getOwnPropertySymbols(params).includes(TYPEBOX_KIND);
+    if (isFlatMap) {
+      const properties: Record<string, any> = {};
+      const required: string[] = [];
+      for (const [key, spec] of Object.entries(params)) {
+        properties[key] = spec;
+        if ((spec as any)?.required === true) required.push(key);
+      }
+      tool.parameters = { type: "object", properties, required };
+    }
+
+    // Normalize execute result → AgentToolResult.
+    // pi 把工具 execute 的返回值直接当作 AgentToolResult，必须含 content:[] 与 details
+    // （packages/agent/src/types.ts: AgentToolResult）。本扩展多数工具的 execute 返回的是
+    // 普通对象（如 { candidates, stats }），缺 content 字段，导致渲染工具结果时
+    // getTextOutput 读 result.content.filter 崩溃：
+    //   TypeError: Cannot read properties of undefined (reading 'filter')
+    // 这里把 execute 包一层：若返回值没有 content 数组，则包成标准 AgentToolResult，
+    // 把原对象放入 details，并用 JSON 文本作为 content 返回给模型（不丢数据）。
+    // 已经是标准 AgentToolResult（含 content 数组）的工具原样透传。
+    const originalExecute = tool.execute;
+    if (typeof originalExecute === "function") {
+      tool.execute = async (...args: any[]) => {
+        const res = await originalExecute(...args);
+        if (res && Array.isArray((res as any).content)) {
+          return res; // 已是标准 AgentToolResult，原样透传
+        }
+        if (res == null) {
+          return { content: [{ type: "text", text: "" }], details: {} };
+        }
+        const details = typeof res === "object" && !Array.isArray(res) ? res : { value: res };
+        const text = typeof res === "string" ? res : JSON.stringify(res, null, 2);
+        return { content: [{ type: "text", text }], details };
+      };
+    }
+
+    return _origRegisterTool(tool);
+  };
+
   // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）。
   // 回调仅供主进程内（其他扩展模块）同步用，不依赖回调通知 L2 调度：
   // L2 调度已改为主进程轮询 l1-cursor.json mtime 变化（08-17 修复回调跨进程断裂）。
@@ -125,6 +182,11 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
     const profile = manager.getProfileManager().getActiveProfile();
+    // 设置主代理进程的 profile 环境变量（供 recall_l1_records / embed_and_search 等工具用）
+    // 子代理进程由 pi-subagents 注入，主代理进程需要在此显式设置
+    if (profile) {
+      process.env.PI_PROFILE_PATH = profile.path;
+    }
     sessionId = ctx.sessionManager.getSessionId();
     skillManager = new SkillManager(profile.path, [
       resolve(agentDir, "skills"),
