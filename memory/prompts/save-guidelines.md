@@ -34,5 +34,6 @@ SAVE GUIDELINES — what NOT to save (and when exceptions apply):
 
 7. Wrong-target classification
    Content with paths/ports/versions → likely belongs in sub-memory, not memory.
-   Content with preferences/habits → likely belongs in user, not memory.
+   Content with preferences/habits/style corrections/long-term instructions → target='user', not skill.
+   Bounded-task-class executable SOP (recurring trigger + steps + validation) → skill, not memory.
    When unsure, prefer sub-memory (narrowest scope).

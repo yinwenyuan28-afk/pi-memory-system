@@ -6,10 +6,9 @@ import type { SkillManager } from "./skill-manager.js";
 export const SKILL_MANAGE_SCHEMA = {
 	name: "skill_manage",
 	description:
-		"Create, edit, delete, or list skills. Skills are reusable procedure " +
-		"guides that capture how to do a class of task. " +
-		"For user preference corrections or workflow patterns, update the " +
-		"relevant skill — memory alone is not enough.\n\n" +
+		"Create, edit, delete, or list skills. Skills capture **bounded-task-class executable capabilities** " +
+		"(workflows with recurring trigger, steps, decisions, validation)—NOT user preferences or style corrections " +
+		"(those belong in memory via the memory tool).\n\n" +
 		"Actions:\n" +
 		"  create: Create a new skill with name, category, and full SKILL.md content.\n" +
 		"  edit: Replace SKILL.md content of an existing skill.\n" +

@@ -23,8 +23,9 @@ let resumeContext: string | null = null;
  *
  * @param pi ExtensionAPI
  * @param deps 依赖注入（避免循环 import）：
- *   getProfilePath: () => string | undefined  活动 profile 路径
- *   getSessionId:   () => string | undefined  当前 session id
+ *   getProfilePath:   () => string | undefined  活动 profile 路径
+ *   getSessionId:     () => string | undefined  当前 session id
+ *   getConfiguredModel: () => unknown          后台模型（memory-system 配置，默认 minimax-cn/MiniMax-M3）
  * @returns controller：{ init, suspendActive, getManager, shutdown }
  */
 export function setupWorkflowSystem(
@@ -32,6 +33,7 @@ export function setupWorkflowSystem(
   deps: {
     getProfilePath: () => string | undefined;
     getSessionId: () => string | undefined;
+    getConfiguredModel: () => unknown;
   },
 ) {
   let db: WorkflowDB | undefined;
@@ -107,10 +109,9 @@ export function setupWorkflowSystem(
       db = new WorkflowDB(profilePath);
       manager = new WorkflowManager(db);
       detector = new WorkflowDetector();
-      if (ctx?.model) {
-        manager.setModel(ctx.model);
-        detector.setModel(ctx.model);
-      }
+      // 2026-08-08：后台模型走配置（不跟随前台切换）
+      manager.setModel(deps.getConfiguredModel());
+      detector.setModel(deps.getConfiguredModel());
       // 续接注入：优先当前 session，无则跨 session 按 cwd 找（重启续接）
       resumeContext = buildResumeContext(manager, deps.getSessionId(), ctx?.cwd);
     },

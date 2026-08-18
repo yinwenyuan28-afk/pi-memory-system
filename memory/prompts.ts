@@ -80,8 +80,8 @@ const DEFAULT_PROMPTS: MemoryPrompts = {
 
 3. One-off task narratives
    ❌ "Analyzed this week's trend" — task completion report
-   ✅ Reusable workflow preference — e.g. "user wants architecture overview before analysis"
-   Boundary: describes "what was done"→skip; describes "how/what user prefers"→save.
+   ✅ User workflow/style preference — e.g. "user wants architecture overview before analysis" → target='user', NOT skill
+   Boundary: describes "what was done"→skip; personal preference→memory; bounded executable SOP→skill.
 
 4. Environment setup failures
    ❌ "python: command not found" — user can apt-get install
@@ -100,15 +100,17 @@ const DEFAULT_PROMPTS: MemoryPrompts = {
 
 7. Wrong-target classification
    Content with paths/ports/versions → likely belongs in sub-memory, not memory.
-   Content with preferences/habits → likely belongs in user, not memory.
+   Content with preferences/habits/style corrections/long-term instructions → target='user', not skill.
+   Bounded-task-class executable SOP (recurring trigger + steps + validation) → skill, not memory.
    When unsure, prefer sub-memory (narrowest scope).`,
   toolReminder:
     "\n\n[Memory] You have persistent memory across sessions. Save durable facts using the memory " +
     "tool. Memory is injected into every turn, so keep entries compact and high-signal.\n" +
-    "SAVE when: user preference/correction, root-cause analysis (causal structure), " +
-    "non-obvious API behavior (pitfalls verified), reusable workflow pattern (→ skill).\n" +
+    "SAVE when: user preference/correction/style instruction, root-cause analysis (causal structure), " +
+    "non-obvious API behavior (pitfalls verified), project/architecture facts.\n" +
     "DO NOT save: task progress / temporary TODO, one-shot fix without root cause, " +
     "version/release logs, facts directly inferable from code/docs.\n" +
+    "Bounded-task-class executable SOP → skill (skill_manage), NOT memory. User preferences → memory (target user), NOT skill.\n" +
     "If you decide to save → call load_memory_rules for full classification rules and scope list.\n" +
     "Uncertain → stage in .staging/, do not write directly.\n" +
     "\n[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (memory-reviewer, skill-reviewer, memory-organizer) " +

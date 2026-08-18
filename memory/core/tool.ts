@@ -42,7 +42,8 @@ export const MEMORY_SCHEMA = {
 		"  'sub-memory' = project-specific info (requires path param: '{category}/{name}.md')\n" +
 		"\n" +
 		"SKIP: trivial/obvious info, task progress, completed-work logs, temporary TODO state. " +
-		"Reusable procedures and workflows belong in a skill (use skill_manage), not memory.\n\n" +
+		"User preferences, style corrections, and long-term instructions → save here (target user/memory). " +
+		"Bounded-task-class executable SOPs (recurring trigger + steps + validation) → skill (skill_manage), not memory.\n\n" +
 		SAVE_GUIDELINES,
 
 	// Append classification reference to description

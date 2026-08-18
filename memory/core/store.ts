@@ -80,6 +80,13 @@ export class MemoryStore {
 		}
 	}
 
+	/** Re-read disk entries and rebuild frozen snapshot (L3 commit / intra-session refresh). */
+	refreshSnapshot(target: "memory" | "user"): void {
+		this.reloadFromDisk(target);
+		const entries = this.entriesFor(target);
+		this.snapshot[target] = this.renderBlock(target, entries);
+	}
+
 	// ── Mutation API ────────────────────────────────────────────────
 
 	add(

@@ -282,6 +282,12 @@ export class MemoryManager {
 		return this.profileManager;
 	}
 
+	/** Refresh USER.md frozen snapshot after L3 commit (intra-session injection). */
+	refreshUserSnapshot(): void {
+		if (!this._initialized) return;
+		this.store.refreshSnapshot("user");
+	}
+
 	// ── Lifecycle ───────────────────────────────────────────────────
 
 	shutdown(): void {
