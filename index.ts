@@ -218,6 +218,15 @@ export default function (pi: ExtensionAPI) {
     // L0 净化归档：每轮增量把 session 新消息写入 {profile}/conversations/YYYY-MM-DD.jsonl
     // （去重=行号游标；降噪=SanitizeRule 规则集；分片=本地日期；cwd=ctx.cwd 精确值）。
     // 同步执行（毫秒级），异常不阻塞主流程。
+    //
+    // 子代理进程守卫：pi-subagents 启动子代理时设 PI_SUBAGENT_CHILD=1，子代理加载本扩展后
+    // 同样会触发 before_agent_start。若不守卫，子代理自己的 sessionFile（长路径：
+    // {sessionId}/{runId}/run-0/session.jsonl）会被当主会话归档，导致 L0 分片污染
+    // （子代理的 thinking / tool_call / l1_commit 响应都进入 conversations/），
+    // 下轮 L1 提取读到上一轮 L1 自身执行痕迹（“框架噪音”）。
+    // 根因验证：2026-08-18 l0-cursor.json 含大量 /\run-0\session.jsonl/ entry，
+    // 对应子代理 session 文件（id 与主会话不同，modelId=mimo-v2.5）。
+    if (process.env.PI_SUBAGENT_CHILD === "1") return;
     try {
       const sessionFile = ctx.sessionManager.getSessionFile();
       const profile = manager?.getProfileManager().getActiveProfile();
