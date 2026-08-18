@@ -665,9 +665,9 @@ export default function (pi: ExtensionAPI) {
 
   // ── L1 Mode Command ───────────────────────────────────────
 
-  pi.registerCommand("l1-mode", {
-    description: "Switch L1 extraction mode: code (work_fact/work_task/work_method/work_artifact) or chat (persona/episodic/instruction). Usage: /l1-mode [code|chat]",
-    usage: "Usage: /l1-mode [code|chat]",
+  pi.registerCommand("my-memory:l1-mode", {
+    description: "Switch L1 extraction mode: code (work_fact/work_task/work_method/work_artifact) or chat (persona/episodic/instruction). Usage: /my-memory:l1-mode [code|chat]",
+    usage: "Usage: /my-memory:l1-mode [code|chat]",
     handler: async (args, ctx) => {
       const profile = manager?.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -676,7 +676,7 @@ export default function (pi: ExtensionAPI) {
       }
       const mode = (args || "").trim().toLowerCase();
       if (mode !== "code" && mode !== "chat") {
-        ctx.ui.notify(`Current L1 mode: ${loadL1Config(profile.path).mode}. Usage: /l1-mode [code|chat]`, "info");
+        ctx.ui.notify(`Current L1 mode: ${loadL1Config(profile.path).mode}. Usage: /my-memory:l1-mode [code|chat]`, "info");
         return;
       }
       saveL1Mode(profile.path, mode as "code" | "chat");
@@ -686,9 +686,9 @@ export default function (pi: ExtensionAPI) {
 
   // ── L3 Persona Command ─────────────────────────────────────
 
-  pi.registerCommand("persona", {
+  pi.registerCommand("my-memory:persona", {
     description: "Manually trigger L3 persona generation (updates USER.md from L2 scenes).",
-    usage: "Usage: /persona",
+    usage: "Usage: /my-memory:persona",
     handler: async (_args, ctx) => {
       if (!l3Controls) {
         ctx.ui.notify("L3 persona scheduler not initialized", "error");
@@ -701,8 +701,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── /profile Command ────────────────────────────────────────
 
-  pi.registerCommand("profile", {
-    description: "List or switch memory profiles. Usage: /profile [list|switch <name>]",
+  pi.registerCommand("my-memory:profile", {
+    description: "List or switch memory profiles. Usage: /my-memory:profile [list|switch <name>]",
     handler: async (args, ctx) => {
       const parts = (args || "").trim().split(/\s+/);
       const sub = parts[0];
@@ -737,14 +737,14 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      ctx.ui.notify("Usage: /profile [list|switch <name>]", "info");
+      ctx.ui.notify("Usage: /my-memory:profile [list|switch <name>]", "info");
     },
   });
 
   // /l2-trigger：手动触发一次 L2 场景组织（绕过攒批）——供调试/验证使用。
   // 需 setupL2Organizer 已初始化，否则提示重启 pi 加载新扩展。
-  pi.registerCommand("l2-trigger", {
-    description: "手动触发一次 L2 场景组织（绕过 L2_BATCH 攒批）。Usage: /l2-trigger",
+  pi.registerCommand("my-memory:l2-trigger", {
+    description: "手动触发一次 L2 场景组织（绕过 L2_BATCH 攒批）。Usage: /my-memory:l2-trigger",
     handler: async (_args, ctx) => {
       if (!l2Controls) {
         ctx.ui.notify("L2 调度器未初始化（扩展加载中或未启用）", "error");
@@ -758,8 +758,8 @@ export default function (pi: ExtensionAPI) {
 
   // /l1-trigger：手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）——供调试/验证使用。
   // 需 setupL1Extractor 已初始化，否则提示重启 pi 加载新扩展。
-  pi.registerCommand("l1-trigger", {
-    description: "手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。Usage: /l1-trigger",
+  pi.registerCommand("my-memory:l1-trigger", {
+    description: "手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。Usage: /my-memory:l1-trigger",
     handler: async (_args, ctx) => {
       if (!l1Controls) {
         ctx.ui.notify("L1 调度器未初始化（扩展加载中或未启用）", "error");
@@ -773,8 +773,8 @@ export default function (pi: ExtensionAPI) {
   // ── /vectorize-list Command ─────────────────────────────────
   // 查询 L1 records 向量化状态：哪些已向量化、哪些未向量化。
   // 从 vector store 的 l1_vector_index 辅助映射表读已向量化清单，与 records/ JSONL 对比。
-  pi.registerCommand("vectorize-list", {
-    description: "查询 L1 records 向量化状态。Usage: /vectorize-list [limit=10]",
+  pi.registerCommand("my-memory:vectorize-list", {
+    description: "查询 L1 records 向量化状态。Usage: /my-memory:vectorize-list [limit=10]",
     handler: async (args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -796,8 +796,8 @@ export default function (pi: ExtensionAPI) {
   // 批量回填未向量化的 L1 records。
   // 前置条件：vectorization.json 中 enabled=true + embedding.json 可读。
   // 注意：需重启 pi 才能使用本命令（memory-system.ts 改动需重启加载）。
-  pi.registerCommand("vectorize-backfill", {
-    description: "批量将未向量化的 L1 records 嵌入向量并入库。Usage: /vectorize-backfill",
+  pi.registerCommand("my-memory:vectorize-backfill", {
+    description: "批量将未向量化的 L1 records 嵌入向量并入库。Usage: /my-memory:vectorize-backfill",
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
@@ -832,8 +832,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── /rebuild-index Command ─────────────────────────────────
 
-  pi.registerCommand("rebuild-index", {
-    description: "Rebuild inverted index from all memory files (deletes old index). Usage: /rebuild-index",
+  pi.registerCommand("my-memory:rebuild-index", {
+    description: "Rebuild inverted index from all memory files (deletes old index). Usage: /my-memory:rebuild-index",
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       const index = manager.invertedIndexInstance;
