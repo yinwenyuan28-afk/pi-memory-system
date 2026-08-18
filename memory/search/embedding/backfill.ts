@@ -190,6 +190,127 @@ export async function backfillMissingVectors(
   };
 }
 
+/** Rebuild 进度回调 */
+export interface RebuildProgress {
+  total: number;
+  cleared: number;
+  embedded: number;
+  currentBatchStart: number;
+}
+
+/** Rebuild 结果 */
+export interface RebuildResult {
+  total: number;
+  cleared: number;
+  embedded: number;
+  failed: number;
+  durationMs: number;
+  errors: string[];
+}
+
+/**
+ * 清空 vector store + 重新嵌入所有 L1 records
+ *
+ * 用途：
+ * 1. embedding 模型变更 / 维度变更后重新计算所有向量
+ * 2. 修复 vector store 中的污染数据（如 POC 残留）
+ * 3. 修复未归一化的旧嵌入数据（需重启 pi + 重新 rebuild）
+ *
+ * 不检 enabled 标志——与 backfillMissing 同逻辑（手动一次性操作）
+ */
+export async function rebuildAllVectors(
+  profilePath: string,
+  onProgress?: (progress: RebuildProgress) => void
+): Promise<RebuildResult> {
+  const startTime = Date.now();
+  const errors: string[] = [];
+
+  // 检查前置
+  const embConfig = loadEmbeddingConfig(profilePath);
+  if (!embConfig) {
+    return {
+      total: 0,
+      cleared: 0,
+      embedded: 0,
+      failed: 0,
+      durationMs: 0,
+      errors: ["embedding.json 未配置，无法 rebuild"],
+    };
+  }
+
+  // 初始化服务
+  const embService = await getEmbeddingService(profilePath);
+  const vecStore = await getVectorStore(profilePath);
+
+  // 1. 加载全部非 deleted records
+  const records = await loadAllL1Records(profilePath, 365);
+  if (records.length === 0) {
+    return {
+      total: 0,
+      cleared: 0,
+      embedded: 0,
+      failed: 0,
+      durationMs: 0,
+      errors: [],
+    };
+  }
+
+  // 2. 加载当前已向量化的 record id 列表，批量 delete 清空
+  const existingIds = await vecStore.getAllVectorizedRecordIds();
+  if (existingIds.length > 0) {
+    try {
+      await vecStore.deleteBatch(existingIds);
+    } catch (e) {
+      errors.push(`清理旧向量失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  onProgress?.({
+    total: records.length,
+    cleared: existingIds.length,
+    embedded: 0,
+    currentBatchStart: 0,
+  });
+
+  // 3. 批量 embed + insert
+  const BATCH_SIZE = 10;
+  let embedded = 0;
+  let failed = 0;
+
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const batch = records.slice(i, i + BATCH_SIZE);
+    try {
+      const contents = batch.map((r) => r.content);
+      const vectors = await embService.embedBatch(contents);
+      const recordsToInsert = batch.map((r, j) => ({
+        recordId: r.id,
+        vector: vectors[j],
+      }));
+      await vecStore.insertBatch(recordsToInsert);
+      embedded += batch.length;
+    } catch (e) {
+      failed += batch.length;
+      errors.push(`batch ${i / BATCH_SIZE + 1} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    onProgress?.({
+      total: records.length,
+      cleared: existingIds.length,
+      embedded,
+      currentBatchStart: i,
+    });
+  }
+
+  return {
+    total: records.length,
+    cleared: existingIds.length,
+    embedded,
+    failed,
+    durationMs: Date.now() - startTime,
+    errors,
+  };
+}
+
 /**
  * 格式化 status 为可读字符串（供 /vectorize-list 命令输出）
  */

@@ -833,6 +833,37 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // ── /my-memory:l1:embedding:rebuild Command ────────────────────────────
+  // 清空 vector store + 重新嵌入所有 L1 records。
+  // 用途：embedding 模型/维度变更后重算、修复 vector store 污染（如 POC 残留）、修复未归一化旧嵌入。
+  // 注意：需重启 pi 加载归一化后的 service.ts 才能使新嵌入生效。
+  pi.registerCommand("my-memory:l1:embedding:rebuild", {
+    description: "清空 vector store 并重新嵌入所有 L1 records（解决旧嵌入污染）。Usage: /my-memory:l1:embedding:rebuild",
+    handler: async (_args, ctx) => {
+      const profile = manager.getProfileManager().getActiveProfile();
+      if (!profile) {
+        ctx.ui.notify("No active profile", "error");
+        return;
+      }
+      try {
+        const { rebuildAllVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.js");
+        const status = await getVectorizationStatus(profile.path);
+        if (status.totalRecords === 0) {
+          ctx.ui.notify("❌ 没有 L1 records 可重建", "error");
+          return;
+        }
+        ctx.ui.notify(`开始 rebuild：清空 vector store + 重新嵌入 ${status.totalRecords} 条 records`, "info");
+        const result = await rebuildAllVectors(profile.path, (p) => {
+          ctx.ui.notify(`rebuild 进度: cleared=${p.cleared}, embedded=${p.embedded}/${p.total}`, "info");
+        });
+        const msg = `✅ rebuild 完成: 清空 ${result.cleared} 条旧向量，重新嵌入 ${result.embedded}/${result.total} 条${result.failed > 0 ? `，失败 ${result.failed}` : ""}，耗时 ${result.durationMs}ms${result.errors.length > 0 ? `\n错误:\n${result.errors.slice(0, 3).join("\n")}` : ""}`;
+        ctx.ui.notify(msg, result.failed > 0 ? "error" : "info");
+      } catch (e) {
+        ctx.ui.notify(`rebuild 失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
   // ── /rebuild-index Command ─────────────────────────────────
 
   pi.registerCommand("my-memory:rebuild-index", {
