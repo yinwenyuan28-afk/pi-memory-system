@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { statSync, unwatchFile, watchFile } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task } from "./config.js";
+import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task, splitRecordsFiles } from "./config.js";
 import { L1_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
@@ -76,11 +76,23 @@ export function setupL2Organizer(
 	let watchedFile: string | undefined;
 	let lastMtimeMs = 0;
 
-	async function runTask(task: string, ctx: ExtensionContext): Promise<void> {
+	async function runTask(ctx: ExtensionContext): Promise<void> {
+		const profilePath = getProfilePath();
+		if (!profilePath) return;
+		// 拆分多个 records 文件为串行 chunks（08-18 改：多子代理串行派发）
+		// 为什么串行不并行：每个子代理写 scene_blocks 同一目录，并行会 race condition；
+		// scene_index.json 是全局索引，串行累积更安全；后续子代理能看到前一个子代理的场景、增量补充。
+		const chunks = splitRecordsFiles(profilePath);
+		if (chunks.length === 0) return;
 		scheduled = true;
-		ctx.ui.setStatus("memory", "Memory ⚙L2...");
+		ctx.ui.setStatus("memory", `Memory ⚙L2 (${chunks.length} chunks串行)`);
 		try {
-			await runPiSubagent("l2-scene-organizer", task, ctx);
+			for (let i = 0; i < chunks.length; i++) {
+				const chunk = chunks[i];
+				const task = buildL2Task(profilePath, chunk);
+				ctx.ui.setStatus("memory", `Memory ⚙L2 ${i + 1}/${chunks.length}...`);
+				await runPiSubagent("l2-scene-organizer", task, ctx);
+			}
 		} catch (err) {
 			console.warn(`[memory-system][l2] organize failed: ${err instanceof Error ? err.message : String(err)}`);
 		} finally {
@@ -91,10 +103,9 @@ export function setupL2Organizer(
 	function queueTrigger(): void {
 		const profilePath = getProfilePath();
 		if (!profilePath) return;
-		const task = buildL2Task(profilePath);
-		if (!task) return;
+		if (splitRecordsFiles(profilePath).length === 0) return;
 		if (cachedCtx) {
-			void runTask(task, cachedCtx);
+			void runTask(cachedCtx);
 		} else {
 			pendingTrigger = true; // 等 agent_settled 提供 ctx 后执行
 		}
