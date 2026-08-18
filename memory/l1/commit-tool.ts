@@ -3,6 +3,8 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
+import { loadEmbeddingConfig } from "../search/embedding/config.js";
+import { isVectorizationReady } from "../search/embedding/vectorization-config.js";
 
 // ══════════════════════════════════════════════════════════════
 //  l1_commit 工具 —— 子代理写盘桥接
@@ -108,10 +110,15 @@ export function registerL1CommitTool(
 					written = lines.length;
 				}
 
-				// 2. 同步写入向量（如 embedding.json 可用）
+				// 2. 同步写入向量（仅当 VECTORIZATION_ENABLED=true 且 embedding.json 可用）
+				let vectorStats: { inserted: number; deleted: number } | null = null;
 				try {
 					const embConfig = loadEmbeddingConfig(profilePath);
-					if (embConfig && records.length > 0) {
+					if (!embConfig) {
+						// embedding.json 未配置，跳过向量写入
+					} else if (!isVectorizationReady(profilePath)) {
+						// VECTORIZATION_ENABLED=false 或未达阈值，跳过向量写入
+					} else if (records.length > 0) {
 						const { getEmbeddingService } = await import("../search/embedding/service.js");
 						const { getVectorStore } = await import("../search/vector-store/store.js");
 						const embService = await getEmbeddingService(profilePath);
@@ -129,24 +136,36 @@ export function registerL1CommitTool(
 						if (deleted.length > 0) {
 							await vecStore.deleteBatch(deleted.map((r: any) => r.id));
 						}
+						vectorStats = {
+							inserted: toEmbed.length,
+							deleted: deleted.length,
+						};
 					}
 				} catch (e) {
 					// 向量写入失败不阻塞 records 写盘（业务级降级）
-					console.warn(`[l1_commit] vector store sync failed: ${e instanceof Error ? e.message : String(e)}`);
+					const msg = e instanceof Error ? e.message : String(e);
+					console.warn(`[l1_commit] 向量化写入失败: ${msg}`);
+					ctx.ui.notify(`L1 commit 成功，但向量化写入失败: ${msg}`, "error");
 				}
 
 				// 3. 回写游标
 				saveCursor(profilePath, cursor);
 
-				// 3. 通知 L2 调度（L1 成功提交一批 → 攒批计数）
+				// 4. 通知 L2 调度（L1 成功提交一批 → 攒批计数）
 				try {
 					onCommitted?.(written);
 				} catch {
 					// 非致命
 				}
 
+				// 5. TUI 通知（向量化状态）
+				const vInfo = vectorStats
+					? `，向量化写入 +${vectorStats.inserted}/-${vectorStats.deleted} 条`
+					: "";
+				ctx.ui.notify(`L1 commit: ${written} 条记录已提交${vInfo}`, "info");
+
 				return {
-					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor }) }],
+					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats }) }],
 					details: {},
 				};
 			} catch (err) {
