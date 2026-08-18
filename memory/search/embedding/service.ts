@@ -39,6 +39,13 @@ export interface EmbeddingService {
   clearCache(): void;
 }
 
+/** L2 归一化（让 sqlite-vec v0.1.9 的 cosine 计算结果与手工 cosine 一致） */
+function l2Normalize(vec: Vector): Vector {
+  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+  if (norm === 0) return vec;
+  return vec.map((v) => v / norm);
+}
+
 /** 全局单例（进程级） */
 let serviceInstance: EmbeddingService | null = null;
 
@@ -231,7 +238,7 @@ async function callDashScopeApi(
     throw new Error("DashScope API 返回格式异常：无 embedding 字段");
   }
 
-  return data.data[0].embedding;
+  return l2Normalize(data.data[0].embedding);
 }
 
 /**
@@ -271,8 +278,8 @@ async function callDashScopeBatchApi(
     data: Array<{ embedding: number[] }>;
   };
 
-  // 按 index 排序（API 可能不保证顺序）
+  // 按 index 排序（API 可能不保证顺序），并 L2 归一化（让 sqlite-vec cosine 公式匹配手工 cosine）
   return data.data
     .sort((a, b) => (a as any).index - (b as any).index)
-    .map((d) => d.embedding);
+    .map((d) => l2Normalize(d.embedding));
 }
