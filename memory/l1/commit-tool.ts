@@ -108,7 +108,34 @@ export function registerL1CommitTool(
 					written = lines.length;
 				}
 
-				// 2. 回写游标
+				// 2. 同步写入向量（如 embedding.json 可用）
+				try {
+					const embConfig = loadEmbeddingConfig(profilePath);
+					if (embConfig && records.length > 0) {
+						const { getEmbeddingService } = await import("../search/embedding/service.js");
+						const { getVectorStore } = await import("../search/vector-store/store.js");
+						const embService = await getEmbeddingService(profilePath);
+						const vecStore = await getVectorStore(profilePath);
+
+						// 非 deleted 记录：embed content + insert 向量
+						const toEmbed = records.filter((r: any) => !r.deleted);
+						if (toEmbed.length > 0) {
+							const vectors = await embService.embedBatch(toEmbed.map((r: any) => r.content));
+							const batch = toEmbed.map((r: any, i: number) => ({ recordId: r.id, vector: vectors[i] }));
+							await vecStore.insertBatch(batch);
+						}
+						// deleted 记录（update/merge 时旧记录）：删除向量
+						const deleted = records.filter((r: any) => r.deleted);
+						if (deleted.length > 0) {
+							await vecStore.deleteBatch(deleted.map((r: any) => r.id));
+						}
+					}
+				} catch (e) {
+					// 向量写入失败不阻塞 records 写盘（业务级降级）
+					console.warn(`[l1_commit] vector store sync failed: ${e instanceof Error ? e.message : String(e)}`);
+				}
+
+				// 3. 回写游标
 				saveCursor(profilePath, cursor);
 
 				// 3. 通知 L2 调度（L1 成功提交一批 → 攒批计数）

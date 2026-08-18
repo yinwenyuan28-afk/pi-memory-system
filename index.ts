@@ -21,6 +21,7 @@ import { setupL2Organizer } from "./memory/l2/index.js";
 import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
 import { setupL3Persona } from "./memory/l3/index.js";
 import { registerL3CommitTool } from "./memory/l3/commit-tool.js";
+import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -115,6 +116,8 @@ export default function (pi: ExtensionAPI) {
   );
   // read_l0_increment 工具：l1-extractor 子代理一次读取游标后增量（替代逐段 read，性能修复）
   registerReadL0IncrementTool(pi);
+  // embed_and_search 工具：l1-extractor 子代理自主调用 embedding + vector store search（方案 B，用户拍板 2026-08-18）
+  registerEmbedAndSearchTool(pi);
 
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
@@ -306,6 +309,42 @@ export default function (pi: ExtensionAPI) {
         : "";
     }
     _pendingContext = { queryText, subMemories, cwd: ctx.cwd };
+
+    // L1 records 向量召回注入（与 sub-memories jieba 注入并行，独立实体不融合）
+    // 仅当 vector store 可用且 embedding.json 已配置时触发；失败静默降级（不注入）
+    // 设计修正（2026-08-18）：plan 原 Step 4 想 RRF 融合 L1 records 与 sub-memories，
+    // 但两者是不同记忆实体（原子记忆 vs 项目文档），path 维度不同无法融合，改为独立注入。
+    try {
+      const { getVectorStore } = await import("./memory/search/vector-store/store.js");
+      const { getEmbeddingService } = await import("./memory/search/embedding/service.js");
+      const profile = manager?.getProfileManager().getActiveProfile();
+      if (profile) {
+        const vecStore = await getVectorStore(profile.path);
+        if (await vecStore.isAvailable() && (await vecStore.count()) > 0) {
+          const embService = await getEmbeddingService(profile.path);
+          const queryVec = await embService.embed(event.prompt);
+          const hits = await vecStore.search(queryVec, 3);
+          if (hits.length > 0) {
+            const parts: string[] = [];
+            for (const hit of hits) {
+              const { loadL1RecordById } = await import("./memory/search/embedding/record-loader.js");
+              const rec = await loadL1RecordById(hit.recordId, profile.path);
+              if (rec && !rec.deleted) {
+                parts.push(`- ${rec.content}`);
+              }
+            }
+            if (parts.length > 0) {
+              subMemories = subMemories
+                ? `${subMemories}\n<l1-records>\n${parts.join("\n")}\n</l1-records>`
+                : `<l1-records>\n${parts.join("\n")}\n</l1-records>`;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // L1 向量召回失败静默降级（不阻塞主流程，不注入）
+      console.warn(`[memory-system][l1-recall] ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     // 事件驱动刷新：话题切换（jieba(prompt) 与缓存关键词无交集）→ fire-and-forget 重建关键词
     // 不 await：本轮仍用旧缓存 + jieba(prompt) 保底（S3 合并），下轮起用新关键词
