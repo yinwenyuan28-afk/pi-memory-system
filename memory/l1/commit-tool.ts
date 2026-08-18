@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.js";
@@ -21,6 +22,12 @@ function localDate(d: Date): string {
 	const m = String(d.getMonth() + 1).padStart(2, "0");
 	const day = String(d.getDate()).padStart(2, "0");
 	return `${y}-${m}-${day}`;
+}
+
+/** 内容归一化哈希（去重用）：去空白、转小写、sha1。 */
+function contentHash(content: string): string {
+	const norm = content.replace(/\s+/g, " ").trim().toLowerCase();
+	return createHash("sha1").update(norm, "utf-8").digest("hex");
 }
 
 /** 原子写 l1-cursor.json（tmp + rename）。 */
@@ -99,54 +106,91 @@ export function registerL1CommitTool(
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "records must be an array and cursor must be a string" }) }], details: {} };
 				}
 
-				// 1. 追加写 records 分片（按当前本地日期）
-				let written = 0;
-				if (records.length > 0) {
-					const recordsDir = join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME);
-					if (!existsSync(recordsDir)) mkdirSync(recordsDir, { recursive: true });
-					const shardPath = join(recordsDir, `${localDate(new Date())}.jsonl`);
-					const lines = records.map((r) => JSON.stringify(r));
-					appendFileSync(shardPath, lines.join("\n") + "\n", "utf-8");
-					written = lines.length;
-				}
-
-				// 2. 同步写入向量（仅当 VECTORIZATION_ENABLED=true 且 embedding.json 可用）
-				let vectorStats: { inserted: number; deleted: number } | null = null;
-				try {
-					const embConfig = loadEmbeddingConfig(profilePath);
-					if (!embConfig) {
-						// embedding.json 未配置，跳过向量写入
-					} else if (!isVectorizationReady(profilePath)) {
-						// VECTORIZATION_ENABLED=false 或未达阈值，跳过向量写入
-					} else if (records.length > 0) {
-						const { getEmbeddingService } = await import("../search/embedding/service.js");
-						const { getVectorStore } = await import("../search/vector-store/store.js");
-						const embService = await getEmbeddingService(profilePath);
-						const vecStore = await getVectorStore(profilePath);
-
-						// 非 deleted 记录：embed content + insert 向量
-						const toEmbed = records.filter((r: any) => !r.deleted);
-						if (toEmbed.length > 0) {
-							const vectors = await embService.embedBatch(toEmbed.map((r: any) => r.content));
-							const batch = toEmbed.map((r: any, i: number) => ({ recordId: r.id, vector: vectors[i] }));
-							await vecStore.insertBatch(batch);
+			// 0. 去重：扫描现有 records 建 id 集合 + 内容哈希集合（仅非 deleted）
+			// 目的：重试 / 部分提交 / 子代理重新提取同一事实时，不产生重复 records。
+			const recordsDir = join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME);
+			const existingIds = new Set<string>();
+			const existingHashes = new Set<string>();
+			if (existsSync(recordsDir)) {
+				for (const f of readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f))) {
+					try {
+						const text = readFileSync(join(recordsDir, f), "utf-8");
+						for (const line of text.split(/\r?\n/)) {
+							const t = line.trim();
+							if (!t) continue;
+							try {
+								const o = JSON.parse(t);
+								if (typeof o?.id === "string") existingIds.add(o.id);
+								if (!o?.deleted && typeof o?.content === "string") existingHashes.add(contentHash(String(o.content)));
+							} catch {
+								// 跳过坏行
+							}
 						}
-						// deleted 记录（update/merge 时旧记录）：删除向量
-						const deleted = records.filter((r: any) => r.deleted);
-						if (deleted.length > 0) {
-							await vecStore.deleteBatch(deleted.map((r: any) => r.id));
-						}
-						vectorStats = {
-							inserted: toEmbed.length,
-							deleted: deleted.length,
-						};
+					} catch {
+						// 跳过坏文件
 					}
-				} catch (e) {
-					// 向量写入失败不阻塞 records 写盘（业务级降级）
-					const msg = e instanceof Error ? e.message : String(e);
-					console.warn(`[l1_commit] 向量化写入失败: ${msg}`);
-					ctx.ui.notify(`L1 commit 成功，但向量化写入失败: ${msg}`, "error");
 				}
+			}
+
+			// 1. 追加写 records 分片（按当前本地日期）；同 id 重投 / 内容重复 跳过
+			let written = 0;
+			const toEmbed: any[] = [];
+			const toDelete: any[] = [];
+			const appendedLines: string[] = [];
+			for (const r of records) {
+				const isDeleted = r.deleted === true;
+				if (!isDeleted) {
+					if (existingIds.has(r.id)) continue; // 同 id 重投（重试 / 部分提交）
+					if (typeof r.content === "string" && existingHashes.has(contentHash(r.content))) continue; // 内容重复
+				}
+				appendedLines.push(JSON.stringify(r));
+				if (isDeleted) toDelete.push(r);
+				else toEmbed.push(r);
+				existingIds.add(r.id); // 防止同批内重复
+				if (!isDeleted && typeof r.content === "string") existingHashes.add(contentHash(r.content));
+			}
+			if (appendedLines.length > 0) {
+				if (!existsSync(recordsDir)) mkdirSync(recordsDir, { recursive: true });
+				const shardPath = join(recordsDir, `${localDate(new Date())}.jsonl`);
+				appendFileSync(shardPath, appendedLines.join("\n") + "\n", "utf-8");
+				written = appendedLines.length;
+			}
+
+			// 2. 同步写入向量（仅当 VECTORIZATION_ENABLED=true 且 embedding.json 可用）
+			let vectorStats: { inserted: number; deleted: number } | null = null;
+			try {
+				const embConfig = loadEmbeddingConfig(profilePath);
+				if (!embConfig) {
+					// embedding.json 未配置，跳过向量写入
+				} else if (!isVectorizationReady(profilePath)) {
+					// VECTORIZATION_ENABLED=false 或未达阈值，跳过向量写入
+				} else if (toEmbed.length > 0 || toDelete.length > 0) {
+					const { getEmbeddingService } = await import("../search/embedding/service.js");
+					const { getVectorStore } = await import("../search/vector-store/store.js");
+					const embService = await getEmbeddingService(profilePath);
+					const vecStore = await getVectorStore(profilePath);
+
+					// 非 deleted 记录：embed content + insert 向量
+					if (toEmbed.length > 0) {
+						const vectors = await embService.embedBatch(toEmbed.map((r: any) => r.content));
+						const batch = toEmbed.map((r: any, i: number) => ({ recordId: r.id, vector: vectors[i] }));
+						await vecStore.insertBatch(batch);
+					}
+					// deleted 记录（update/merge 时旧记录）：删除向量
+					if (toDelete.length > 0) {
+						await vecStore.deleteBatch(toDelete.map((r: any) => r.id));
+					}
+					vectorStats = {
+						inserted: toEmbed.length,
+						deleted: toDelete.length,
+					};
+				}
+			} catch (e) {
+				// 向量写入失败不阻塞 records 写盘（业务级降级）
+				const msg = e instanceof Error ? e.message : String(e);
+				console.warn(`[l1_commit] 向量化写入失败: ${msg}`);
+				ctx.ui.notify(`L1 commit 成功，但向量化写入失败: ${msg}`, "error");
+			}
 
 				// 3. 回写游标
 				saveCursor(profilePath, cursor);

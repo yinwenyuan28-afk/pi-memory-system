@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
-import { statSync, unwatchFile, watchFile } from "node:fs";
+import { runPiSubagent } from "../util/subagent.js";
+import { statSync, unwatchFile, watchFile, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task, splitRecordsFiles } from "./config.js";
+import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task, splitRecordsFiles, loadL2Cursor, countNewRecords, L2_FAILURE_THRESHOLD, saveL2Cursor, readAllRecords } from "./config.js";
 import { L1_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
+import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 场景记忆 —— 主进程调度
@@ -26,35 +27,6 @@ import { L1_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
 //  配置/游标纯函数在 ./config.ts；写盘逻辑在 ./commit-tool.ts。
 // ══════════════════════════════════════════════════════════════
 
-async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext): Promise<string> {
-	const executor = (globalThis as any)["__piSubagentExecutor"] as
-		| ((id: string, params: any, signal: AbortSignal, onUpdate: any, ctx: ExtensionContext) => Promise<any>)
-		| undefined;
-	if (!executor) throw new Error("pi-subagents executor not available");
-	const id = randomUUID();
-	const controller = new AbortController();
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const executorPromise = executor(
-		id,
-		{ agent, task, async: true, clarify: false, agentScope: "both" },
-		controller.signal,
-		undefined,
-		ctx,
-	);
-	const timeoutPromise = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => {
-			controller.abort();
-			reject(new Error(`subagent ${agent} timed out after ${L2_SUBAGENT_TIMEOUT_MS}ms`));
-		}, L2_SUBAGENT_TIMEOUT_MS);
-	});
-	try {
-		await Promise.race([executorPromise, timeoutPromise]);
-	} finally {
-		if (timer) clearTimeout(timer);
-	}
-	return id;
-}
-
 /**
  * 注册 L2 组织调度（单次调用）。
  *
@@ -76,34 +48,80 @@ export function setupL2Organizer(
 	let watchedFile: string | undefined;
 	let lastMtimeMs = 0;
 
+	// 熔断状态走磁盘持久（见 ../failure-state.js），不在内存里，重启后仍生效。
+	function loadL2State(): LayerFailureState {
+		const p = getProfilePath();
+		return p ? loadFailureState(p).l2 : { consecutiveFailures: 0, cooledDown: false };
+	}
+	function saveL2State(s: LayerFailureState): void {
+		const p = getProfilePath();
+		if (!p) return;
+		const all = loadFailureState(p);
+		all.l2 = s;
+		saveFailureState(p, all);
+	}
+
 	async function runTask(ctx: ExtensionContext): Promise<void> {
 		const profilePath = getProfilePath();
 		if (!profilePath) return;
-		// 拆分多个 records 文件为串行 chunks（08-18 改：多子代理串行派发）
-		// 为什么串行不并行：每个子代理写 scene_blocks 同一目录，并行会 race condition；
-		// scene_index.json 是全局索引，串行累积更安全；后续子代理能看到前一个子代理的场景、增量补充。
-		const chunks = splitRecordsFiles(profilePath);
-		if (chunks.length === 0) return;
+		// 增量：只把游标之后（epoch > lastProcessedAt）的 records 写入 staging 临时文件，
+		// 子代理只处理这些新记录并 merge 进已有场景。游标真正生效，不再全量重扫。
+		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
+		// 代码算出本批 staging 的真实记录（不依赖子代理上报），用于成功后的游标推进
+		const staged = readAllRecords(profilePath).filter((r) => r.epoch > watermark);
+		if (staged.length === 0) return;
+		const maxEpoch = Math.max(...staged.map((r) => r.epoch));
+		const maxId = staged.reduce((a, b) => (b.epoch > a.epoch ? b : a)).id;
+		const chunks = splitRecordsFiles(profilePath, watermark);
+		const stagedFiles = chunks.flat();
 		scheduled = true;
 		ctx.ui.setStatus("memory", `Memory ⚙L2 (${chunks.length} chunks串行)`);
 		try {
 			for (let i = 0; i < chunks.length; i++) {
 				const chunk = chunks[i];
-				const task = buildL2Task(profilePath, chunk);
+				const task = buildL2Task(profilePath, chunk, true);
 				ctx.ui.setStatus("memory", `Memory ⚙L2 ${i + 1}/${chunks.length}...`);
-				await runPiSubagent("l2-scene-organizer", task, ctx);
+				await runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS);
 			}
+			// 整批成功 → 游标由主进程推进到本批真实最大 epoch（不再信任子代理 cursor）
+			saveL2Cursor(profilePath, maxEpoch, maxId);
+			const st = loadL2State();
+			st.consecutiveFailures = 0; // 整批成功才清零
+			saveL2State(st);
 		} catch (err) {
+			const st = loadL2State();
+			st.consecutiveFailures++;
 			console.warn(`[memory-system][l2] organize failed: ${err instanceof Error ? err.message : String(err)}`);
+			if (st.consecutiveFailures >= L2_FAILURE_THRESHOLD && !st.cooledDown) {
+				st.cooledDown = true;
+				ctx.ui.notify(
+					`L2 场景组织连续失败 ${st.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l2-trigger 手动重试或检查日志。`,
+					"error",
+				);
+			}
+			saveL2State(st);
 		} finally {
 			scheduled = false;
+			// 清理 staging 临时文件（无论成败）
+			for (const f of stagedFiles) {
+				try {
+					rmSync(f, { force: true });
+				} catch {
+					// ignore
+				}
+			}
 		}
 	}
 
 	function queueTrigger(): void {
 		const profilePath = getProfilePath();
 		if (!profilePath) return;
-		if (splitRecordsFiles(profilePath).length === 0) return;
+		if (loadL2State().cooledDown) {
+			pendingBatches = 0; // 熔断期间不清零计数会爆，先归零避免恢复后突刺
+			return;
+		}
+		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
+		if (countNewRecords(profilePath, watermark) === 0) return;
 		if (cachedCtx) {
 			void runTask(cachedCtx);
 		} else {
@@ -167,6 +185,11 @@ export function setupL2Organizer(
 	/** 手动触发一次 L2（绕过攒批 / 跳过 fs.watchFile 监听）。 */
 	function triggerManual(): void {
 		if (scheduled) return;
+		const st = loadL2State();
+		st.cooledDown = false; // 手动触发即恢复熔断
+		st.consecutiveFailures = 0;
+		saveL2State(st);
+		pendingBatches = 0;
 		queueTrigger();
 	}
 

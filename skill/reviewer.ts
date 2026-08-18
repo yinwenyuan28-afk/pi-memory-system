@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { runPiSubagent } from "../memory/util/subagent.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -80,35 +80,6 @@ export function setupSkillReviewer(
 		return { task, paths, cursor: reviewerCursor };
 	}
 
-	async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext): Promise<string> {
-		const executor = (globalThis as any)["__piSubagentExecutor"] as
-			| ((id: string, params: any, signal: AbortSignal, onUpdate: any, ctx: ExtensionContext) => Promise<any>)
-			| undefined;
-		if (!executor) throw new Error("pi-subagents executor not available");
-		const id = randomUUID();
-		const controller = new AbortController();
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const executorPromise = executor(
-			id,
-			{ agent, task, async: true, clarify: false, agentScope: "both" },
-			controller.signal,
-			undefined,
-			ctx,
-		);
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = setTimeout(() => {
-				controller.abort();
-				reject(new Error(`subagent ${agent} timed out after ${SUBAGENT_TIMEOUT_MS}ms`));
-			}, SUBAGENT_TIMEOUT_MS);
-		});
-		try {
-			await Promise.race([executorPromise, timeoutPromise]);
-		} finally {
-			if (timer) clearTimeout(timer);
-		}
-		return id;
-	}
-
 	pi.on("input", (event) => {
 		if (event.source !== "interactive") return;
 		if (!reviewScheduled) turnCount++;
@@ -122,7 +93,7 @@ export function setupSkillReviewer(
 			reviewScheduled = true;
 			ctx.ui.setStatus("memory", "Memory ⚙skill-review...");
 			try {
-				await runPiSubagent("skill-reviewer", built.task, ctx);
+				await runPiSubagent("skill-reviewer", built.task, ctx, SUBAGENT_TIMEOUT_MS);
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;
@@ -145,7 +116,7 @@ export function setupSkillReviewer(
 				if (paths) {
 					const task = `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}${extra ? `\nExtra context: ${extra}` : ""}`;
 					try {
-						await runPiSubagent("skill-reviewer", task, ctx);
+						await runPiSubagent("skill-reviewer", task, ctx, SUBAGENT_TIMEOUT_MS);
 					} finally {
 						reviewScheduled = false;
 					}
@@ -156,7 +127,7 @@ export function setupSkillReviewer(
 				return;
 			}
 			try {
-				await runPiSubagent("skill-reviewer", built.task + (extra ? `\nExtra context: ${extra}` : ""), ctx);
+				await runPiSubagent("skill-reviewer", built.task + (extra ? `\nExtra context: ${extra}` : ""), ctx, SUBAGENT_TIMEOUT_MS);
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;

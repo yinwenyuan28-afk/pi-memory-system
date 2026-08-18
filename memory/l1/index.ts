@@ -1,11 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { runPiSubagent } from "../util/subagent.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	L1_INTERVAL,
 	SUBAGENT_TIMEOUT_MS,
 	buildL1Task,
 	loadL1Config,
+	L1_FAILURE_THRESHOLD,
 } from "./config.js";
+import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 原子记忆 —— 主进程调度
@@ -22,37 +24,6 @@ import {
 //
 //  配置 / 游标 / 分片清单等纯函数在 ./config.ts（无 pi 依赖，可单测）。
 // ══════════════════════════════════════════════════════════════
-
-// ── 子代理启动（globalThis 桥接，与 reviewer.ts 同模式） ──
-
-async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext): Promise<string> {
-	const executor = (globalThis as any)["__piSubagentExecutor"] as
-		| ((id: string, params: any, signal: AbortSignal, onUpdate: any, ctx: ExtensionContext) => Promise<any>)
-		| undefined;
-	if (!executor) throw new Error("pi-subagents executor not available");
-	const id = randomUUID();
-	const controller = new AbortController();
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const executorPromise = executor(
-		id,
-		{ agent, task, async: true, clarify: false, agentScope: "both" },
-		controller.signal,
-		undefined,
-		ctx,
-	);
-	const timeoutPromise = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => {
-			controller.abort();
-			reject(new Error(`subagent ${agent} timed out after ${SUBAGENT_TIMEOUT_MS}ms`));
-		}, SUBAGENT_TIMEOUT_MS);
-	});
-	try {
-		await Promise.race([executorPromise, timeoutPromise]);
-	} finally {
-		if (timer) clearTimeout(timer);
-	}
-	return id;
-}
 
 // ── 调度器 ──
 
@@ -78,6 +49,19 @@ export function setupL1Extractor(
 	let turnCount = 0;
 	let scheduled = false;
 
+	// 熔断状态走磁盘持久（见 ../failure-state.js），不在内存里，重启后仍生效。
+	function loadL1State(): LayerFailureState {
+		const p = getProfilePath();
+		return p ? loadFailureState(p).l1 : { consecutiveFailures: 0, cooledDown: false };
+	}
+	function saveL1State(s: LayerFailureState): void {
+		const p = getProfilePath();
+		if (!p) return;
+		const all = loadFailureState(p);
+		all.l1 = s;
+		saveFailureState(p, all);
+	}
+
 	pi.on("input", (event) => {
 		if (event.source !== "interactive") return;
 		if (!scheduled) turnCount++;
@@ -85,6 +69,8 @@ export function setupL1Extractor(
 
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (turnCount < L1_INTERVAL || scheduled) return;
+		const st = loadL1State();
+		if (st.cooledDown) return; // 熔断期间暂停自动提取
 		const profilePath = getProfilePath();
 		if (!profilePath) return;
 
@@ -97,9 +83,22 @@ export function setupL1Extractor(
 		scheduled = true;
 		ctx.ui.setStatus("memory", "Memory ⚙L1...");
 		try {
-			await runPiSubagent("l1-extractor", task, ctx);
+			await runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS);
+			const s2 = loadL1State();
+			s2.consecutiveFailures = 0; // 子代理正常结束（含已 commit）才清零
+			saveL1State(s2);
 		} catch (err) {
+			const s2 = loadL1State();
+			s2.consecutiveFailures++;
 			console.warn(`[memory-system][l1] extract failed: ${err instanceof Error ? err.message : String(err)}`);
+			if (s2.consecutiveFailures >= L1_FAILURE_THRESHOLD && !s2.cooledDown) {
+				s2.cooledDown = true;
+				ctx.ui.notify(
+					`L1 记忆提取连续失败 ${s2.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l1-trigger 手动重试或检查日志。`,
+					"error",
+				);
+			}
+			saveL1State(s2);
 		} finally {
 			scheduled = false;
 		}
@@ -121,12 +120,30 @@ export function setupL1Extractor(
 			console.warn("[memory-system][l1] 无 L0 增量数据，跳过手动触发");
 			return;
 		}
+		const s2 = loadL1State();
+		s2.cooledDown = false; // 手动触发即恢复熔断
+		s2.consecutiveFailures = 0;
+		saveL1State(s2);
 		scheduled = true;
 		if (ctx) ctx.ui.setStatus("memory", "Memory ⚙L1 (manual)...");
 		try {
-			await runPiSubagent("l1-extractor", task, ctx);
+			await runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS);
+			const s3 = loadL1State();
+			s3.consecutiveFailures = 0;
+			saveL1State(s3);
 		} catch (err) {
+			const s3 = loadL1State();
+			s3.consecutiveFailures++;
 			console.warn(`[memory-system][l1] manual extract failed: ${err instanceof Error ? err.message : String(err)}`);
+			if (s3.consecutiveFailures >= L1_FAILURE_THRESHOLD && !s3.cooledDown) {
+				s3.cooledDown = true;
+				if (ctx)
+					ctx.ui.notify(
+						`L1 记忆提取连续失败 ${s3.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l1-trigger 手动重试或检查日志。`,
+						"error",
+					);
+			}
+			saveL1State(s3);
 		} finally {
 			scheduled = false;
 		}

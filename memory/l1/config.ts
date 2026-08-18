@@ -11,8 +11,10 @@ import { L1_CONFIG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, M
 
 /** 触发间隔：每 N 轮用户消息启动一次 L1 提取。 */
 export const L1_INTERVAL = 5;
-/** 子代理超时（L1 提取多步 read + 提取 + 去重，放宽到 10 分钟）。 */
-export const SUBAGENT_TIMEOUT_MS = 600_000;
+/** 子代理超时（L1 每轮只提取 ≤10 条，3 分钟足够；原 10 分钟过长，hung 子代理会长期占锁）。 */
+export const SUBAGENT_TIMEOUT_MS = 180_000;
+/** 连续失败多少次后熔断（暂停自动提取并通知用户）。 */
+export const L1_FAILURE_THRESHOLD = 3;
 
 /** 配置文件名（mode 持久化）。 */
 export const CONFIG_FILE = "l1-config.json";

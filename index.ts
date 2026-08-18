@@ -58,6 +58,12 @@ export default function (pi: ExtensionAPI) {
   // 只在 before_agent_start 覆写——每次用户 turn 必然先触发它，queryText 永远新鲜。
   let _pendingContext: { queryText: string; subMemories: string; cwd: string } | null = null;
 
+  // L1 命中计数 turn 级去重集合：before_agent_start 每 turn 开头清空。
+  // 同一 turn 内，自动注入（top-3）与 recall_l1_records 工具（top-5）召回同一条记忆时只计 1 次命中。
+  // 工具与注入共用同一引用（都在本进程闭包内）。retry/compaction/followUp 不重触发 before_agent_start，
+  // Set 保留 → 同一 turn 的续跑仍去重，语义正确。
+  const currentTurnHitSet = new Set<string>();
+
   // 提供懒引用给 reviewer，避免循环依赖
   let getMemoryStatus: () => string = () => "0t";
   let getSkillStatus: () => string = () => "0t";
@@ -177,7 +183,7 @@ export default function (pi: ExtensionAPI) {
   // embed_and_search 工具：l1-extractor 子代理自主调用 embedding + vector store search（方案 B，用户拍板 2026-08-18）
   registerEmbedAndSearchTool(pi);
   // recall_l1_records 工具：agent 主动调用的 L1 原子记忆召回（与旧记忆系统解耦）
-  registerRecallL1RecordsTool(pi);
+  registerRecallL1RecordsTool(pi, currentTurnHitSet);
 
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
@@ -314,6 +320,16 @@ export default function (pi: ExtensionAPI) {
   const MEMORY_TOOL_REMINDER = loadMemoryPrompts().toolReminder;
 
   pi.on("before_agent_start", async (event, ctx) => {
+    // [subagent-guard] 子代理进程守卫：pi-subagents 启动子代理时设 PI_SUBAGENT_CHILD=1。
+    // 子代理 turn 不应吃主代理注入 / 建 _pendingContext / 计 L1 命中（否则执行痕迹污染命中统计）。
+    // 与 L0 归档守卫同款判断；此处显式返回原 systemPrompt（pi 要求 before_agent_start 返回对象）。
+    if (process.env.PI_SUBAGENT_CHILD === "1") {
+      return { systemPrompt: event.systemPrompt };
+    }
+
+    // 新 turn 开始：清空 L1 命中计数的 turn 级去重集合
+    currentTurnHitSet.clear();
+
     // Build combined query: current user input + recent conversation history
     let queryText = event.prompt;
     try {
@@ -376,37 +392,24 @@ export default function (pi: ExtensionAPI) {
     _pendingContext = { queryText, subMemories: "", cwd: ctx.cwd }; // 赋值空占位，L1 召回后重新赋值
 
     // L1 records 向量召回注入（与 sub-memories jieba 注入并行，独立实体不融合）
-    // 仅当 vector store 可用且 embedding.json 已配置时触发；失败静默降级（不注入）
-    // 设计修正（2026-08-18）：plan 原 Step 4 想 RRF 融合 L1 records 与 sub-memories，
-    // 但两者是不同记忆实体（原子记忆 vs 项目文档），path 维度不同无法融合，改为独立注入。
+    // 统一走 recallL1Records()（与 recall_l1_records 工具同一条路径，DRY），
+    // 命中计数按 turn 去重（hitDedupSet = currentTurnHitSet），避免注入+工具重复计数。
     try {
-      const { getVectorStore } = await import("./memory/search/vector-store/store.js");
-      const { getEmbeddingService } = await import("./memory/search/embedding/service.js");
       const profile = manager?.getProfileManager().getActiveProfile();
       if (profile) {
-        const vecStore = await getVectorStore(profile.path);
-        if (await vecStore.isAvailable() && (await vecStore.count()) > 0) {
-          const embService = await getEmbeddingService(profile.path);
-          const queryVec = await embService.embed(event.prompt);
-          const hits = await vecStore.search(queryVec, 3);
-          if (hits.length > 0) {
-            const parts: string[] = [];
-            for (const hit of hits) {
-              const { loadL1RecordById } = await import("./memory/search/embedding/record-loader.js");
-              const rec = await loadL1RecordById(hit.recordId, profile.path);
-              if (rec && !rec.deleted) {
-                parts.push(`- ${rec.content}`);
-              }
-            }
-            if (parts.length > 0) {
-              const l1Block = subMemories
-                ? `${subMemories}\n<l1-records>\n${parts.join("\n")}\n</l1-records>`
-                : `<l1-records>\n${parts.join("\n")}\n</l1-records>`;
-              subMemories = l1Block;
-              // 同步更新 _pendingContext（否则 context 事件拿不到 L1 注入）
-              _pendingContext.subMemories = l1Block;
-            }
-          }
+        const { recallL1Records } = await import("./memory/search/hybrid-recall.js");
+        const result = await recallL1Records(event.prompt, profile.path, {
+          topK: 3,
+          hitDedupSet: currentTurnHitSet,
+        });
+        const parts = result.l1Records.map((r) => `- ${r.content}`);
+        if (parts.length > 0) {
+          const l1Block = subMemories
+            ? `${subMemories}\n<l1-records>\n${parts.join("\n")}\n</l1-records>`
+            : `<l1-records>\n${parts.join("\n")}\n</l1-records>`;
+          subMemories = l1Block;
+          // 同步更新 _pendingContext（否则 context 事件拿不到 L1 注入）
+          _pendingContext.subMemories = l1Block;
         }
       }
     } catch (e) {

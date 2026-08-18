@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { runPiSubagent } from "../util/subagent.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -96,7 +96,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 			reviewScheduled = true;
 			ctx.ui.setStatus("memory", "Memory ⚙review...");
 			try {
-				await runPiSubagent("memory-reviewer", built.task, ctx);
+				await runPiSubagent("memory-reviewer", built.task, ctx, SUBAGENT_TIMEOUT_MS);
 				// 审查成功 → 游标推进到当前时间戳（下次从增量末尾开始）
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
@@ -104,35 +104,6 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 			}
 		}
 	});
-
-	async function runPiSubagent(agent: string, task: string, ctx: ExtensionContext): Promise<string> {
-		const executor = (globalThis as any)["__piSubagentExecutor"] as
-			| ((id: string, params: any, signal: AbortSignal, onUpdate: any, ctx: ExtensionContext) => Promise<any>)
-			| undefined;
-		if (!executor) throw new Error("pi-subagents executor not available");
-		const id = randomUUID();
-		const controller = new AbortController();
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const executorPromise = executor(
-			id,
-			{ agent, task, async: true, clarify: false, agentScope: "both" },
-			controller.signal,
-			undefined,
-			ctx,
-		);
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = setTimeout(() => {
-				controller.abort();
-				reject(new Error(`subagent ${agent} timed out after ${SUBAGENT_TIMEOUT_MS}ms`));
-			}, SUBAGENT_TIMEOUT_MS);
-		});
-		try {
-			await Promise.race([executorPromise, timeoutPromise]);
-		} finally {
-			if (timer) clearTimeout(timer);
-		}
-		return id;
-	}
 
 	pi.registerCommand("remember", {
 		description: "Manually trigger a full memory review of the entire conversation.",
@@ -155,7 +126,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 					if (l0Files.length > 0) {
 						const task = `L0Files: ${l0Files.join(",")}\nCursorPath: ${join(paths.profilePath, MEMORY_DB_DIR, "l0-cursor.json")}\nReviewerCursor: \nProfilePath: ${paths.profilePath}`;
 						try {
-							await runPiSubagent("memory-reviewer", task, ctx);
+							await runPiSubagent("memory-reviewer", task, ctx, SUBAGENT_TIMEOUT_MS);
 						} finally {
 							reviewScheduled = false;
 						}
@@ -168,7 +139,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 				return;
 			}
 			try {
-				await runPiSubagent("memory-reviewer", built.task, ctx);
+				await runPiSubagent("memory-reviewer", built.task, ctx, SUBAGENT_TIMEOUT_MS);
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { L2_CURSOR_FILE, SCENE_DIR_NAME, SCENE_INDEX_PATH } from "./config.js";
+import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "./config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
@@ -217,30 +217,14 @@ export function registerL2CommitTool(
 					atomicWrite(filePath, formatSceneBlock(meta, content));
 				}
 
-				// 同步场景索引（全量重建）
-				const entries = syncSceneIndex(profilePath);
+			// 同步场景索引（全量重建）
+			const entries = syncSceneIndex(profilePath);
 
-				// 推进 L2 游标（原子写）
-				const cursorPath = join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE);
-				const tmpCursor = join(profilePath, MEMORY_DB_DIR, `.tmp_l2_cursor_${Date.now()}`);
-				writeFileSync(tmpCursor, JSON.stringify({ lastRecordId: cursor }, null, 2), "utf-8");
-				try {
-					rmSync(cursorPath, { force: true });
-				} catch {
-					// ignore
-				}
-				try {
-					renameSync(tmpCursor, cursorPath);
-				} catch {
-					writeFileSync(cursorPath, readFileSync(tmpCursor, "utf-8"), "utf-8");
-				}
-				try {
-					rmSync(tmpCursor, { force: true });
-				} catch {
-					// ignore
-				}
+			// 注意：L2 游标推进已改由主进程编排侧（l2/index.ts 的 runTask）在整批成功
+			// 后、用代码算出的本批 staging 真实最大 epoch 写入，不再信任子代理上报的
+			// cursor（避免假 id / 空串 / 超前 id 导致游标写脏、漏组织记录）。此处不写游标。
 
-				const personaSignal = params?.personaSignal === true;
+			const personaSignal = params?.personaSignal === true;
 				const personaReason = typeof params?.personaReason === "string" ? params.personaReason : undefined;
 				try {
 					onCommitted?.({ personaSignal, personaReason });

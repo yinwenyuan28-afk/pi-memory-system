@@ -37,6 +37,12 @@ export interface RecallL1RecordsResult {
 export interface RecallL1RecordsOptions {
   /** top-K（默认 5） */
   topK?: number;
+  /**
+   * turn 级去重集合（可选）：同一 agent turn 内已计过命中的 recordId 集合。
+   * 传入后，同一 turn 内重复召回（loop-start 自动注入 + 工具多次调用）只计一次命中；
+   * 未传则保持「每次召回 +1」的原行为。
+   */
+  hitDedupSet?: Set<string>;
 }
 
 /**
@@ -91,6 +97,30 @@ export async function recallL1Records(
     console.warn(
       `[recall-l1Records] 召回失败: ${e instanceof Error ? e.message : String(e)}`
     );
+  }
+
+  // 命中计数：agent 面向召回 → 每条返回的 record 命中 +1
+  // 仅此处（recallL1Records）统一负责；loop-start 自动注入与 recall_l1_records 工具都走本函数。
+  // turn 级去重：传入 hitDedupSet 后，同一 turn 内已计过命中的 record 不再重复 +1
+  // （自动注入 top-3 与工具 top-5 语义重叠，若不按 turn 去重会双重计数）。
+  // （embed_and_search 走 l1-extractor 去重，不调用本函数，不计数）
+  if (result.l1Records.length > 0) {
+    try {
+      const { getL1HitStatsDB } = await import("../stats/l1-hit-stats-db.js");
+      const dedupSet = options.hitDedupSet;
+      const allIds = result.l1Records.map((r) => r.recordId);
+      let ids = allIds;
+      if (dedupSet) {
+        ids = allIds.filter((id) => !dedupSet.has(id));
+        // 本 turn 见过的都标记（含已计过的），后续调用不再计数
+        for (const id of allIds) dedupSet.add(id);
+      }
+      if (ids.length > 0) getL1HitStatsDB(profilePath).recordHits(ids);
+    } catch (e) {
+      console.warn(
+        `[recall-l1Records] 命中计数失败（不影响召回）: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   return result;

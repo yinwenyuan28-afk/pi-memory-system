@@ -46,8 +46,8 @@ export function registerEmbedAndSearchTool(pi: { registerTool: (tool: any) => vo
         description: "返回 top-K 候选（默认 5）",
       },
     },
-    execute: async (args: EmbedAndSearchArgs) => {
-      const { queryText, topK = 5 } = args;
+    execute: async (toolCallId: string, params: EmbedAndSearchArgs) => {
+      const { queryText, topK = 5 } = params;
 
       // 防御：空输入
       if (!queryText || queryText.trim().length === 0) {
