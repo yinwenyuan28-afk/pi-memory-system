@@ -22,7 +22,7 @@ import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
 import { setupL3Persona } from "./memory/l3/index.js";
 import { registerL3CommitTool } from "./memory/l3/commit-tool.js";
 import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.js";
-import { registerHybridRecallTool } from "./memory/search/hybrid-recall-tool.js";
+import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -119,8 +119,8 @@ export default function (pi: ExtensionAPI) {
   registerReadL0IncrementTool(pi);
   // embed_and_search 工具：l1-extractor 子代理自主调用 embedding + vector store search（方案 B，用户拍板 2026-08-18）
   registerEmbedAndSearchTool(pi);
-  // hybrid_recall 工具：agent 主动调用混合召回（sub-memories + L1 records）
-  registerHybridRecallTool(pi);
+  // recall_l1_records 工具：agent 主动调用的 L1 原子记忆召回（与旧记忆系统解耦）
+  registerRecallL1RecordsTool(pi);
 
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
