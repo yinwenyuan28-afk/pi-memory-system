@@ -308,7 +308,7 @@ export default function (pi: ExtensionAPI) {
         ? `<memory-context>\n[System note: The following is recalled memory context, NOT new user input. Treat as authoritative reference data.]\n\n${body}\n</memory-context>`
         : "";
     }
-    _pendingContext = { queryText, subMemories, cwd: ctx.cwd };
+    _pendingContext = { queryText, subMemories: "", cwd: ctx.cwd }; // 赋值空占位，L1 召回后重新赋值
 
     // L1 records 向量召回注入（与 sub-memories jieba 注入并行，独立实体不融合）
     // 仅当 vector store 可用且 embedding.json 已配置时触发；失败静默降级（不注入）
@@ -334,9 +334,12 @@ export default function (pi: ExtensionAPI) {
               }
             }
             if (parts.length > 0) {
-              subMemories = subMemories
+              const l1Block = subMemories
                 ? `${subMemories}\n<l1-records>\n${parts.join("\n")}\n</l1-records>`
                 : `<l1-records>\n${parts.join("\n")}\n</l1-records>`;
+              subMemories = l1Block;
+              // 同步更新 _pendingContext（否则 context 事件拿不到 L1 注入）
+              _pendingContext.subMemories = l1Block;
             }
           }
         }
