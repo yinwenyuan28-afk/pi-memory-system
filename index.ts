@@ -756,6 +756,66 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // ── /vectorize-list Command ─────────────────────────────────
+  // 查询 L1 records 向量化状态：哪些已向量化、哪些未向量化。
+  // 从 vector store 的 l1_vector_index 辅助映射表读已向量化清单，与 records/ JSONL 对比。
+  pi.registerCommand("vectorize-list", {
+    description: "查询 L1 records 向量化状态。Usage: /vectorize-list [limit=10]",
+    handler: async (args, ctx) => {
+      const profile = manager.getProfileManager().getActiveProfile();
+      if (!profile) {
+        ctx.ui.notify("No active profile", "error");
+        return;
+      }
+      const limit = parseInt((args || "").trim(), 10) || 10;
+      try {
+        const { getVectorizationStatus, formatStatus } = await import("./memory/search/embedding/backfill.js");
+        const status = await getVectorizationStatus(profile.path);
+        ctx.ui.notify(formatStatus(status, limit), "info");
+      } catch (e) {
+        ctx.ui.notify(`查询失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
+  // ── /vectorize-backfill Command ─────────────────────────────
+  // 批量回填未向量化的 L1 records。
+  // 前置条件：vectorization.json 中 enabled=true + embedding.json 可读。
+  // 注意：需重启 pi 才能使用本命令（memory-system.ts 改动需重启加载）。
+  pi.registerCommand("vectorize-backfill", {
+    description: "批量将未向量化的 L1 records 嵌入向量并入库。Usage: /vectorize-backfill",
+    handler: async (_args, ctx) => {
+      const profile = manager.getProfileManager().getActiveProfile();
+      if (!profile) {
+        ctx.ui.notify("No active profile", "error");
+        return;
+      }
+      try {
+        const { backfillMissingVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.js");
+        const status = await getVectorizationStatus(profile.path);
+        if (status.unVectorizedCount === 0) {
+          ctx.ui.notify(`✅ 所有 ${status.totalRecords} 条 L1 records 都已向量化，无需回填`, "info");
+          return;
+        }
+        if (!status.readyForBackfill) {
+          ctx.ui.notify(
+            `❌ 回填前置条件不满足：检查 embedding.json + vectorization.json（enabled=true）。未向量化 ${status.unVectorizedCount} 条`,
+            "error",
+          );
+          return;
+        }
+        ctx.ui.notify(`开始回填：${status.unVectorizedCount} 条待向量化`, "info");
+        const result = await backfillMissingVectors(profile.path, (p) => {
+          ctx.ui.notify(`回填进度: ${p.done}/${p.total}`, "info");
+        });
+        const msg = `✅ 回填完成: 成功 ${result.embedded}/${result.total}，耗时 ${result.durationMs}ms${result.failed > 0 ? `，失败 ${result.failed}` : ""}${result.errors.length > 0 ? `\n错误:\n${result.errors.slice(0, 3).join("\n")}` : ""}`;
+        ctx.ui.notify(msg, result.failed > 0 ? "error" : "info");
+      } catch (e) {
+        ctx.ui.notify(`回填失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
   // ── /rebuild-index Command ─────────────────────────────────
 
   pi.registerCommand("rebuild-index", {

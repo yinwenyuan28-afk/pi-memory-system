@@ -35,6 +35,8 @@ export interface VectorStore {
   search(queryVector: number[], topK: number): Promise<VectorHit[]>;
   count(): Promise<number>;
   isAvailable(): Promise<boolean>;
+  /** 返回所有已向量化的 record_id 列表（供 /vectorize-list 命令使用） */
+  getAllVectorizedRecordIds(): Promise<string[]>;
   close(): void;
 }
 
@@ -267,6 +269,17 @@ async function createSqliteVecStore(vectorsDir: string): Promise<VectorStore> {
       } catch {
         return false;
       }
+    },
+
+    /**
+     * 返回所有已向量化的 record_id（来自 l1_vector_index 辅助映射表）
+     * 供 /vectorize-list 命令使用：与 loadAllL1Records() 对比得出未向量化的清单。
+     */
+    async getAllVectorizedRecordIds(): Promise<string[]> {
+      const rows = db
+        .prepare("SELECT record_id FROM l1_vector_index ORDER BY rowid")
+        .all() as Array<{ record_id: string }>;
+      return rows.map((r) => r.record_id);
     },
 
     /**
