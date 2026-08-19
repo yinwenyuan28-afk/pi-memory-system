@@ -22,6 +22,11 @@ export const L0_CONVERSATIONS_DIR = "conversations";
 /** L0 游标文件名。 */
 export const L0_CURSOR_FILE = "l0-cursor.json";
 
+/** skill-feed 原料输出目录（{memoryDB}/skill-feed，按 session 一文件）。 */
+export const SKILL_FEED_DIR = "skill-feed";
+/** skill-feed 游标文件名（独立于 L0）。 */
+export const SKILL_FEED_CURSOR_FILE = "skill-feed-cursor.json";
+
 /** L1 记忆输出目录（{memoryDB}/records）。 */
 export const L1_RECORDS_DIR = "records";
 /** L1 游标文件名。 */

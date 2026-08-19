@@ -106,6 +106,68 @@ function compressLogBlock(text: string): string {
 	return out.join("\n");
 }
 
+// ── 框架噪音剥离（pi 特有，2026-08-19） ──────────────────────────
+
+/**
+ * pi TUI 终端状态回显噪音剥离。
+ *
+ * 背景（真实样本 2026-08-17 分片，12260 字 user 消息）：pi 的终端 UI 会把
+ * 自身状态渲染（进度条、扩展 UI 请求、agent 生命周期事件）混入会话内容，
+ * 形成 `{"type":"extension_ui_request",...}` / `{"type":"agent_start"}` /
+ * `completed:──────` / `1.043 18.5%/1.0M (auto)` 这类框架噪音。对记忆/技能
+ * 提取均无价值，整行剥离。
+ *
+ * 实现：逐行判断（比单条正则稳），命中以下任一形态整行删除：
+ *   ① 框架事件 JSON 行（行首 `{"type":"<框架类型>"`，白名单防误伤对话中的
+ *      普通 JSON 字面量，如 {"type":"text"}）
+ *   ② 进度条行（completed:──）
+ *   ③ 终端状态栏行（`1.043 18.5%/1.0M (auto)` 形态）
+ * 注意：JSON 后跟状态栏杂讯（同一行）也会被整行删除——这类行本质就是 UI 回显。
+ */
+const FRAMEWORK_NOISE_TYPES = [
+	"extension_ui_request",
+	"agent_start",
+	"agent_end",
+	"turn_start",
+	"turn_end",
+	"message_start",
+	"message_delta",
+	"message_stop",
+	"content_block_start",
+	"content_block_delta",
+	"content_block_stop",
+	"response",
+	"request_start",
+	"request_stop",
+	"ping",
+	"stream_event",
+	"connection_init",
+];
+
+const FRAMEWORK_NOISE_JSON_RE = new RegExp(
+	`^\\{\\s*"type"\\s*:\\s*"(?:${FRAMEWORK_NOISE_TYPES.join("|")})"`,
+);
+const FRAMEWORK_PROGRESS_BAR_RE = /^completed:[─\-—]+/;
+// 终端状态栏行：`1.043 18.5%/1.0M (auto)` / `USER.md: 3 entries (unchanged)19.8%/1.0M (auto)`
+// 特征：`%/<容量> (auto)` 之后是行尾或 ≥3 个空白再跟模型名（如 deepseek-v4-flash • high）。
+// 行中文字（如"占比 15%/1.0M (auto) 这个先不管"）不含大段空白，不误伤。
+const FRAMEWORK_STATUS_LINE_RE =
+	/^.*?\d+(?:\.\d+)?%\/[\d.]+[KMGT]?\s+\(auto\)(?:[ \t]{3,}.*)?$/;
+
+function stripFrameworkNoise(text: string): string {
+	return text
+		.split("\n")
+		.map((line) => {
+			const t = line.trim();
+			if (!t) return line;
+			if (FRAMEWORK_NOISE_JSON_RE.test(t)) return "";
+			if (FRAMEWORK_PROGRESS_BAR_RE.test(t)) return "";
+			if (FRAMEWORK_STATUS_LINE_RE.test(t)) return "";
+			return line;
+		})
+		.join("\n");
+}
+
 // ── 内置规则表 ──
 
 /** skill 块剥离：`<skill name="..." location="...">...</skill>`，保留块后 args（真实用户输入）。 */
@@ -127,6 +189,15 @@ export const BUILTIN_RULES: SanitizeRule[] = [
 		id: "log-block-compress",
 		handler: compressLogBlock,
 		applyTo: "user",
+		group: "framework",
+	},
+	{
+		id: "pi-framework-noise",
+		// 2026-08-19：pi TUI 终端状态回显被混入 session（真实样本 12260 字 user 消息）。
+		// 剥离框架事件 JSON（extension_ui_request / agent_start / turn_start / response 等）
+		// 与终端进度条行（completed:── / 1.043 18.5%/1.0M (auto)）。
+		handler: stripFrameworkNoise,
+		applyTo: "both",
 		group: "framework",
 	},
 	// ── memory：记忆注入标签（防反馈循环，照抄腾讯） ──
@@ -263,11 +334,18 @@ export function sanitizeText(text: string, role: "user" | "assistant", rules: Sa
  * L0 捕获过滤——刻意宽松：只丢"结构上无用"的。
  * 内容级质量门（长度/符号/prompt 注入）留给 L1 的 shouldExtractL1。
  *
- * 规则：空消息、斜杠命令、纯 [image] 消息。
+ * 规则：空消息、纯 [image] 消息；斜杠命令过滤仅对 user 生效
+ * （role 不传时按 user 处理，保持 L0 调用兼容；tool_call/tool_result
+ * 等工具输出以 `/` 开头很常见——如 /usr/bin/bash、/C:/dev/...——传
+ * 具体角色可避开误伤，2026-08-19 skill-feed 验证发现 17 条工具输出被误杀）。
  */
-export function shouldCaptureL0(content: string): boolean {
+export function shouldCaptureL0(
+	content: string,
+	role?: "user" | "assistant" | "tool_call" | "tool_result",
+): boolean {
 	if (!content || !content.trim()) return false;
-	if (content.startsWith("/")) return false; // 斜杠命令是框架指令
+	const slashFilter = role === undefined || role === "user";
+	if (slashFilter && content.startsWith("/")) return false; // 斜杠命令是框架指令（仅 user）
 	if (/^\[image\]\s*$/.test(content)) return false; // 纯图片消息无文本价值
 	return true;
 }

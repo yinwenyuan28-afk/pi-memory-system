@@ -14,6 +14,7 @@ import { resolveConfiguredModel } from "./config/model-config.js";
 // [DISABLED] workflow 保存系统已禁用（保留代码，恢复时取消注释即可）
 // import { setupWorkflowSystem } from "./workflow/index.js";
 import { archiveSessionIncrement } from "./memory/l0/index.js";
+import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.js";
 import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.js";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
 import { registerReadL0IncrementTool } from "./memory/l1/read-tool.js";
@@ -308,6 +309,11 @@ export default function (pi: ExtensionAPI) {
         const result = archiveSessionIncrement(sessionFile, profile.path, ctx.cwd);
         if (result.error) {
           console.warn(`[memory-system][l0] ${result.error}`);
+        }
+        // skill-feed 原料清洗（5-role 高保真，喂 skill-reviewer；与 L0 双通道并存）
+        const feedResult = archiveSkillFeedIncrement(sessionFile, profile.path, ctx.cwd);
+        if (feedResult.error) {
+          console.warn(`[memory-system][skill-feed] ${feedResult.error}`);
         }
       }
     } catch (e) {
