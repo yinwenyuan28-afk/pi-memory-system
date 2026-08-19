@@ -30,7 +30,7 @@ export interface VectorizationStatus {
   unVectorizedIds: string[];
   /** 已向量化的 record id 列表 */
   vectorizedIds: string[];
-  /** 是否已准备好回填（VECTORIZATION_ENABLED + embedding.json 都 OK）*/
+  /** 是否已准备好回填（VECTORIZATION_ENABLED + embedding 配置都 OK）*/
   readyForBackfill: boolean;
 }
 
@@ -55,7 +55,7 @@ export async function getVectorizationStatus(
   const vectorizedIds = allRecordIds.filter((id) => vectorizedIdsSet.has(id));
   const unVectorizedIds = allRecordIds.filter((id) => !vectorizedIdsSet.has(id));
 
-  // 4. 检查回填前置条件（只检查 embedding.json 存在 + 有未向量化 records；
+  // 4. 检查回填前置条件（只检查 embedding 配置存在 + 有未向量化 records；
   // 不检查 enabled 标志——回填是手动一次性操作，不受业务开关控制）
   const readyForBackfill =
     loadEmbeddingConfig(profilePath) !== null &&
@@ -109,7 +109,7 @@ export async function backfillMissingVectors(
   const startTime = Date.now();
   const errors: string[] = [];
 
-  // 1. 检查前置条件（只检查 embedding.json 存在，不检查 enabled 标志）
+  // 1. 检查前置条件（只检查 embedding 配置存在，不检查 enabled 标志）
   // 设计原则：回填是手动一次性操作，不受 enabled 业务开关控制。
   // enabled 标志只影响 l1_commit 的自动向量化（l1/commit-tool.ts）。
   const embConfig = loadEmbeddingConfig(profilePath);
@@ -119,7 +119,7 @@ export async function backfillMissingVectors(
       embedded: 0,
       failed: 0,
       durationMs: 0,
-      errors: ["embedding.json 未配置，无法回填"],
+      errors: ["memory-system-model.json 无 embedding 配置，无法回填"],
     };
   }
 
@@ -234,7 +234,7 @@ export async function rebuildAllVectors(
       embedded: 0,
       failed: 0,
       durationMs: 0,
-      errors: ["embedding.json 未配置，无法 rebuild"],
+      errors: ["memory-system-model.json 无 embedding 配置，无法 rebuild"],
     };
   }
 

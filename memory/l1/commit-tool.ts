@@ -156,12 +156,12 @@ export function registerL1CommitTool(
 				written = appendedLines.length;
 			}
 
-			// 2. 同步写入向量（仅当 VECTORIZATION_ENABLED=true 且 embedding.json 可用）
+			// 2. 同步写入向量（仅当 VECTORIZATION_ENABLED=true 且 embedding 配置可用）
 			let vectorStats: { inserted: number; deleted: number } | null = null;
 			try {
 				const embConfig = loadEmbeddingConfig(profilePath);
 				if (!embConfig) {
-					// embedding.json 未配置，跳过向量写入
+					// embedding 未配置，跳过向量写入
 				} else if (!isVectorizationReady(profilePath)) {
 					// VECTORIZATION_ENABLED=false 或未达阈值，跳过向量写入
 				} else if (toEmbed.length > 0 || toDelete.length > 0) {

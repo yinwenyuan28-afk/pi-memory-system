@@ -6,7 +6,7 @@
  * 无本地 fallback：远程失败直接报错，业务流退回纯 LLM
  * 复用腾讯 OpenAIEmbeddingService 设计（白嫖限流/重试/分批/归一化能力）
  *
- * 子代理进程独立实例化：每个子代理进程各自读 embedding.json 并初始化
+ * 子代理进程独立实例化：每个子代理进程各自读 memory-system-model.json 并初始化
  * （不通过 globalThis 桥接传递配置）
  */
 
@@ -52,7 +52,7 @@ let serviceInstance: EmbeddingService | null = null;
 /**
  * 获取 EmbeddingService 实例（懒加载）
  *
- * 首次调用时读 embedding.json + 初始化远程 provider
+ * 首次调用时读 memory-system-model.json（type=embedding 条目）+ 初始化远程 provider
  * 子代理进程：进程启动后首次 embed 调用时初始化
  * 主代理进程：before_agent_start 首次调用时初始化
  *
@@ -64,8 +64,8 @@ export async function getEmbeddingService(profilePath?: string): Promise<Embeddi
   const config = loadEmbeddingConfig(profilePath ?? process.env.PI_PROFILE_PATH ?? "");
   if (!config) {
     throw new Error(
-      "embedding.json 未找到或未配置。请在 memoryDB/config/embedding.json 中提供 apiKey + url。\n" +
-        "参考格式：{\"apiKey\":\"sk-xxx\",\"url\":\"https://xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1\"}"
+      "embedding 未配置。请在 memoryDB/config/memory-system-model.json 中添加 type=embedding 条目（apiKey + url）。\n" +
+        "参考格式：{\"type\":\"embedding\",\"apiKey\":\"sk-xxx\",\"url\":\"https://xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1\"}"
     );
   }
 

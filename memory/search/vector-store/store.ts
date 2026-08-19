@@ -18,6 +18,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
+import { loadEmbeddingConfig } from "../embedding/config.js";
 
 /** 搜索结果 hit */
 export interface VectorHit {
@@ -73,14 +74,12 @@ async function createSqliteVecStore(vectorsDir: string): Promise<VectorStore> {
   db.pragma("journal_mode = WAL");
   sqliteVec.load(db);
 
-  // 从 embedding config 读取维度（与 embedding service 输出一致）
+  // 从 embedding 配置读取维度（与 embedding service 输出一致）
+  // vectorsDir = {profilePath}/memoryDB/vectors → profilePath = join(vectorsDir, "..", "..")
   const dimensions = (() => {
     try {
-      const configPath = join(vectorsDir, "..", "config", "embedding.json");
-      if (existsSync(configPath)) {
-        const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
-        return cfg.dimensions ?? 1024;
-      }
+      const cfg = loadEmbeddingConfig(join(vectorsDir, "..", ".."));
+      return cfg?.dimensions ?? 1024;
     } catch {}
     return 1024; // 默认值
   })();
