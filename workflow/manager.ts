@@ -5,7 +5,7 @@
 //       挂起总结/隐式完成检测），全部通过 WorkflowDB 持久化
 // 用途：index.ts 接线 + detector 信号检测 + 工具/命令都调用本类
 // 设计：代码层零 LLM 成本操作直接做；需要语义总结的（方案确认回填/挂起总结/
-//       diff 总结）调 completeSimple，5s 超时失败不阻塞主流程
+//       diff 总结）调 callLLM（util/llm.ts），5s 超时失败不阻塞主流程
 // ============================================================================
 
 import {
@@ -17,10 +17,8 @@ import {
   type TaskStatus,
 } from "./db.js";
 import { readFileSync } from "node:fs";
-import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { callLLM } from "../util/llm.js";
 import { loadPrompts, renderPrompt } from "./prompts.js";
-
-const LLM_TIMEOUT_MS = 5000;
 
 // ---------------------------------------------------------------------------
 // WorkflowManager 类
@@ -253,7 +251,7 @@ export class WorkflowManager {
       events: evText.slice(0, 8000),
     });
 
-    const result = await this.callLLM(prompt);
+    const result = await callLLM(this.model, "You respond only with valid JSON.", prompt);
     if (!result) return;
     try {
       const obj = JSON.parse(result);
@@ -279,7 +277,7 @@ export class WorkflowManager {
       next: `${next.title} — ${next.description ?? ""}`,
     });
 
-    const result = await this.callLLM(prompt);
+    const result = await callLLM(this.model, "You respond only with valid JSON.", prompt);
     if (!result) return;
     try {
       const obj = JSON.parse(result);
@@ -320,34 +318,6 @@ export class WorkflowManager {
     }
     // add（或 update 未匹配到 → 视为新增）
     return this.db.addContext(workflowId, category, content, verified);
-  }
-
-  // ────────────────────────── LLM 工具方法 ──────────────────────────
-
-  /**
-   * 统一 LLM 调用（5s 超时，失败返回 null）
-   * @param prompt 用户提示词（系统提示固定为 JSON 输出）
-   */
-  private async callLLM(prompt: string): Promise<string | null> {
-    if (!this.model) return null;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-    try {
-      const result = await completeSimple(
-        this.model,
-        {
-          systemPrompt: "You respond only with valid JSON.",
-          messages: [{ role: "user", content: prompt }],
-        },
-        { signal: controller.signal } as any,
-      );
-      const raw = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
-      return raw;
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
   }
 }
 

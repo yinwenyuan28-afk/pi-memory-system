@@ -307,12 +307,14 @@ export function archiveSkillFeedIncrement(
 	let recorded = 0;
 	let filtered = 0;
 	const records: string[] = [];
+	const nowIso = new Date().toISOString();
 
 	for (const msg of parsed) {
 		// 展开成 entry（一个 assistant 可产生多条：text + tool_calls）
 		const entries: SkillFeedEntry[] = [];
 		const base = {
 			sessionKey,
+			recordedAt: nowIso,
 			id: msg.id ?? null,
 			timestamp: msg.timestamp ?? null,
 			cwd: effectiveCwd,

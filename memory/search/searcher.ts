@@ -1,9 +1,9 @@
-import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InvertedIndex } from "./inverted-index.js";
 import { loadMemoryPrompts, renderPrompt } from "../prompts.js";
 import { splitSections } from "./sections.js";
+import { callLLM } from "../../util/llm.js";
 
 /**
  * 关键词缓存兜底刷新间隔（轮次）。事件驱动刷新为主，达到此轮次仍强制刷新。
@@ -15,11 +15,6 @@ const REFRESH_INTERVAL = 8;
  * （如"继续"、"1"、"好"），不触发关键词缓存重建。
  */
 const SHORT_PROMPT_THRESHOLD = 6;
-
-/**
- * LLM 调用超时（毫秒）。
- */
-const LLM_TIMEOUT_MS = 5000;
 
 /**
  * 返回结果的 top-k 上限（搜索阶段候选池，后续 LLM 过滤再精筛）。
@@ -46,7 +41,7 @@ const JACCARD_WEIGHT = 0.6;
  * LLMKeywordSearcher —— 用 LLM 设计搜索关键词 + 综合评分排序。
  *
  * 工作流：
- *   1. 调用 completeSimple 让当前模型分析对话意图，输出 JSON 关键词列表
+ *   1. 调用 callLLM（util/llm.ts）让当前模型分析对话意图，输出 JSON 关键词列表
  *   2. 用关键词搜索倒排索引 -> searchWithScores 获得归一化命中分
  *   3. 对每个结果文件计算 LLM 关键词 vs 文件内容的 Jaccard 相似度
  *   4. 综合评分 = 0.4 * indexScore + 0.6 * jaccardScore
@@ -171,26 +166,16 @@ export class LLMKeywordSearcher {
 		// 序号令牌：后发起的刷新若先完成则被忽略（防旧上下文覆盖新缓存）
 		const seq = ++this.refreshSeq;
 		const prompt = renderPrompt(loadMemoryPrompts().keywordExtraction, { contextText });
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-		try {
-			const result = await completeSimple(this.model, {
-				systemPrompt: "You are a keyword extraction assistant. Respond only with valid JSON arrays.",
-				messages: [{ role: "user", content: prompt }],
-			}, { signal: controller.signal } as any);
-
-			const raw = typeof result.content === "string"
-				? result.content
-				: JSON.stringify(result.content);
-			const parsed = parseKeywordResponse(raw);
-			if (parsed.length > 0 && seq === this.refreshSeq) {
-				this.cachedKeywords = parsed;
-				this.cachedAt = Date.now();
-			}
-		} catch {
-			// 超时/失败：保留旧缓存（合并策略下 query 仍由 jieba 保底参与）
-		} finally {
-			clearTimeout(timer);
+		const raw = await callLLM(
+			this.model,
+			"You are a keyword extraction assistant. Respond only with valid JSON arrays.",
+			prompt,
+		);
+		if (raw === null) return; // 超时/失败：保留旧缓存（合并策略下 query 仍由 jieba 保底参与）
+		const parsed = parseKeywordResponse(raw);
+		if (parsed.length > 0 && seq === this.refreshSeq) {
+			this.cachedKeywords = parsed;
+			this.cachedAt = Date.now();
 		}
 	}
 
@@ -327,34 +312,24 @@ export class LLMKeywordSearcher {
 			candidates: preview,
 		});
 
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-		try {
-			const result = await completeSimple(this.model, {
-				systemPrompt: "You are a memory relevance filter. Respond only with valid JSON.",
-				messages: [{ role: "user", content: prompt }],
-			}, { signal: controller.signal } as any);
+		const raw = await callLLM(
+			this.model,
+			"You are a memory relevance filter. Respond only with valid JSON.",
+			prompt,
+		);
+		if (raw === null) return candidates.slice(0, 5); // 超时/失败 → 降级 top-5 章节（按字面分）
 
-			const raw = typeof result.content === "string"
-				? result.content
-				: JSON.stringify(result.content);
-			const keep = parseKeepKeys(raw);
-			if (keep.length > 0) {
-				// 按 LLM 相关度降序输出顺序保留（截断依据）
-				const keySet = new Set(keep);
-				const kept = candidates
-					.filter((c) => keySet.has(`${c.file}#${c.order}`))
-					.slice(0, MAX_INJECT_SECTIONS);
-				if (kept.length > 0) return kept;
-			}
-			// keep 解析成功但为空（LLM 认为全部无关）→ 降级 top-2 保底
-			return candidates.slice(0, 2);
-		} catch {
-			// 超时/失败 → 降级 top-5 章节（按字面分）
-			return candidates.slice(0, 5);
-		} finally {
-			clearTimeout(timer);
+		const keep = parseKeepKeys(raw);
+		if (keep.length > 0) {
+			// 按 LLM 相关度降序输出顺序保留（截断依据）
+			const keySet = new Set(keep);
+			const kept = candidates
+				.filter((c) => keySet.has(`${c.file}#${c.order}`))
+				.slice(0, MAX_INJECT_SECTIONS);
+			if (kept.length > 0) return kept;
 		}
+		// keep 解析成功但为空（LLM 认为全部无关）→ 降级 top-2 保底
+		return candidates.slice(0, 2);
 	}
 
 	/**

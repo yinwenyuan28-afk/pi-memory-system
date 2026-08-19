@@ -18,6 +18,7 @@ import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.js";
 import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.js";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
 import { registerReadL0IncrementTool } from "./memory/l1/read-tool.js";
+import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.js";
 import { setupL2Organizer } from "./memory/l2/index.js";
 import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
 import { setupL3Persona } from "./memory/l3/index.js";
@@ -26,7 +27,7 @@ import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.js";
 import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
-import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { callLLM } from "./util/llm.js";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -181,6 +182,8 @@ export default function (pi: ExtensionAPI) {
   );
   // read_l0_increment 工具：l1-extractor 子代理一次读取游标后增量（替代逐段 read，性能修复）
   registerReadL0IncrementTool(pi);
+  // read_skill_feed_increment 工具：skill-reviewer 子代理读 5-role skill 原料增量（M4）
+  registerReadSkillFeedIncrementTool(pi);
   // embed_and_search 工具：l1-extractor 子代理自主调用 embedding + vector store search（方案 B，用户拍板 2026-08-18）
   registerEmbedAndSearchTool(pi);
   // recall_l1_records 工具：agent 主动调用的 L1 原子记忆召回（与旧记忆系统解耦）
@@ -234,21 +237,13 @@ export default function (pi: ExtensionAPI) {
 
     ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
 
-    // 2026-08-08：后台 LLM 调用统一用配置模型（默认 minimax-cn/MiniMax-M3），
+    // 2026-08-08：后台 LLM 调用统一用配置模型（memory-system-model.json，默认 minimax-cn/MiniMax-M3），
     // 不跟随前台会话切换。配置缺失/无效 → fallback ctx.model。
-    const configuredModel = resolveConfiguredModel(agentDir, ctx.model) as Parameters<typeof completeSimple>[0];
+    const configuredModel = resolveConfiguredModel(profile?.path ?? agentDir, ctx.model);
 
     // Wire up LLM filter for inverted index (async, non-blocking)
     manager.invertedIndexInstance.setLLMFilter(async (prompt: string) => {
-      try {
-        const result = await completeSimple(configuredModel, {
-          systemPrompt: "You respond only with JSON.",
-          messages: [{ role: "user", content: prompt }],
-        });
-        return typeof result.content === "string" ? result.content : JSON.stringify(result.content);
-      } catch {
-        return "";
-      }
+      return (await callLLM(configuredModel, "You respond only with JSON.", prompt)) ?? "";
     });
 
     // 初始化 LLMKeywordSearcher
@@ -871,7 +866,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── /vectorize-backfill Command ─────────────────────────────
   // 批量回填未向量化的 L1 records。
-  // 前置条件：vectorization.json 中 enabled=true + embedding.json 可读。
+  // 前置条件：vectorization.json 中 enabled=true + embedding 配置可读。
   // 注意：需重启 pi 才能使用本命令（memory-system.ts 改动需重启加载）。
   pi.registerCommand("my-memory:l1:embedding:backfill", {
     description: "批量将未向量化的 L1 records 嵌入向量并入库。用法：/my-memory:l1:embedding:backfill",
@@ -890,7 +885,7 @@ export default function (pi: ExtensionAPI) {
         }
         if (!status.readyForBackfill) {
           ctx.ui.notify(
-            `❌ 回填前置条件不满足：检查 embedding.json + vectorization.json（enabled=true）。未向量化 ${status.unVectorizedCount} 条`,
+            `❌ 回填前置条件不满足：检查 embedding 配置 + vectorization.json（enabled=true）。未向量化 ${status.unVectorizedCount} 条`,
             "error",
           );
           return;

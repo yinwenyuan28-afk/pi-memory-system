@@ -17,6 +17,8 @@ export type SkillFeedRole = "user" | "assistant" | "tool_call" | "tool_result";
  */
 export interface SkillFeedEntry {
 	sessionKey: string;
+	/** 写入 skill-feed 的时间（ISO），增量读取游标用（对齐 L0 的 recordedAt 语义）。 */
+	recordedAt: string;
 	/** message.id（若存在，供溯源）。 */
 	id: string | null;
 	role: SkillFeedRole;

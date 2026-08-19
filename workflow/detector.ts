@@ -4,14 +4,12 @@
 // 功能：生命周期分支判定（创建/验收/推翻双分支/需求调整/子任务/延续/隐式完成）
 //       采用"信号词正则初筛（零成本）→ 命中才 LLM 语义确认（5s 超时）"
 // 用途：index.ts 用户消息监听 → detector 判定 → manager 执行状态机动作
-// 设计：正则不命中直接返回（零 LLM 成本）；命中才调 completeSimple 确认，
+// 设计：正则不命中直接返回（零 LLM 成本）；命中才调 callLLM（util/llm.ts）确认，
 //       LLM 超时/失败回退到正则结论（保守选择）
 // ============================================================================
 
-import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { callLLM } from "../util/llm.js";
 import { loadPrompts } from "./prompts.js";
-
-const LLM_TIMEOUT_MS = 5000;
 
 // 全新需求信号正则（兜底分支：默认延续，只有明确新需求信号才创建新工作流）
 const NEW_REQUEST_REGEX =
@@ -171,20 +169,13 @@ export class WorkflowDetector {
     rawMode = false,
   ): Promise<boolean | null | "abandon" | "evolve"> {
     if (!this.model) return null;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+    const raw = await callLLM(
+      this.model,
+      "You respond only with valid JSON.",
+      `用户消息：${message.slice(0, 500)}\n\n${instruction}`,
+    );
+    if (raw === null) return null;
     try {
-      const result = await completeSimple(
-        this.model,
-        {
-          systemPrompt: "You respond only with valid JSON.",
-          messages: [
-            { role: "user", content: `用户消息：${message.slice(0, 500)}\n\n${instruction}` },
-          ],
-        },
-        { signal: controller.signal } as any,
-      );
-      const raw = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
       const obj = JSON.parse(raw);
       if (rawMode) {
         const t = obj?.type;
@@ -197,8 +188,6 @@ export class WorkflowDetector {
       return null;
     } catch {
       return null;
-    } finally {
-      clearTimeout(timer);
     }
   }
 }
