@@ -1,4 +1,4 @@
-import { runPiSubagent } from "../util/subagent.js";
+import { runPiSubagent } from "../../util/subagent.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	L1_INTERVAL,

@@ -1,4 +1,4 @@
-import { runPiSubagent } from "../util/subagent.js";
+import { runPiSubagent } from "../../util/subagent.js";
 import { statSync, unwatchFile, watchFile, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
