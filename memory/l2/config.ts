@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, rename
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.js";
+import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 配置 / 游标 / 任务构造（纯函数，无 pi 依赖，可单测）
@@ -100,7 +100,7 @@ export function saveL2Cursor(profilePath: string, lastProcessedAt: number, lastR
  */
 export function buildL2Task(profilePath: string, recordsFilesOverride?: string[], incremental = false): string {
 	// 枚举 records 下实际 JSONL 分片文件清单（子代理不需猜测 / 试错日期）——08-17 实测
-	const recordsDir = join(profilePath, MEMORY_DB_DIR, "records");
+	const recordsDir = join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR);
 	const recordsFiles = recordsFilesOverride
 		?? (existsSync(recordsDir)
 			? readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f)).sort().map((f) => join(recordsDir, f))
@@ -123,7 +123,7 @@ const L2_STAGING_DIR = ".l2-staging";
 
 /** 读全部 records，返回 {id, epoch, raw}（导出：供编排侧计算游标推进水位）。 */
 export function readAllRecords(profilePath: string): Array<{ id: string; epoch: number; raw: string }> {
-	const recordsDir = join(profilePath, MEMORY_DB_DIR, "records");
+	const recordsDir = join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR);
 	if (!existsSync(recordsDir)) return [];
 	const out: Array<{ id: string; epoch: number; raw: string }> = [];
 	for (const f of readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f)).sort()) {

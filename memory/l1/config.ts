@@ -20,10 +20,10 @@ export const L1_FAILURE_THRESHOLD = 3;
 export const CONFIG_FILE = "l1-config.json";
 /** 游标文件名（全局 lastRecordedAt，子代理回写）。 */
 export const CURSOR_FILE = "l1-cursor.json";
-/** L0 分片目录名（{profilePath}/conversations）。 */
-export const L0_DIR_NAME = "conversations";
-/** L1 记忆输出目录名（{profilePath}/records）。 */
-export const RECORDS_DIR_NAME = "records";
+/** L0 分片目录名（{profilePath}/memoryDB/l0-conversations，单一来源见 paths.ts）。 */
+export const L0_DIR_NAME = L0_CONVERSATIONS_DIR;
+/** L1 记忆输出目录名（{profilePath}/memoryDB/l1-records，单一来源见 paths.ts）。 */
+export const RECORDS_DIR_NAME = L1_RECORDS_DIR;
 
 /** 规则文件目录（本模块同目录下的 prompts/）。 */
 export const PROMPT_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
