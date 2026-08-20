@@ -89,7 +89,7 @@ export default function (pi: ExtensionAPI) {
 
   // L2 场景组织调度器（单次注册）：主进程轮询 l1-cursor.json mtime 变化触发计数（08-17 修复回调跨进程断裂）
   let l2Initialized = false;
-  let l2Controls: { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void } | undefined;
+  let l2Controls: { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void | Promise<void> } | undefined;
 
   // L3 persona 调度器（单次注册）：L2 提交后评估触发
   let l3Initialized = false;
@@ -214,16 +214,23 @@ export default function (pi: ExtensionAPI) {
       reviewersInitialized = true;
     }
 
-    // 初始化 L1 提取调度器（单次注册）：每 L1_INTERVAL 轮启动 l1-extractor 子代理
-    if (!l1Initialized) {
-      l1Controls = setupL1Extractor(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
-      l1Initialized = true;
-    }
-
     // 初始化 L2 场景组织调度器（单次注册）：L1 提交 L2_BATCH 批后触发
+    // 2026-08-20 串行修复：先 setup L2（拿 l2Controls），再 setup L1 并传入 l2Controls，
+    // 使 L1 子代理完成后再显式 trigger L2（避免 watchFile 抢跑导致 L1/L2 并行）。
     if (!l2Initialized) {
       l2Controls = setupL2Organizer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
       l2Initialized = true;
+    }
+
+    // 初始化 L1 提取调度器（单次注册）：每 L1_INTERVAL 轮启动 l1-extractor 子代理
+    // 把 l2Controls 传入，L1 完成后串行触发 L2 整理
+    if (!l1Initialized) {
+      l1Controls = setupL1Extractor(
+        pi,
+        () => manager?.getProfileManager().getActiveProfile()?.path,
+        l2Controls ? { triggerManual: (ctx) => l2Controls?.triggerManual(ctx) } : undefined,
+      );
+      l1Initialized = true;
     }
 
     // 初始化 L3 persona 调度器（单次注册）：L2 提交后评估触发
@@ -391,8 +398,20 @@ export default function (pi: ExtensionAPI) {
     // L1 records 向量召回注入（当前唯一自动注入来源，2026-08-20 起）
     // 统一走 recallL1Records()（与 recall_l1_records 工具同一条路径，DRY），
     // 命中计数按 turn 去重（hitDedupSet = currentTurnHitSet），避免注入+工具重复计数。
-    try {
-      const profile = manager?.getProfileManager().getActiveProfile();
+    // 短查询 / 质量门过滤：避免为 "1" / "/" / 纯符号等无意义 prompt 浪费向量调用
+    const _trimmedPrompt = (event.prompt || "").trim();
+    const _isTrivialPrompt =
+      !_trimmedPrompt ||
+      _trimmedPrompt.length < 3 ||
+      _trimmedPrompt.startsWith("/") ||
+      /^[\?？]+$/.test(_trimmedPrompt) ||
+      /^[^a-zA-Z0-9\u4e00-\u9fa5\s]{1,5}$/.test(_trimmedPrompt);
+    if (_isTrivialPrompt) {
+      // 仍需设置空占位，保持 _pendingContext 与 context 事件一致
+      _pendingContext.subMemories = "";
+    } else {
+      try {
+        const profile = manager?.getProfileManager().getActiveProfile();
       if (profile) {
         const { recallL1Records } = await import("./memory/search/hybrid-recall.js");
         const result = await recallL1Records(event.prompt, profile.path, {
@@ -414,6 +433,7 @@ export default function (pi: ExtensionAPI) {
     } catch (e) {
       // L1 向量召回失败静默降级（不阻塞主流程，不注入）
       console.warn(`[memory-system][l1-recall] ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     // 事件驱动刷新：话题切换（jieba(prompt) 与缓存关键词无交集）→ fire-and-forget 重建关键词

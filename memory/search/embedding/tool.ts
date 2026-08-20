@@ -92,6 +92,7 @@ export function registerEmbedAndSearchTool(pi: { registerTool: (tool: any) => vo
 
         return {
           candidates,
+          queryVector: queryVec,
           stats: {
             embedding_model: embeddingService.getModelId(),
             dimensions: embeddingService.getDimensions(),

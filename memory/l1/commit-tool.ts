@@ -143,7 +143,8 @@ export function registerL1CommitTool(
 					if (existingIds.has(r.id)) continue; // 同 id 重投（重试 / 部分提交）
 					if (typeof r.content === "string" && existingHashes.has(contentHash(r.content))) continue; // 内容重复
 				}
-				appendedLines.push(JSON.stringify(r));
+				const { embedding: _emb, ...clean } = r as any;
+				appendedLines.push(JSON.stringify(clean));
 				if (isDeleted) toDelete.push(r);
 				else toEmbed.push(r);
 				existingIds.add(r.id); // 防止同批内重复
@@ -170,11 +171,22 @@ export function registerL1CommitTool(
 					const embService = await getEmbeddingService(profilePath);
 					const vecStore = await getVectorStore(profilePath);
 
-					// 非 deleted 记录：embed content + insert 向量
+					// 非 deleted 记录：优先复用子代理 dedup 已算好的向量（跨进程去重）
 					if (toEmbed.length > 0) {
-						const vectors = await embService.embedBatch(toEmbed.map((r: any) => r.content));
-						const batch = toEmbed.map((r: any, i: number) => ({ recordId: r.id, vector: vectors[i] }));
-						await vecStore.insertBatch(batch);
+						const needEmbed = [];
+						const batch = [];
+						for (const r of toEmbed) {
+							if (Array.isArray(r.embedding) && r.embedding.length === embService.getDimensions()) {
+								batch.push({ recordId: r.id, vector: r.embedding });
+							} else {
+								needEmbed.push(r);
+							}
+						}
+						if (needEmbed.length > 0) {
+							const vectors = await embService.embedBatch(needEmbed.map((r) => r.content));
+							for (let j=0;j<vectors.length;j++) batch.push({ recordId: needEmbed[j].id, vector: vectors[j] });
+						}
+						if (batch.length > 0) await vecStore.insertBatch(batch);
 					}
 					// deleted 记录（update/merge 时旧记录）：删除向量
 					if (toDelete.length > 0) {
