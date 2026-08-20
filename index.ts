@@ -823,8 +823,9 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       ctx.ui.notify("正在手动触发 L2 场景组织...", "info");
-      // 传 ctx 绕过 cachedCtx 依赖（命令路径保证 ctx 可用）
-      l2Controls.triggerManual(ctx);
+      // 传 ctx 绕过 cachedCtx 依赖（命令路径保证 ctx 可用）。triggerManual 内部
+      // 已检查 staged.length 并 notify 无 records 情况，不需要 handler 重复检查。
+      await l2Controls.triggerManual(ctx);
     },
   });
 

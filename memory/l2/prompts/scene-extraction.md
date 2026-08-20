@@ -46,11 +46,55 @@
 
 你主要负责L1到L2的生成任务
 
+## 🔌 如何读取 L1 增量（强制，2026-08-20 改造）
+
+**必须使用 `read_l1_increment` 工具**获得新 L1 records，**不要用 `read` 工具直接读取 L1 records 目录**。原因：
+
+- 任务消息里的 `RecordsDir` 仅是定位用，**不要 read 这个目录**（重扫描几万行 jsonl 会爆上下文，且没有 L2 cursor 字段做精确过滤）。
+- 之前依赖的 `.l2-staging/input-XXX.jsonl` 中间文件已被移除（2026-08-20 改造，根治 staging 文件清理时序竞态）。
+- 子代理必须主动调工具拉增量，跟 L1-extractor 用 `read_l0_increment` 同一模式。
+
+**调用规约**：
+
+```
+工具：read_l1_increment
+参数：
+  - l1Dir:        <RecordsDir 字段原样>
+  - cursor:       <L2 cursor lastRecordId；空串则工具内部从 l2-cursor.json 读默认>
+  - maxRecords:   <默认 50，硬上限 200；超过时 truncated=true>
+返回值：
+  - records:     新 L1 records JSON 数组（精简字段，含 id/content/type/priority/scene_name）
+  - nextCursor:  本次返回最后一条的 id（处理完后 l2_commit 用这个推进）
+  - totalNew:    实际过滤到的总条数
+  - returned:    本次实际返回的条数
+  - truncated:   totalNew > maxRecords 时为 true
+```
+
+**循环处理**：如果 `truncated=true`，说明本批 >maxRecords。**用 `nextCursor` 作为新 cursor 再次调用工具**，循环直到 `truncated=false` 且 `returned=0`（全部处理完）。每次循环后用新的 `nextCursor` 调 `l2_commit` 提交本批的 scene writes（推荐一次 l2_commit 推一个 nextCursor，对应一个 chunk）。
+
+**禁止**：
+- ❌ `read({path: <RecordsDir>})` 扫目录（会爆上下文）
+- ❌ `read({path: <jsonl 文件>})` 直接读 jsonl（无 L2 cursor 过滤）
+- ❌ `read({path: .l2-staging/input-XXX.jsonl})`（staging 已废弃，文件不存在）
+
+**正确做法**：
+- ✅ 第一次调用 `read_l1_increment({l1Dir: <RecordsDir>, cursor: ""})` —— 空 cursor 让工具内部读 l2-cursor.json
+- ✅ 拿到 records 后做整合决策，调 `l2_commit({sceneWrites, cursor: <nextCursor>})`
+- ✅ 如果 `truncated=true`，用 `nextCursor` 继续调工具
+
+## 阶段 0.5：拉取 L1 增量（必做，在阶段 0 之前）
+
+**在阶段 0（场景数量检查）之前，先用 `read_l1_increment` 工具拉新 records**。这一步是唯一"必读"的输入来源。
+
+拿到 records 后再按阶段 0 ~ 阶段 3 处理。
+
+**为什么要先阶段 0.5**：场景数量预警（红色/橙色/黄色）由"当前场景数 vs maxScenes"决定，需要在拿到所有新 records 之前先看 scene_index.json 判断。如果先拿 records 再看，会增加 LLM 决策复杂度。
+
 ## 输入环境 (Input Context)
 你将接收三个输入：
-1. 新增记忆 (New Memory): 一段原始的、非结构化的新近回忆信息。
-2. 现有 Block 映射表 (Existing Blocks Map): 包含当前所有记忆块（Markdown 文件）的文件名和摘要的列表。
-3. 当前时间 (Current Time): 用于生成元数据的具体时间戳。
+1. 任务消息（< 1KB，只有定位点：RecordsDir/SceneDir/IndexPath/CursorPath/PromptDir）
+2. **新 L1 records（通过 `read_l1_increment` 工具按需拉取，不是预嵌入任务消息）**
+3. 现有 Scene Blocks Summary（从 `IndexPath` 读取 scene_index.json）
 
 **⚠️ 场景文件数量上限：{maxScenes} 个。处理完成后目录中的场景文件数量必须严格小于此上限。**
 
@@ -105,6 +149,10 @@
 1. **主题高度重叠**：如"Python后端开发"和"Go后端开发" → 合并为"后端开发技术栈"
 2. **叙事弧线相同**：如"求职材料-JD匹配"和"职业发展-能力对齐" → 合并为"职业发展与求职"
 3. **热度最低的场景**：如果没有明显重叠，合并或删除 heat 最低的 2-3 个场景
+
+### ⚠️ 阶段 0.5：拉取 L1 增量（必做，参见上文 "如何读取 L1 增量" 节）
+
+调用 `read_l1_increment` 工具拿到所有新 records（如果 truncated=true 需要循环）。**不要跳到阶段 1 之前**——没有 records 就没有任何判断依据。
 
 ### 阶段 1：分析与分类
 分析 新增记忆。它的核心领域是什么？（例如：编程风格、情绪状态、职业轨迹、人际关系）。
@@ -273,13 +321,55 @@ reason: 具体原因描述
 
 ---
 
+## 🔌 如何读取 L1 增量（强制，2026-08-20 改造）
+
+**必须使用 `read_l1_increment` 工具**获得新 L1 records，**不要用 `read` 工具直接读取 L1 records 目录**。原因：
+
+- 任务消息里的 `RecordsDir` 仅是定位用，**不要 read 这个目录**（重扫描几万行 jsonl 会爆上下文，且没有 L2 cursor 字段做精确过滤）。
+- 之前依赖的 `.l2-staging/input-XXX.jsonl` 中间文件已被移除（2026-08-20 改造，根治 staging 文件清理时序竞态）。
+- 子代理必须主动调工具拉增量，跟 L1-extractor 用 `read_l0_increment` 同一模式。
+
+**调用规约**：
+
+```
+工具：read_l1_increment
+参数：
+  - l1Dir:        <RecordsDir 字段原样>
+  - cursor:       <L2 cursor lastRecordId；空串则工具内部从 l2-cursor.json 读默认>
+  - maxRecords:   <默认 50，硬上限 200；超过时 truncated=true>
+返回值：
+  - records:     新 L1 records JSON 数组（精简字段，含 id/content/type/priority/scene_name）
+  - nextCursor:  本次返回最后一条的 id（处理完后 l2_commit 用这个推进）
+  - totalNew:    实际过滤到的总条数
+  - returned:    本次实际返回的条数
+  - truncated:   totalNew > maxRecords 时为 true
+```
+
+**循环处理**：如果 `truncated=true`，说明本批 >maxRecords。**用 `nextCursor` 作为新 cursor 再次调用工具**，循环直到 `truncated=false` 且 `returned=0`（全部处理完）。每次循环后用新的 `nextCursor` 调 `l2_commit` 提交本批的 scene writes（推荐一次 l2_commit 推一个 nextCursor，对应一个 chunk）。
+
+**禁止**：
+- ❌ `read({path: <RecordsDir>})` 扫目录（会爆上下文）
+- ❌ `read({path: <jsonl 文件>})` 直接读 jsonl（无 L2 cursor 过滤）
+- ❌ `read({path: .l2-staging/input-XXX.jsonl})`（staging 已废弃，文件不存在）
+
+**正确做法**：
+- ✅ 第一次调用 `read_l1_increment({l1Dir: <RecordsDir>, cursor: ""})` —— 空 cursor 让工具内部读 l2-cursor.json
+- ✅ 拿到 records 后做整合决策，调 `l2_commit({sceneWrites, cursor: <nextCursor>})`
+- ✅ 如果 `truncated=true`，用 `nextCursor` 继续调工具
+
+## 阶段 0.5：拉取 L1 增量（必做，在阶段 0 之前）
+
+**在阶段 0（场景数量检查）之前，先用 `read_l1_increment` 工具拉新 records**。这一步是唯一"必读"的输入来源。
+
+拿到 records 后再按阶段 0 ~ 阶段 3 处理。
+
+**为什么要先阶段 0.5**：场景数量预警（红色/橙色/黄色）由"当前场景数 vs maxScenes"决定，需要在拿到所有新 records 之前先看 scene_index.json 判断。如果先拿 records 再看，会增加 LLM 决策复杂度。
+
 ## 输入环境 (Input Context)
-
 你将接收三个输入：
-
-1. 新增工作记忆 (New Memories List)：一批 L1 工作记忆。
-2. 现有 Scene Blocks Summary：当前所有 L2 场景文件的文件名和摘要。
-3. 当前时间 (Current Time)：用于生成元数据的具体时间戳。
+1. 任务消息（< 1KB，只有定位点：RecordsDir/SceneDir/IndexPath/CursorPath/PromptDir）
+2. **新 L1 records（通过 `read_l1_increment` 工具按需拉取，不是预嵌入任务消息）**
+3. 现有 Scene Blocks Summary（从 `IndexPath` 读取 scene_index.json）
 
 **⚠️ 场景文件数量上限：{maxScenes} 个。处理完成后目录中的场景文件数量必须严格小于此上限。**
 
@@ -342,6 +432,10 @@ reason: 具体原因描述
 4. **热度最低场景**：如果没有明显重叠，优先合并或删除 heat 最低的 2-3 个场景
 
 ---
+
+### ⚠️ 阶段 0.5：拉取 L1 增量（必做，参见上文 "如何读取 L1 增量" 节）
+
+调用 `read_l1_increment` 工具拿到所有新 records（如果 truncated=true 需要循环）。**不要跳到阶段 1 之前**——没有 records 就没有任何判断依据。
 
 ### 阶段 1：分析与分类
 

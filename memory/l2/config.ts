@@ -11,10 +11,10 @@ import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCE
 /** L1 提交多少批后触发一次 L2（08-18 改：3 → 1，每次 L1 立即 L2）。
  * 理由：L2_BATCH=3 时单批可能积压 30+ 条 L1 记录，l2-scene-organizer
  * 决策策环“如何映射到现有场景”会卡住（mimo-v2.5 推理不足）。
- * L2_BATCH=1 后每次 L1 commit 立即 L2；当前为**增量 + 串行**：
- * splitRecordsFiles 只把 L2 游标（lastProcessedAt）之后的新 records 写进
- * 临时 staging 文件，runTask 串行派发单个 l2-scene-organizer 处理该 staging
- * （每轮决策空间小、且写同一 scene_blocks 目录需串行避免 race）。
+ * L2_BATCH=1 后每次 L1 commit 立即 L2；当前为**增量 + 单子代理**：
+ * 2026-08-20 改造：去掉 .l2-staging/ 临时文件 + splitRecordsFiles，子代理通过
+ * read_l1_increment 工具（memory/l2/read-tool.ts）按需自取增量；如批内 >50 条
+ * records 子代理可多次调工具循环处理（maxRecords hard cap 200）。
  */
 export const L2_BATCH = 1;
 /** 子代理超时（增量后每批只处理游标之后的新记录，3 分钟足够；原 10 分钟过长，hung 子代理会长期占锁）。 */
@@ -95,23 +95,19 @@ export function saveL2Cursor(profilePath: string, lastProcessedAt: number, lastR
 }
 
 /** 构造 l2-scene-organizer 子代理任务消息。
- * @param recordsFilesOverride  指定该子代理要读取的 records 文件（增量模式下是 staging 临时文件，只含游标之后的新记录）
- * @param incremental           true=只处理新记录，子代理需把新记录 merge 进已有场景
+ *
+ * 2026-08-20 改造：去掉 RecordsFiles 字段。子代理不再依赖 .l2-staging/ 临时文件，
+ * 改用 read_l1_increment 工具（memory/l2/read-tool.ts）按需读 L1 records。
+ * 任务消息现在只保留 SceneDir / IndexPath / CursorPath / PromptDir 四个定位点。
+ *
+ * @param incremental  保留参数（外部调用方仍按习惯传 true/false），目前不写进任务消息
+ *                    （增量行为由子代理通过 read_l1_increment 工具 + l2-cursor.json 自然保证）
  */
-export function buildL2Task(profilePath: string, recordsFilesOverride?: string[], incremental = false): string {
-	// 枚举 records 下实际 JSONL 分片文件清单（子代理不需猜测 / 试错日期）——08-17 实测
+export function buildL2Task(profilePath: string, _recordsFilesOverride?: string[], _incremental = false): string {
 	const recordsDir = join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR);
-	const recordsFiles = recordsFilesOverride
-		?? (existsSync(recordsDir)
-			? readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f)).sort().map((f) => join(recordsDir, f))
-			: []);
 	return [
 		"L2 organization task",
-		`RecordsDir: ${recordsDir}`,
-		`RecordsFiles: ${recordsFiles.join(",") || "(none)"}`,
-		incremental
-			? "NewRecordsOnly: true（仅含 L2 游标之后的新记录，请 merge 进 scene_index.json 已有场景，不要重建）"
-			: "NewRecordsOnly: false（全量扫描）",
+		`RecordsDir: ${recordsDir}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）`,
 		`SceneDir: ${join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME)}`,
 		`IndexPath: ${join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH)}`,
 		`CursorPath: ${join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE)}`,
@@ -119,7 +115,7 @@ export function buildL2Task(profilePath: string, recordsFilesOverride?: string[]
 	].join("\n");
 }
 
-const L2_STAGING_DIR = ".l2-staging";
+const L2_STAGING_DIR = ".l2-staging"; // 2026-08-20 废弃：保留路径常量以备旧任务清理，但已不再使用
 
 /** 读全部 records，返回 {id, epoch, raw}（导出：供编排侧计算游标推进水位）。 */
 export function readAllRecords(profilePath: string): Array<{ id: string; epoch: number; raw: string }> {
@@ -152,12 +148,12 @@ export function countNewRecords(profilePath: string, watermarkMs: number): numbe
 	return readAllRecords(profilePath).filter((r) => r.epoch > watermarkMs).length;
 }
 
-/**
- * 增量拆 chunk：只把游标之后（epoch > watermarkMs）的 records 写入临时 staging 文件，
- * 返回 [[stagingPath]]；无新记录返回 []。staging 由调用方在 finally 清理。
- * 这修复了原先「每次 L2 都全量重扫所有 records」的问题——现在 L2 游标真正生效。
- */
+// 2026-08-20 改造：splitRecordsFiles 函数已废弃（被 read_l1_increment 工具替代）。
+// 子代理现在通过工具按需读 L1 records，无需主进程预生成 staging 文件。
+// 保留函数实现（灰度回滚用），但不再被 l2/index.ts 调用。
+// @deprecated since 2026-08-20; use read_l1_increment tool instead
 export function splitRecordsFiles(profilePath: string, watermarkMs = 0): string[][] {
+	console.warn("[memory-system][l2] splitRecordsFiles is deprecated; use read_l1_increment tool");
 	const news = readAllRecords(profilePath).filter((r) => r.epoch > watermarkMs);
 	if (news.length === 0) return [];
 	const stagingDir = join(profilePath, MEMORY_DB_DIR, L2_STAGING_DIR);

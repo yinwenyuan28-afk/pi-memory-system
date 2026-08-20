@@ -1,10 +1,11 @@
 import { runPiSubagent } from "../../util/subagent.js";
-import { statSync, unwatchFile, watchFile, rmSync } from "node:fs";
+import { statSync, unwatchFile, watchFile } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task, splitRecordsFiles, loadL2Cursor, countNewRecords, L2_FAILURE_THRESHOLD, saveL2Cursor, readAllRecords } from "./config.js";
+import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, countNewRecords, L2_FAILURE_THRESHOLD, saveL2Cursor, readAllRecords } from "./config.js";
 import { L1_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
+import { registerReadL1IncrementTool } from "./read-tool.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 场景记忆 —— 主进程调度
@@ -40,7 +41,11 @@ import { loadFailureState, saveFailureState, type LayerFailureState } from "../f
 export function setupL2Organizer(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
-): { reset: () => void; triggerManual: () => void } {
+): { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void } {
+	// 注册 read_l1_increment 工具：l2-scene-organizer 子代理按需读取 L1 records
+	// 增量（独立工具，不依赖 .l2-staging/ 临时文件，根治了 staging 清理时序竞态）
+	registerReadL1IncrementTool(pi, getProfilePath);
+
 	let pendingBatches = 0;
 	let scheduled = false;
 	let pendingTrigger = false;
@@ -64,26 +69,25 @@ export function setupL2Organizer(
 	async function runTask(ctx: ExtensionContext): Promise<void> {
 		const profilePath = getProfilePath();
 		if (!profilePath) return;
-		// 增量：只把游标之后（epoch > lastProcessedAt）的 records 写入 staging 临时文件，
+		// 增量：只把游标之后（epoch > lastProcessedAt）的 records 写到子代理任务消息中，
 		// 子代理只处理这些新记录并 merge 进已有场景。游标真正生效，不再全量重扫。
+		//
+		// 2026-08-20 改造：去掉 .l2-staging/ 临时文件（之前用 splitRecordsFiles 写
+		// staging、finally 清理，但子代理是 async fire-and-forget 启动，真正开始
+		// 读取时 staging 已被清理 → ENOENT）。子代理现在通过 read_l1_increment
+		// 工具（memory/l2/read-tool.ts）按需读 L1 records，无需主进程预生成。
 		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
 		// 代码算出本批 staging 的真实记录（不依赖子代理上报），用于成功后的游标推进
 		const staged = readAllRecords(profilePath).filter((r) => r.epoch > watermark);
 		if (staged.length === 0) return;
 		const maxEpoch = Math.max(...staged.map((r) => r.epoch));
 		const maxId = staged.reduce((a, b) => (b.epoch > a.epoch ? b : a)).id;
-		const chunks = splitRecordsFiles(profilePath, watermark);
-		const stagedFiles = chunks.flat();
 		scheduled = true;
-		ctx.ui.setStatus("memory", `Memory ⚙L2 (${chunks.length} chunks串行)`);
+		ctx.ui.setStatus("memory", "Memory ⚙L2（子代理自主从 read_l1_increment 拉增量）");
 		try {
-			for (let i = 0; i < chunks.length; i++) {
-				const chunk = chunks[i];
-				const task = buildL2Task(profilePath, chunk, true);
-				ctx.ui.setStatus("memory", `Memory ⚙L2 ${i + 1}/${chunks.length}...`);
-				await runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS);
-			}
-			// 整批成功 → 游标由主进程推进到本批真实最大 epoch（不再信任子代理 cursor）
+			const task = buildL2Task(profilePath, undefined, true);
+			await runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS);
+			// 整批成功 → 游标由主进程推进到本批真实最大 epoch（不依赖子代理 cursor）
 			saveL2Cursor(profilePath, maxEpoch, maxId);
 			const st = loadL2State();
 			st.consecutiveFailures = 0; // 整批成功才清零
@@ -102,14 +106,7 @@ export function setupL2Organizer(
 			saveL2State(st);
 		} finally {
 			scheduled = false;
-			// 清理 staging 临时文件（无论成败）
-			for (const f of stagedFiles) {
-				try {
-					rmSync(f, { force: true });
-				} catch {
-					// ignore
-				}
-			}
+			// 不再有 staging 文件清理
 		}
 	}
 
@@ -182,15 +179,75 @@ export function setupL2Organizer(
 		}
 	});
 
-	/** 手动触发一次 L2（绕过攒批 / 跳过 fs.watchFile 监听）。 */
-	function triggerManual(): void {
-		if (scheduled) return;
+	/** 手动触发一次 L2（绕过攒批 / 跳过 fs.watchFile 监听）。
+	 *
+	 * 2026-08-20 完整打磨：镜像 L1 triggerManual 的模板（l1/index.ts），补齐：
+	 *   - async function + await runTask（真正等子代理完成）
+	 *   - staged.length === 0 检查（runTask 内部 return 不暴露给 UI）
+	 *   - UI 状态：启动 / 成功 / 失败 / 无 records 都有反馈
+	 *   - 完整 try/catch + ui.notify 错误处理
+	 *   - 熔断恢复
+	 *
+	 * 第一个修复（commit 328f7cf 思路）只改了 triggerManual 签名加 ctx?，但没把
+	 * L1 trigger 的完整 async 模板搬过来——导致手动触发时 runTask 内部 staged.length===0
+	 * 直接 return、子代理没启动、TUI 看不到任何状态变化。
+	 *
+	 * @param ctx  命令 handler 传入的 ExtensionContext（必传）。undefined 时退到兜底路径。
+	 */
+	async function triggerManual(ctx?: ExtensionContext): Promise<void> {
+		if (scheduled) {
+			if (ctx) ctx.ui.notify("L2 场景组织正在运行中，请等待完成", "warn");
+			return;
+		}
+		const profilePath = getProfilePath();
+		if (!profilePath) {
+			if (ctx) ctx.ui.notify("L2 调度器未初始化（缺少有效 profile）", "error");
+			return;
+		}
+
+		// 镜像 L1：在触发前检查是否有新 records，避免 runTask 内部 silent no-op
+		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
+		const stageCount = readAllRecords(profilePath).filter((r) => r.epoch > watermark).length;
+		if (stageCount === 0) {
+			if (ctx) ctx.ui.notify("L2 无新 records（cursor 已是最新）", "info");
+			console.warn("[memory-system][l2] manual trigger: no new records");
+			return;
+		}
+
 		const st = loadL2State();
 		st.cooledDown = false; // 手动触发即恢复熔断
 		st.consecutiveFailures = 0;
 		saveL2State(st);
 		pendingBatches = 0;
-		queueTrigger();
+		scheduled = true;
+		if (ctx) ctx.ui.setStatus("memory", `Memory ⚙L2 (manual, ${stageCount} records)...`);
+		try {
+			if (ctx) {
+				await runTask(ctx);
+				ctx.ui.notify(`L2 场景组织完成（${stageCount} records）`, "info");
+			} else {
+				// 兜底路径：依赖 agent_settled 缓存的 ctx
+				queueTrigger();
+			}
+			const s2 = loadL2State();
+			s2.consecutiveFailures = 0;
+			saveL2State(s2);
+		} catch (err) {
+			const s2 = loadL2State();
+			s2.consecutiveFailures++;
+			console.warn(`[memory-system][l2] manual organize failed: ${err instanceof Error ? err.message : String(err)}`);
+			if (s2.consecutiveFailures >= L2_FAILURE_THRESHOLD && !s2.cooledDown) {
+				s2.cooledDown = true;
+				if (ctx)
+					ctx.ui.notify(
+						`L2 场景组织连续失败 ${s2.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l2-trigger 手动重试或检查日志。`,
+						"error",
+					);
+			}
+			saveL2State(s2);
+		} finally {
+			scheduled = false;
+		}
 	}
 
 	return {
