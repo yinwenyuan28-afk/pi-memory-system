@@ -41,7 +41,7 @@ import { registerReadL1IncrementTool } from "./read-tool.js";
 export function setupL2Organizer(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
-): { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void } {
+): { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void | Promise<void> } {
 	// 注册 read_l1_increment 工具：l2-scene-organizer 子代理按需读取 L1 records
 	// 增量（独立工具，不依赖 .l2-staging/ 临时文件，根治了 staging 清理时序竞态）
 	registerReadL1IncrementTool(pi, getProfilePath);
@@ -87,10 +87,22 @@ export function setupL2Organizer(
 		try {
 			const task = buildL2Task(profilePath, undefined, true);
 			await runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS);
-			// 整批成功 → 游标由主进程推进到本批真实最大 epoch（不依赖子代理 cursor）
-			saveL2Cursor(profilePath, maxEpoch, maxId);
+			// 游标由子代理通过 l2_commit 推进（其为真实加工完成的唯一真源），主进程不再预推进。
+			// 修复：此前 await runPiSubagent 为 fire-and-forget（payload 完成前 resolve），
+			// 主进程随即 saveL2Cursor 到本批 maxEpoch，导致子代理后到读 l2-cursor 已超前、
+			// read_l1_increment 过滤 0 增量 → 批次被预推进游标吞掉、场景零更新（空转）。
+			// 现在仅在此处校验子代理是否推进了游标：
+			const cursorAfter = loadL2Cursor(profilePath);
+			if (cursorAfter.lastProcessedAt <= watermark) {
+				// 子代理未推进（无新记录不调 l2_commit / 失败）——不视为成功但也不抛错（避免熔断），
+				// 保持游标原状，下轮 watchFile 重试该批。
+				console.warn(
+					`[memory-system][l2] 子代理未推进游标（lastProcessedAt ${cursorAfter.lastProcessedAt} ≤ watermark ${watermark}），保持游标原状待重试`,
+				);
+				return;
+			}
 			const st = loadL2State();
-			st.consecutiveFailures = 0; // 整批成功才清零
+			st.consecutiveFailures = 0; // 子代理真实推进游标才清零
 			saveL2State(st);
 		} catch (err) {
 			const st = loadL2State();
