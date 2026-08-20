@@ -952,6 +952,52 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+    // ── /my-memory:l1:quality Command ───────────────────────────────
+  pi.registerCommand("my-memory:l1:quality", {
+    description: "按质量分排行展示 L1 原子记忆（effective*decay*(1-min(invalid/hits,0.8))）。用法：/my-memory:l1:quality [top=20]",
+    handler: async (_args, ctx) => {
+      const profile = manager.getProfileManager().getActiveProfile();
+      if (!profile) { ctx.ui.notify("No active profile", "error"); return; }
+      const top = Math.min(Math.max(parseInt((_args||"20").trim())||20, 1), 100);
+      try {
+        const { getQualityRanked } = await import("./memory/l1/quality.js");
+        const ranked = await getQualityRanked(profile.path, top);
+        if (ranked.length===0) { ctx.ui.notify("暂无 L1 records", "info"); return; }
+        const lines=["L1 质量排行（quality = effective * exp(-days/14) * (1-min(invalid/hits,0.8)) | 新记录 max(priority/100,0.3)）:", "rank | q | eff | hits/inv | decay | days | tag | pri | id | content(60)"];
+        ranked.forEach((r,i)=>{
+          const q=r.quality.toFixed(2).padStart(5), eff=String(r.effective).padStart(2), hi=`${r.hits}/${r.invalid}`.padStart(5);
+          const dc=r.decay.toFixed(2), dy=r.days.toFixed(1).padStart(4), tag=r.tag.padEnd(4), pri=String(r.pri??r.priority??"?").padStart(2);
+          const ct=(r.content||"").slice(0,60).replace(/
+/g," ");
+          lines.push(`[${String(i+1).padStart(2)}] q=${q} eff=${eff} hits=${hi} decay=${dc} days=${dy} tag=${tag} pri=${pri} id=${r.id} | ${ct}`);
+        });
+        ctx.ui.notify(lines.join("
+"), "info");
+      } catch(e){ ctx.ui.notify(`quality 失败: ${e instanceof Error?e.message:String(e)}`, "error"); }
+    },
+  });
+
+  pi.registerCommand("my-memory:l1:stats", {
+    description: "汇总 L1 质量分布与冷/噪清单。用法：/my-memory:l1:stats",
+    handler: async (_args, ctx) => {
+      const profile = manager.getProfileManager().getActiveProfile();
+      if (!profile) { ctx.ui.notify("No active profile", "error"); return; }
+      try {
+        const { getQualityStats } = await import("./memory/l1/quality.js");
+        const s=await getQualityStats(profile.path);
+        const lines=[`L1 质量汇总: 总数=${s.total} | 分布 热${s.dist["热"]??0}/温${s.dist["温"]??0}/冷${s.dist["冷"]??0}/新${s.dist["新"]??0}/待观察${s.dist["待观察"]??0}/噪${s.dist["噪"]??0}`,
+                     `直方图 q 0-2:${s.histogram["0-2"]} 2-4:${s.histogram["2-4"]} 4-6:${s.histogram["4-6"]} 6+:${s.histogram["6+"]}`];
+        if(s.cold.length>0){ lines.push("", `冷清单 (>14天0命中) ${s.cold.length}条 前5:`); s.cold.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} id=${r.id} | ${r.content.slice(0,60)}`)); }
+        else lines.push("", "冷清单: 0（>14天0命中暂无，7-14天为待观察）");
+        if(s.noisy.length>0){ lines.push("", `噪清单 (失效率>50%) ${s.noisy.length}条 前5:`); s.noisy.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} eff=${r.effective} hits=${r.hits}/${r.invalid} id=${r.id} | ${r.content.slice(0,60)}`)); }
+        else lines.push("", "噪清单: 0");
+        lines.push("", `最早记录距今 ${s.ranked.length? Math.max(...s.ranked.map(r=>r.days)).toFixed(1):0} 天，${s.total>0 && s.cold.length===0 ? "冷标签需等记录>14天后可观测" : ""}`);
+        ctx.ui.notify(lines.join("
+"), "info");
+      } catch(e){ ctx.ui.notify(`stats 失败: ${e instanceof Error?e.message:String(e)}`, "error"); }
+    },
+  });
+
   // ── /rebuild-index Command ─────────────────────────────────
 
   pi.registerCommand("my-memory:rebuild-index", {
