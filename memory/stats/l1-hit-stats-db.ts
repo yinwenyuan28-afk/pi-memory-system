@@ -22,7 +22,7 @@
 // ============================================================================
 
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MEMORY_DB_DIR } from "../paths.js";
 
@@ -129,6 +129,12 @@ export class L1HitStatsDB {
       this.db.exec("ROLLBACK");
       throw e;
     }
+    // 同步导出 JSON 侧车供 records-viewer.html 直接 fetch（file:// 可用）
+    try {
+      const rows = this.db.prepare("SELECT * FROM l1_hit_stats").all() as Row[];
+      const jsonPath = this.dbPath.replace(/\.sqlite$/, ".json");
+      writeFileSync(jsonPath, JSON.stringify(rows, null, 2), "utf-8");
+    } catch {}
   }
 
   /**
@@ -148,6 +154,11 @@ export class L1HitStatsDB {
          updated_at = excluded.updated_at`,
     );
     stmt.run(recordId, now, now, now);
+    try {
+      const rows = this.db.prepare("SELECT * FROM l1_hit_stats").all() as Row[];
+      const jsonPath = this.dbPath.replace(/\.sqlite$/, ".json");
+      writeFileSync(jsonPath, JSON.stringify(rows, null, 2), "utf-8");
+    } catch {}
   }
 
   /** 读取单条统计 */
