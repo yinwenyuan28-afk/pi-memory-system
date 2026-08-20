@@ -1,5 +1,4 @@
 import { ProfileManager } from "./profile.js";
-import { MemoryRouter } from "./router.js";
 import { MemoryStore } from "./store.js";
 import { handleMemoryTool, MEMORY_SCHEMA } from "./tool.js";
 import type { MemoryManagerConfig, MemoryProvider } from "./types.js";
@@ -27,7 +26,6 @@ function wrapMemoryContext(parts: string[]): string {
  */
 export class MemoryManager {
 	private store: MemoryStore;
-	private router: MemoryRouter;
 	private profileManager: ProfileManager;
 	private externalProvider: MemoryProvider | null = null;
 	private invertedIndex: InvertedIndex;
@@ -35,7 +33,6 @@ export class MemoryManager {
 
 	constructor(agentDir: string, config?: Partial<Pick<MemoryManagerConfig, "memoryCharLimit" | "userCharLimit">>) {
 		this.store = new MemoryStore(config);
-		this.router = new MemoryRouter();
 		this.profileManager = new ProfileManager(agentDir);
 		this.invertedIndex = new InvertedIndex();
 	}
@@ -49,7 +46,6 @@ export class MemoryManager {
 	initialize(): void {
 		const profile = this.profileManager.getActiveProfile();
 		this.store.loadFromDisk(profile.path);
-		this.router.loadRoutes(profile.path);
 		this.invertedIndex.load(profile.path);
 		this._initialized = true;
 	}
@@ -58,7 +54,6 @@ export class MemoryManager {
 	switchProfile(name: string): void {
 		const profile = this.profileManager.switchProfile(name);
 		this.store.loadFromDisk(profile.path);
-		this.router.loadRoutes(profile.path);
 		this.invertedIndex.load(profile.path);
 	}
 
@@ -97,7 +92,7 @@ export class MemoryManager {
 	// ── Prefetch / Route ────────────────────────────────────────────
 
 	/**
-	 * 子记忆路由注入块（不含快照）：倒排索引 + routes + 外部 provider。
+	 * 子记忆路由注入块（不含快照）：倒排索引 + 外部 provider（旧 routes 代码级路由已移除）。
 	 *
 	 * 内容按 query 路由匹配、每轮变化 → 放 context 事件消息末尾，前缀（system + 历史）不变 → 命中缓存。
 	 */
@@ -137,16 +132,7 @@ export class MemoryManager {
 			}
 		}
 
-		// 2. Route matching (supplementary, for paths not already loaded by index)
-		const routeResults = this.router.resolve(query, cwd);
-		if (routeResults.length > 0) {
-			// Filter out routes whose targets were already loaded by index
-			const newResults = routeResults.filter((r) => !loadedPaths.has(r.route.target));
-			if (newResults.length > 0) {
-				const routeContext = this.router.renderContext(newResults);
-				if (routeContext) parts.push(routeContext);
-			}
-		}
+		// 2. [2026-08-20] 旧 routes.md 代码级路由（MemoryRouter）已彻底移除，此分支不再使用。
 
 		// 3. External provider
 		if (this.externalProvider) {

@@ -3,7 +3,6 @@ export { checkDuplicate } from "./core/duplicate-check.js";
 export { buildFilterPrompt, InvertedIndex, type LLMFilterCallback, parseFilterResponse } from "./search/inverted-index.js";
 export { MEMORY_SCHEMA, MemoryManager } from "./core/manager.js";
 export { ProfileManager } from "./core/profile.js";
-export { MemoryRouter } from "./core/router.js";
 export { MemoryStore } from "./core/store.js";
 export { handleMemoryTool } from "./core/tool.js";
 export {
