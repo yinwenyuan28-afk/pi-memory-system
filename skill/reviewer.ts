@@ -1,6 +1,6 @@
 import { runPiSubagent } from "../util/subagent.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { MEMORY_DB_DIR, SKILL_FEED_DIR } from "../memory/paths.js";
 import { loadCursor, saveCursor } from "../memory/review/review-cursor.js";
