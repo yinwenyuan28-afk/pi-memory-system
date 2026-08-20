@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "./config.js";
+import { SCENE_DIR_NAME, SCENE_INDEX_PATH, saveL2Cursor, recordEpochMs } from "./config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
 
 // ══════════════════════════════════════════════════════════════
@@ -220,9 +220,11 @@ export function registerL2CommitTool(
 			// 同步场景索引（全量重建）
 			const entries = syncSceneIndex(profilePath);
 
-			// 注意：L2 游标推进已改由主进程编排侧（l2/index.ts 的 runTask）在整批成功
-			// 后、用代码算出的本批 staging 真实最大 epoch 写入，不再信任子代理上报的
-			// cursor（避免假 id / 空串 / 超前 id 导致游标写脏、漏组织记录）。此处不写游标。
+			// L2 游标推进：以子代理上报的 cursor 为真源（fc78374 已移除主进程 runTask 的
+			// 预推进——fire-and-forget 下 runTask 在子代理真实加工前 resolve，预推进会把
+			// 本批记录从 read_l1_increment 增量中滤掉造成空转）。
+			// 此处写回 lastRecordId + 反推 epoch，供下次增量过滤使用。
+			saveL2Cursor(profilePath, recordEpochMs(cursor), cursor);
 
 			const personaSignal = params?.personaSignal === true;
 				const personaReason = typeof params?.personaReason === "string" ? params.personaReason : undefined;

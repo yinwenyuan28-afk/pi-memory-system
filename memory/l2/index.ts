@@ -2,7 +2,7 @@ import { runPiSubagent } from "../../util/subagent.js";
 import { statSync, unwatchFile, watchFile } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, countNewRecords, L2_FAILURE_THRESHOLD, saveL2Cursor, readAllRecords } from "./config.js";
+import { L2_BATCH, L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, countNewRecords, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.js";
 import { L1_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
 import { registerReadL1IncrementTool } from "./read-tool.js";
