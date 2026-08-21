@@ -106,12 +106,19 @@ export function registerL3CommitTool(
 				const userMdPath = join(profilePath, USER_FILE);
 				if (existsSync(userMdPath)) {
 					const existing = readFileSync(userMdPath, "utf-8");
-					// 必须保留的结构标记（腾讯四层深度扫描模板的核心骨架）
-					const requiredMarkers = [
-						"Archetype",
-						"Chapter 1",
-						"Chapter 3",
-					];
+					// 必须保留的结构标记（按 mode 分流）：
+					//   chat 模式：Archetype / Chapter 1 / Chapter 3（腾讯四层深度扫描模板）
+					//   code 模式：Operating Doctrine / Core Principles（腾讯 Team Operating Doctrine）
+					const mode = (() => {
+						try {
+							return JSON.parse(readFileSync(join(profilePath, MEMORY_DB_DIR, "l1-config.json"), "utf-8"))?.mode;
+						} catch {
+							return "chat";
+						}
+					})();
+					const requiredMarkers = mode === "code"
+						? ["Operating Doctrine", "Core Principles"]
+						: ["Archetype", "Chapter 1", "Chapter 3"];
 					const missing = requiredMarkers.filter((m) => !sanitized.includes(m));
 					if (missing.length > 0) {
 						return {
@@ -119,44 +126,62 @@ export function registerL3CommitTool(
 								type: "text",
 								text: JSON.stringify({
 									success: false,
-									error: `USER.md 结构不完整：缺失 ${missing.join(", ")}。禁止全量重写，必须保留现有 USER.md 的有效信息和结构骨架（Archetype/Chapter 1-4）。请基于现有内容编辑后重试。`,
+									error: `USER.md 结构不完整：缺失 ${missing.join(", ")}。禁止全量重写，必须保留现有 USER.md 的有效信息和结构骨架（${mode === "code" ? "Operating Doctrine/Core Principles" : "Archetype/Chapter 1-4"}）。请基于现有内容编辑后重试。`,
 								} satisfies L3CommitResult),
-						}],
-						details: {},
-					};
+							}],
+							details: {},
+						};
+					}
 				}
-			}
 
-			// 写 USER.md（单条目文档，无 ENTRY_DELIMITER）
-			atomicWrite(userMdPath, sanitized);
-
-				// 更新 L3 游标
-				const now = new Date().toISOString();
-				saveL3Cursor(profilePath, {
-					lastPersonaUpdate: cursor || now,
-					memoriesSinceLastPersona: 0,
-					lastTriggeredAt: now,
-				});
-
-				// 刷新 session 内 USER.md 快照
-				getManager()?.refreshUserSnapshot();
-
+			// 写 USER.md：冷启动整体创建；增量仅尾部追加（保留已有骨架不覆盖）
+			// 对齐腾讯步骤 7：write 前先备份原文件到 memoryDB/.metadata/user-backup-*.md（防 LLM/工程误改）
+			if (existsSync(userMdPath)) {
+				const existing = readFileSync(userMdPath, "utf-8");
+				// 腾讯步骤 7：备份原 USER.md（防被 LLM 误改/磁盘错误）
 				try {
-					onCommitted?.();
+					const metaDir = join(profilePath, MEMORY_DB_DIR, ".metadata");
+					if (!existsSync(metaDir)) mkdirSync(metaDir, { recursive: true });
+					const backupPath = join(metaDir, `user-backup-${Date.now()}.md`);
+					writeFileSync(backupPath, existing, "utf-8");
 				} catch {
 					// non-fatal
 				}
-
-				return {
-					content: [{ type: "text", text: JSON.stringify({ success: true, length: sanitized.length, cursor } satisfies L3CommitResult) }],
-					details: {},
-				};
-			} catch (err) {
-				return {
-					content: [{ type: "text", text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) } satisfies L3CommitResult) }],
-					details: {},
-				};
+				// 拼接策略：保留原内容 + 分隔符 + 新内容（用户偏好 2026-08-20：仅在尾部追加，
+				// 避免 LLM 误整篇覆盖损坏骨架；与腾讯 LLM 自助压缩重写不同——更安全可控）
+				const merged = existing.trimEnd() + "\n\n---\n\n" + sanitized;
+				atomicWrite(userMdPath, merged);
+			} else {
+				atomicWrite(userMdPath, sanitized);
 			}
-		},
+
+			// 更新 L3 游标
+			const now = new Date().toISOString();
+			saveL3Cursor(profilePath, {
+				lastPersonaUpdate: cursor || now,
+				memoriesSinceLastPersona: 0,
+				lastTriggeredAt: now,
+			});
+
+			// 刷新 session 内 USER.md 快照
+			getManager()?.refreshUserSnapshot();
+
+			try {
+				onCommitted?.();
+			} catch {
+				// non-fatal
+			}
+
+			return {
+				content: [{ type: "text", text: JSON.stringify({ success: true, length: sanitized.length, cursor } satisfies L3CommitResult) }],
+				details: {},
+			};
+		} catch (err) {
+			return {
+				content: [{ type: "text", text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) } satisfies L3CommitResult) }],
+				details: {},
+			};
+		}
+	},
 	});
 }

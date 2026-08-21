@@ -42,6 +42,7 @@ import { loadFailureState, saveFailureState, type LayerFailureState } from "../f
 export function setupL1Extractor(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
+	l2ControlsRef?: { triggerManual: (ctx?: ExtensionContext) => void | Promise<void> },
 ): {
 	reset: () => void;
 	triggerManual: (ctx?: ExtensionContext) => void;
@@ -87,6 +88,12 @@ export function setupL1Extractor(
 			const s2 = loadL1State();
 			s2.consecutiveFailures = 0; // 子代理正常结束（含已 commit）才清零
 			saveL1State(s2);
+			// 串行修复（2026-08-20）：L1 子代理完成后再显式触发 L2。若因 watchFile
+			// 抢跑导致 L2 已处理过部分 records，这里 triggerManual 会因 staged 空跳过；
+			// 若 L1 提交的 records 尚未被 L2 处理，这里补一次整理。两者都避免 L1/L2 并行。
+			if (l2ControlsRef?.triggerManual) {
+				await l2ControlsRef.triggerManual(ctx);
+			}
 		} catch (err) {
 			const s2 = loadL1State();
 			s2.consecutiveFailures++;
@@ -131,6 +138,10 @@ export function setupL1Extractor(
 			const s3 = loadL1State();
 			s3.consecutiveFailures = 0;
 			saveL1State(s3);
+			// 串行修复（2026-08-20）：手动触发 L1 完成后同样补一次 L2 整理
+			if (l2ControlsRef?.triggerManual) {
+				await l2ControlsRef.triggerManual(ctx);
+			}
 		} catch (err) {
 			const s3 = loadL1State();
 			s3.consecutiveFailures++;
