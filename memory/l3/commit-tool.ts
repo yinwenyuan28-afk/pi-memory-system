@@ -109,13 +109,10 @@ export function registerL3CommitTool(
 					// 必须保留的结构标记（按 mode 分流）：
 					//   chat 模式：Archetype / Chapter 1 / Chapter 3（腾讯四层深度扫描模板）
 					//   code 模式：Operating Doctrine / Core Principles（腾讯 Team Operating Doctrine）
-					const mode = (() => {
-						try {
-							return JSON.parse(readFileSync(join(profilePath, MEMORY_DB_DIR, "l1-config.json"), "utf-8"))?.mode;
-						} catch {
-							return "chat";
-						}
-					})();
+					// 从 content 本身推断 mode，不依赖 l1-config.json（可能不存在）
+					const mode = sanitized.includes("Operating Doctrine") || sanitized.includes("Core Principles")
+						? "code"
+						: "chat";
 					const requiredMarkers = mode === "code"
 						? ["Operating Doctrine", "Core Principles"]
 						: ["Archetype", "Chapter 1", "Chapter 3"];
