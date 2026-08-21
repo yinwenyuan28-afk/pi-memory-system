@@ -96,7 +96,7 @@ export default function (pi: ExtensionAPI) {
   let l3Controls: {
     onL1Committed: (recordCount: number) => void;
     onL2Committed: (opts?: { personaSignal?: boolean; personaReason?: string }) => void;
-    triggerManual: () => void;
+    triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
     reset: () => void;
   } | undefined;
 
@@ -785,7 +785,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       ctx.ui.notify("L3 persona generation queued", "info");
-      l3Controls.triggerManual();
+      await l3Controls.triggerManual(ctx);
     },
   });
 

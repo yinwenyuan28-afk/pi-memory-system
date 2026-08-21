@@ -16,7 +16,7 @@ function incrementMemoriesSince(profilePath: string, count: number): void {
 export interface L3Controls {
 	onL1Committed: (recordCount: number) => void;
 	onL2Committed: (opts?: { personaSignal?: boolean; personaReason?: string }) => void;
-	triggerManual: () => void;
+	triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
 	reset: () => void;
 }
 
@@ -83,8 +83,12 @@ export function setupL3Persona(
 		queueTrigger({});
 	}
 
-	function triggerManual(): void {
-		queueTrigger({ force: true, personaReason: "手动 /persona 触发" });
+	function triggerManual(ctx?: ExtensionContext): void {
+		if (ctx) {
+			void runTask({ personaSignal: true, personaReason: "手动 /persona 触发", force: true }, ctx);
+		} else {
+			queueTrigger({ force: true, personaReason: "手动 /persona 触发" });
+		}
 	}
 
 	pi.on("agent_settled", (_e, ctx) => {
