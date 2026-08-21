@@ -106,24 +106,14 @@ export function registerL3CommitTool(
 				const userMdPath = join(profilePath, USER_FILE);
 				if (existsSync(userMdPath)) {
 					const existing = readFileSync(userMdPath, "utf-8");
-					// 必须保留的结构标记（按 mode 分流）：
-					//   chat 模式：Archetype / Chapter 1 / Chapter 3（腾讯四层深度扫描模板）
-					//   code 模式：Operating Doctrine / Core Principles（腾讯 Team Operating Doctrine）
-					// 从 content 本身推断 mode，不依赖 l1-config.json（可能不存在）
-					const mode = sanitized.includes("Operating Doctrine") || sanitized.includes("Core Principles")
-						? "code"
-						: "chat";
-					const requiredMarkers = mode === "code"
-						? ["Operating Doctrine", "Core Principles"]
-						: ["Archetype", "Chapter 1", "Chapter 3"];
-					const missing = requiredMarkers.filter((m) => !sanitized.includes(m));
-					if (missing.length > 0) {
+					// 新格式校验：§ 分隔的单行规则，必须包含至少一个 § 分隔符
+					if (!sanitized.includes("§")) {
 						return {
 							content: [{
 								type: "text",
 								text: JSON.stringify({
 									success: false,
-									error: `USER.md 结构不完整：缺失 ${missing.join(", ")}。禁止全量重写，必须保留现有 USER.md 的有效信息和结构骨架（${mode === "code" ? "Operating Doctrine/Core Principles" : "Archetype/Chapter 1-4"}）。请基于现有内容编辑后重试。`,
+									error: `USER.md 内容格式错误：必须使用 § 分隔的单行规则格式。请使用 l3_commit 提交 § 分隔的规则条目。`,
 								} satisfies L3CommitResult),
 							}],
 							details: {},
@@ -131,7 +121,7 @@ export function registerL3CommitTool(
 					}
 				}
 
-			// 写 USER.md：冷启动整体创建；增量仅尾部追加（保留已有骨架不覆盖）
+			// 写 USER.md：冷启动整体创建；增量 upsert（替换已有 L3 段落，不盲目追加）
 			// 对齐腾讯步骤 7：write 前先备份原文件到 memoryDB/.metadata/user-backup-*.md（防 LLM/工程误改）
 			if (existsSync(userMdPath)) {
 				const existing = readFileSync(userMdPath, "utf-8");
@@ -144,9 +134,28 @@ export function registerL3CommitTool(
 				} catch {
 					// non-fatal
 				}
-				// 拼接策略：保留原内容 + 分隔符 + 新内容（用户偏好 2026-08-20：仅在尾部追加，
-				// 避免 LLM 误整篇覆盖损坏骨架；与腾讯 LLM 自助压缩重写不同——更安全可控）
-				const merged = existing.trimEnd() + "\n\n---\n\n" + sanitized;
+				// upsert 策略：检测已有 L3 段落标记，有则替换该段落到文件末尾，无则追加。
+				// 标记优先级：<!-- L3 -->（新格式） > # Team Operating Doctrine / # User Narrative Profile（旧格式）
+				const l3Sentinel = "<!-- L3 -->";
+				const l3LegacyPattern = /^# (Team Operating Doctrine|User Narrative Profile)/m;
+				let matchIdx = existing.indexOf(l3Sentinel);
+				let legacyMatch = false;
+				if (matchIdx === -1) {
+					const m = existing.match(l3LegacyPattern);
+					if (m && m.index !== undefined) {
+						matchIdx = m.index;
+						legacyMatch = true;
+					}
+				}
+				let merged: string;
+				if (matchIdx !== undefined && matchIdx >= 0) {
+					// 找到已有 L3 段落：保留前面的用户内容，替换 L3 段落
+					const beforeL3 = existing.slice(0, legacyMatch ? matchIdx : matchIdx + l3Sentinel.length).trimEnd();
+					merged = beforeL3 + "\n\n§\n\n" + l3Sentinel + " " + sanitized;
+				} else {
+					// 首次触发：追加到末尾
+					merged = existing.trimEnd() + "\n\n§\n\n" + l3Sentinel + " " + sanitized;
+				}
 				atomicWrite(userMdPath, merged);
 			} else {
 				atomicWrite(userMdPath, sanitized);
