@@ -6,7 +6,7 @@
 //       · agent loop 启动时的自动注入（未来启用时应走 recallL1Records）
 //       · agent 运行时主动 recall（recall_l1_records 工具）
 //   - invalid_hits：无效命中次数
-//       被召回后，LLM 判定「无参考价值」、由后续「清除记忆」工具从上下文移除。
+//       被召回后，LLM 判定「无参考价值」、由 clear_invalid_l1_records 工具（已实现）从上下文移除时标记。
 //   - effective_hits：有效命中次数 = hits - invalid_hits（同事务维护，永不为负）
 //
 // 存储：{profile}/memoryDB/l1-hit-stats.sqlite
@@ -17,7 +17,7 @@
 // 计数语义（契约）：
 //   - 命中：recallL1Records() 成功返回召回 record 后，每条 record_id 调 recordHits(+1)。
 //       仅 agent 面向召回计数；embed_and_search（l1-extractor 去重）不调用 recallL1Records，不计数。
-//   - 无效命中：未来的「清除记忆」工具把某 record 从上下文移除时，调 recordInvalid(+1)。
+//   - 无效命中：clear_invalid_l1_records 工具（已实现）把某 record 从上下文移除时，调 recordInvalid(+1)。
 //       约定：每次清除调用一次 recordInvalid(record_id)，使 invalid_hits 与一次 prior hits 对应。
 // ============================================================================
 

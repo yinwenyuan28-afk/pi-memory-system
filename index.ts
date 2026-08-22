@@ -25,6 +25,7 @@ import { setupL3Persona } from "./memory/l3/index.js";
 import { registerL3CommitTool } from "./memory/l3/commit-tool.js";
 import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.js";
 import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.js";
+import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { callLLM } from "./util/llm.js";
@@ -188,6 +189,8 @@ export default function (pi: ExtensionAPI) {
   registerEmbedAndSearchTool(pi);
   // recall_l1_records 工具：agent 主动调用的 L1 原子记忆召回（与旧记忆系统解耦）
   registerRecallL1RecordsTool(pi, currentTurnHitSet);
+  // clear_invalid_l1_records 工具：agent 主动标记无效召回（写入 invalid_hits 反馈信号，召回闭环）
+  registerClearInvalidL1RecordsTool(pi);
 
   pi.on("session_start", async (_event, ctx) => {
     manager.initialize();
