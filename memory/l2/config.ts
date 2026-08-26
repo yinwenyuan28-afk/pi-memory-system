@@ -8,13 +8,8 @@ import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCE
 //  L2 配置 / 游标 / 任务构造（纯函数，无 pi 依赖，可单测）
 // ══════════════════════════════════════════════════════════════
 
-/** L1 提交多少批后触发一次 L2（08-18 改：3 → 1，每次 L1 立即 L2）。
- * 理由：L2_BATCH=3 时单批可能积压 30+ 条 L1 记录，l2-scene-organizer
- * 决策策环“如何映射到现有场景”会卡住（mimo-v2.5 推理不足）。
- * L2_BATCH=1 后每次 L1 commit 立即 L2；当前为**增量 + 单子代理**：
- * 2026-08-20 改造：去掉 .l2-staging/ 临时文件 + splitRecordsFiles，子代理通过
- * read_l1_increment 工具（memory/l2/read-tool.ts）按需自取增量；如批内 >50 条
- * records 子代理可多次调工具循环处理（maxRecords hard cap 200）。
+/** L1 提交多少批后触发一次 L2（已停用：L2 改由 pipeline-jobs 队列在 l1_commit 后入队）。
+ * 保留常量以免外部引用断裂。
  */
 export const L2_BATCH = 1;
 /** 子代理超时（增量后每批只处理游标之后的新记录，3 分钟足够；原 10 分钟过长，hung 子代理会长期占锁）。 */

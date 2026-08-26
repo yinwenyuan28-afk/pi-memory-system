@@ -43,3 +43,6 @@ export const L2_CURSOR_FILE = "l2-cursor.json";
 
 /** L3 游标文件名。 */
 export const L3_CURSOR_FILE = "l3-cursor.json";
+
+/** L1/L2 流水线 job 队列（{memoryDB}/pipeline-jobs.sqlite）。 */
+export const PIPELINE_JOBS_FILE = "pipeline-jobs.sqlite";

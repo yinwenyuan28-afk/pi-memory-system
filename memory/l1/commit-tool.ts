@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
+import { getPipelineJobsDB } from "../pipeline/jobs-db.js";
 import { loadEmbeddingConfig } from "../search/embedding/config.js";
 import { isVectorizationReady } from "../search/embedding/vectorization-config.js";
 
@@ -207,14 +208,23 @@ export function registerL1CommitTool(
 				// 3. 回写游标
 				saveCursor(profilePath, cursor);
 
-				// 4. 通知 L2 调度（L1 成功提交一批 → 攒批计数）
+				// 4. 流水线：完成 running 的 l1 job；有新 records 则入队 l2（主进程 worker 消费）
+				try {
+					const jobs = getPipelineJobsDB(profilePath);
+					jobs.completeRunningL1();
+					if (written > 0) jobs.enqueue("l2", "l1_commit");
+				} catch (e) {
+					console.warn(`[l1_commit] pipeline enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
+				}
+
+				// 5. 通知 L3 计数（L2 不再走此回调）
 				try {
 					onCommitted?.(written);
 				} catch {
 					// 非致命
 				}
 
-				// 5. TUI 通知（向量化状态）
+				// 6. TUI 通知（向量化状态）
 				const vInfo = vectorStats
 					? `，向量化写入 +${vectorStats.inserted}/-${vectorStats.deleted} 条`
 					: "";

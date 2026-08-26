@@ -20,6 +20,8 @@ import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
 import { registerReadL0IncrementTool } from "./memory/l1/read-tool.js";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.js";
 import { setupL2Organizer } from "./memory/l2/index.js";
+import { setupPipelineWorker, type PipelineExecutors, type PipelineWorker } from "./memory/pipeline/worker.js";
+import { getPipelineJobsDB } from "./memory/pipeline/jobs-db.js";
 import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
 import { setupL3Persona } from "./memory/l3/index.js";
 import { registerL3CommitTool } from "./memory/l3/commit-tool.js";
@@ -86,11 +88,15 @@ export default function (pi: ExtensionAPI) {
 
   // L1 提取调度器（单次注册，与 reviewersInitialized 同模式）
   let l1Initialized = false;
-  let l1Controls: { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void } | undefined;
+  let l1Controls: ReturnType<typeof setupL1Extractor> | undefined;
 
-  // L2 场景组织调度器（单次注册）：主进程轮询 l1-cursor.json mtime 变化触发计数（08-17 修复回调跨进程断裂）
+  // L2 场景组织调度器（单次注册）：由 pipeline-jobs 队列消费，不再 watchFile
   let l2Initialized = false;
-  let l2Controls: { reset: () => void; triggerManual: (ctx?: ExtensionContext) => void | Promise<void> } | undefined;
+  let l2Controls: ReturnType<typeof setupL2Organizer> | undefined;
+
+  let pipelineInitialized = false;
+  let pipelineWorker: PipelineWorker | undefined;
+  let pipelineExecutors: PipelineExecutors | undefined;
 
   // L3 persona 调度器（单次注册）：L2 提交后评估触发
   let l3Initialized = false;
@@ -159,8 +165,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）。
-  // 回调仅供主进程内（其他扩展模块）同步用，不依赖回调通知 L2 调度：
-  // L2 调度已改为主进程轮询 l1-cursor.json mtime 变化（08-17 修复回调跨进程断裂）。
+  // L2 由 commit 进程直接写入 pipeline-jobs.sqlite；此处回调只给 L3 计数。
   registerL1CommitTool(
     pi,
     () => manager?.getProfileManager().getActiveProfile()?.path,
@@ -217,24 +222,42 @@ export default function (pi: ExtensionAPI) {
       reviewersInitialized = true;
     }
 
-    // 初始化 L2 场景组织调度器（单次注册）：L1 提交 L2_BATCH 批后触发
-    // 2026-08-20 串行修复：先 setup L2（拿 l2Controls），再 setup L1 并传入 l2Controls，
-    // 使 L1 子代理完成后再显式 trigger L2（避免 watchFile 抢跑导致 L1/L2 并行）。
-    if (!l2Initialized) {
-      l2Controls = setupL2Organizer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+    const getProfilePath = () => manager?.getProfileManager().getActiveProfile()?.path;
+
+    // 流水线 worker（单次注册）：串行消费 pipeline-jobs.sqlite
+    if (!pipelineInitialized) {
+      pipelineWorker = setupPipelineWorker(pi, getProfilePath, () => pipelineExecutors);
+      pipelineInitialized = true;
+    }
+    if (profile) {
+      try {
+        const n = getPipelineJobsDB(profile.path).recoverStuckRunning();
+        if (n > 0) console.warn(`[memory-system][pipeline] recovered ${n} leftover running job(s)`);
+      } catch (err) {
+        console.warn(`[memory-system][pipeline] recover failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // L2 先于 L1：executors 需要两边的 executeJob
+    if (!l2Initialized && pipelineWorker) {
+      l2Controls = setupL2Organizer(pi, getProfilePath, pipelineWorker);
       l2Initialized = true;
     }
 
-    // 初始化 L1 提取调度器（单次注册）：每 L1_INTERVAL 轮启动 l1-extractor 子代理
-    // 把 l2Controls 传入，L1 完成后串行触发 L2 整理
-    if (!l1Initialized) {
-      l1Controls = setupL1Extractor(
-        pi,
-        () => manager?.getProfileManager().getActiveProfile()?.path,
-        l2Controls ? { triggerManual: (ctx) => l2Controls?.triggerManual(ctx) } : undefined,
-      );
+    if (!l1Initialized && pipelineWorker) {
+      l1Controls = setupL1Extractor(pi, getProfilePath, pipelineWorker);
       l1Initialized = true;
     }
+
+    if (l1Controls && l2Controls) {
+      pipelineExecutors = {
+        runL1: (ctx, job) => l1Controls!.executeJob(ctx, job),
+        runL2: (ctx, job) => l2Controls!.executeJob(ctx, job),
+        isCooledDown: (type) => (type === "l1" ? l1Controls!.isCooledDown() : l2Controls!.isCooledDown()),
+      };
+    }
+    pipelineWorker?.setCachedCtx(ctx);
+    pipelineWorker?.kick();
 
     // 初始化 L3 persona 调度器（单次注册）：L2 提交后评估触发
     if (!l3Initialized) {
@@ -273,6 +296,7 @@ export default function (pi: ExtensionAPI) {
     l1Controls?.reset();
     l2Controls?.reset();
     l3Controls?.reset();
+    pipelineWorker?.reset();
     // [DISABLED] workflowController.shutdown();
   });
 
@@ -834,18 +858,14 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // /l2-trigger：手动触发一次 L2 场景组织（绕过攒批）——供调试/验证使用。
-  // 需 setupL2Organizer 已初始化，否则提示重启 pi 加载新扩展。
+  // /l2-trigger：手动入队一次 L2（由 pipeline worker 串行消费）。
   pi.registerCommand("my-memory:l2-trigger", {
-    description: "手动触发一次 L2 场景组织（绕过 L2_BATCH 攒批）。用法：/my-memory:l2-trigger",
+    description: "手动入队一次 L2 场景组织。用法：/my-memory:l2-trigger",
     handler: async (_args, ctx) => {
       if (!l2Controls) {
         ctx.ui.notify("L2 调度器未初始化（扩展加载中或未启用）", "error");
         return;
       }
-      ctx.ui.notify("正在手动触发 L2 场景组织...", "info");
-      // 传 ctx 绕过 cachedCtx 依赖（命令路径保证 ctx 可用）。triggerManual 内部
-      // 已检查 staged.length 并 notify 无 records 情况，不需要 handler 重复检查。
       await l2Controls.triggerManual(ctx);
     },
   });
@@ -853,13 +873,12 @@ export default function (pi: ExtensionAPI) {
   // /l1-trigger：手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）——供调试/验证使用。
   // 需 setupL1Extractor 已初始化，否则提示重启 pi 加载新扩展。
   pi.registerCommand("my-memory:l1-trigger", {
-    description: "手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。用法：/my-memory:l1-trigger",
+    description: "手动入队一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。用法：/my-memory:l1-trigger",
     handler: async (_args, ctx) => {
       if (!l1Controls) {
         ctx.ui.notify("L1 调度器未初始化（扩展加载中或未启用）", "error");
         return;
       }
-      ctx.ui.notify("正在手动触发 L1 提取...", "info");
       l1Controls.triggerManual(ctx);
     },
   });
