@@ -33,12 +33,14 @@ type PiSubagentExecutor = (
  * @param task      任务描述文本
  * @param ctx       扩展上下文（含 ui / sessionManager 等）
  * @param timeoutMs 超时毫秒；超过则 abort 并 reject
+ * @param externalSignal 可选；调用方稍后 abort 可取消已 spawn 的子代理（async:true 时函数可能已返回）
  */
 export async function runPiSubagent(
 	agent: string,
 	task: string,
 	ctx: ExtensionContext,
 	timeoutMs: number,
+	externalSignal?: AbortSignal,
 ): Promise<string> {
 	const executor = (globalThis as unknown as { __piSubagentExecutor?: PiSubagentExecutor })[
 		"__piSubagentExecutor"
@@ -47,6 +49,11 @@ export async function runPiSubagent(
 
 	const id = randomUUID();
 	const controller = new AbortController();
+	const abortFromExternal = () => {
+		if (!controller.signal.aborted) controller.abort();
+	};
+	if (externalSignal?.aborted) abortFromExternal();
+	else externalSignal?.addEventListener("abort", abortFromExternal);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	const executorPromise = executor(
@@ -59,7 +66,7 @@ export async function runPiSubagent(
 
 	const timeoutPromise = new Promise<never>((_, reject) => {
 		timer = setTimeout(() => {
-			controller.abort();
+			abortFromExternal();
 			reject(new Error(`subagent ${agent} timed out after ${timeoutMs}ms`));
 		}, timeoutMs);
 	});
@@ -68,6 +75,7 @@ export async function runPiSubagent(
 		await Promise.race([executorPromise, timeoutPromise]);
 	} finally {
 		if (timer) clearTimeout(timer);
+		// 不 removeEventListener：async:true 时本函数在 spawn 后返回，调用方仍需能 abort。
 	}
 	return id;
 }

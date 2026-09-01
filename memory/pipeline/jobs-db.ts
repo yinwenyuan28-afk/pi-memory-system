@@ -7,6 +7,9 @@ export type PipelineJobType = "l1" | "l2";
 export type PipelineJobSource = "interval" | "manual" | "l1_commit";
 export type PipelineJobStatus = "queued" | "running" | "done" | "skipped" | "failed";
 
+/** recoverStuckRunning 只回收 started_at 早于该阈值的 running（防子进程误杀刚启动的 job）。 */
+export const PIPELINE_RECOVER_MIN_AGE_MS = 10 * 60 * 1000;
+
 export interface PipelineJob {
 	id: number;
 	type: PipelineJobType;
@@ -133,13 +136,21 @@ export class PipelineJobsDB {
 		return Number(info.changes);
 	}
 
-	/** 进程重启：残留 running 不能占死锁。 */
-	recoverStuckRunning(): number {
-		const now = new Date().toISOString();
-		const info = this.db
-			.prepare("UPDATE jobs SET status = 'failed', finished_at = ?, error = 'recovered: leftover running' WHERE status = 'running'")
-			.run(now);
-		return Number(info.changes);
+	/** 进程重启：只回收「足够旧」的 running，避免 L1 子进程 session_start 误杀刚 spawn 的 job。 */
+	recoverStuckRunning(minAgeMs = PIPELINE_RECOVER_MIN_AGE_MS): number {
+		const cutoff = Date.now() - minAgeMs;
+		const rows = this.db.prepare("SELECT * FROM jobs WHERE status = 'running'").all() as Row[];
+		const finishedAt = new Date().toISOString();
+		let n = 0;
+		const upd = this.db.prepare(
+			"UPDATE jobs SET status = 'failed', finished_at = ?, error = 'recovered: leftover running' WHERE id = ? AND status = 'running'",
+		);
+		for (const r of rows) {
+			const started = r.started_at ? Date.parse(r.started_at) : NaN;
+			if (Number.isFinite(started) && started > cutoff) continue;
+			if (upd.run(finishedAt, r.id).changes === 1) n++;
+		}
+		return n;
 	}
 
 	close(): void {

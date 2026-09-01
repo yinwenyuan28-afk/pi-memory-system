@@ -206,6 +206,12 @@ export default function (pi: ExtensionAPI) {
       process.env.PI_PROFILE_PATH = profile.path;
     }
     sessionId = ctx.sessionManager.getSessionId();
+
+    // 子进程只需要模块顶层已注册的 commit/read 工具 + PI_PROFILE_PATH。
+    // 不得 recoverStuckRunning / setupPipelineWorker / L1·L2 调度：否则会把父进程
+    // 刚 claim 的 running l1 当成「崩溃残留」标 failed（2026-08-27 双 L1 假失败）。
+    if (process.env.PI_SUBAGENT_CHILD === "1") return;
+
     skillManager = new SkillManager(profile.path, [
       resolve(agentDir, "skills"),
     ]);
@@ -620,39 +626,40 @@ export default function (pi: ExtensionAPI) {
 
   // ── Get Memory Tool ────────────────────────────────────────────
 
-  pi.registerTool({
-    name: "get_memory",
-    label: "Get Memory",
-    description:
-      "Search persistent memory for relevant context using keywords. " +
-      "Returns matched memory entries and sub-memory content. " +
-      "Use BEFORE writing to sub-memory to check if related content already exists, " +
-      "so you can update/merge instead of creating duplicates.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description:
-            "Keywords to search memory with. Be specific — use 3-8 keywords " +
-            "that describe the topic you need context on.",
-        },
-      },
-      required: ["query"],
-    },
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const query = String(params.query || "");
-      if (!query.trim()) {
-        return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "query is required." }) }], details: {} };
-      }
-      const searcherResult = await searcher.searchWithIntent(query);
-      const result = manager.prefetchAll(query, ctx.cwd, searcherResult);
-      if (!result) {
-        return { content: [{ type: "text", text: JSON.stringify({ success: true, message: "No matching memories found.", content: "" }) }], details: {} };
-      }
-      return { content: [{ type: "text", text: JSON.stringify({ success: true, content: result }) }], details: {} };
-    },
-  });
+  // [DISABLED 2026-08-27] get_memory 已禁用：旧 sub-memory jieba 倒排召回入口，L1 向量召回已替代。如需回退取消注释即可。
+  // pi.registerTool({
+  //   name: "get_memory",
+  //   label: "Get Memory",
+  //   description:
+  //     "Search persistent memory for relevant context using keywords. " +
+  //     "Returns matched memory entries and sub-memory content. " +
+  //     "Use BEFORE writing to sub-memory to check if related content already exists, " +
+  //     "so you can update/merge instead of creating duplicates.",
+  //   parameters: {
+  //     type: "object",
+  //     properties: {
+  //       query: {
+  //         type: "string",
+  //         description:
+  //           "Keywords to search memory with. Be specific — use 3-8 keywords " +
+  //           "that describe the topic you need context on.",
+  //       },
+  //     },
+  //     required: ["query"],
+  //   },
+  //   async execute(toolCallId, params, signal, onUpdate, ctx) {
+  //     const query = String(params.query || "");
+  //     if (!query.trim()) {
+  //       return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "query is required." }) }], details: {} };
+  //     }
+  //     const searcherResult = await searcher.searchWithIntent(query);
+  //     const result = manager.prefetchAll(query, ctx.cwd, searcherResult);
+  //     if (!result) {
+  //       return { content: [{ type: "text", text: JSON.stringify({ success: true, message: "No matching memories found.", content: "" }) }], details: {} };
+  //     }
+  //     return { content: [{ type: "text", text: JSON.stringify({ success: true, content: result }) }], details: {} };
+  //   },
+  // });
 
   // ── Load Memory Rules Tool ───────────────────────────────────
 
@@ -976,7 +983,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── /my-memory:l1:quality Command ───────────────────────────────
   pi.registerCommand("my-memory:l1:quality", {
-    description: "按质量分排行展示 L1 原子记忆（effective*decay*(1-min(invalid/hits,0.8))）。用法：/my-memory:l1:quality [top=20]",
+    description: "按质量分排行展示 L1 原子记忆（effective*decay*(1-min(invalid/hits,0.8))，days 按活跃会话日计）。用法：/my-memory:l1:quality [top=20]",
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) { ctx.ui.notify("No active profile", "error"); return; }
@@ -985,7 +992,8 @@ export default function (pi: ExtensionAPI) {
         const { getQualityRanked } = await import("./memory/l1/quality.js");
         const ranked = await getQualityRanked(profile.path, top);
         if (ranked.length===0) { ctx.ui.notify("暂无 L1 records", "info"); return; }
-        const lines=["L1 质量排行（quality = effective * exp(-days/14) * (1-min(invalid/hits,0.8)) | 新记录 max(priority/100,0.3)）:", "rank | q | eff | hits/inv | decay | days | tag | pri | id | content(60)"];
+        const clockNote = ranked.some(r=>r.activeDayClock) ? "days=活跃会话日" : "days=日历天(活跃日数据不可得)";
+        const lines=[`L1 质量排行（quality = effective * exp(-days/14) * (1-min(invalid/hits,0.8)) | 新记录 max(priority/100,0.3) | ${clockNote}）:`, "rank | q | eff | hits/inv | decay | days | tag | pri | id | content(60)"];
         ranked.forEach((r,i)=>{
           const q=r.quality.toFixed(2).padStart(5), eff=String(r.effective).padStart(2), hi=`${r.hits}/${r.invalid}`.padStart(5);
           const dc=r.decay.toFixed(2), dy=r.days.toFixed(1).padStart(4), tag=r.tag.padEnd(4), pri=String(r.pri??r.priority??"?").padStart(2);
@@ -1005,13 +1013,19 @@ export default function (pi: ExtensionAPI) {
       try {
         const { getQualityStats } = await import("./memory/l1/quality.js");
         const s=await getQualityStats(profile.path);
+        const unit = s.clock.activeDayClock ? "活跃日" : "日历天";
         const lines=[`L1 质量汇总: 总数=${s.total} | 分布 热${s.dist["热"]??0}/温${s.dist["温"]??0}/冷${s.dist["冷"]??0}/新${s.dist["新"]??0}/待观察${s.dist["待观察"]??0}/噪${s.dist["噪"]??0}`,
-                     `直方图 q 0-2:${s.histogram["0-2"]} 2-4:${s.histogram["2-4"]} 4-6:${s.histogram["4-6"]} 6+:${s.histogram["6+"]}`];
-        if(s.cold.length>0){ lines.push("", `冷清单 (>14天0命中) ${s.cold.length}条 前5:`); s.cold.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} id=${r.id} | ${r.content.slice(0,60)}`)); }
-        else lines.push("", "冷清单: 0（>14天0命中暂无，7-14天为待观察）");
+                     `直方图 q 0-2:${s.histogram["0-2"]} 2-4:${s.histogram["2-4"]} 4-6:${s.histogram["4-6"]} 6+:${s.histogram["6+"]}`,
+                     s.clock.activeDayClock
+                       ? `时钟: 活跃会话日 ${s.clock.activeDays} 个 / 跨度 ${s.clock.spanDays.toFixed(0)} 日历天（停工期间 days 不增长，单位=${unit}）`
+                       : `时钟: 退化为日历天（未找到 l0-conversations 分片）`];
+        if(s.cold.length>0){ lines.push("", `冷清单 (>14${unit}0命中) ${s.cold.length}条 前5:`); s.cold.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} id=${r.id} | ${r.content.slice(0,60)}`)); }
+        else lines.push("", `冷清单: 0（>14${unit}0命中暂无，7-14${unit}为待观察）`);
         if(s.noisy.length>0){ lines.push("", `噪清单 (失效率>50%) ${s.noisy.length}条 前5:`); s.noisy.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} eff=${r.effective} hits=${r.hits}/${r.invalid} id=${r.id} | ${r.content.slice(0,60)}`)); }
         else lines.push("", "噪清单: 0");
-        lines.push("", `最早记录距今 ${s.ranked.length? Math.max(...s.ranked.map(r=>r.days)).toFixed(1):0} 天，${s.total>0 && s.cold.length===0 ? "冷标签需等记录>14天后可观测" : ""}`);
+        lines.push("", `淘汰候选 ${s.prune.length} 条（已排除 priority>=${s.protectedPriority}(P75动态) / work_method / 有效命中过的记忆；quality 低只代表热度低，不代表可删）`);
+        s.prune.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} type=${r.type} id=${r.id} | ${r.content.slice(0,50)}`));
+        lines.push("", `最早记录距今 ${s.ranked.length? Math.max(...s.ranked.map(r=>r.days)).toFixed(1):0} ${unit}，${s.total>0 && s.cold.length===0 ? `冷标签需等记录>14${unit}后可观测` : ""}`);
         ctx.ui.notify(lines.join("\n"), "info");
       } catch(e){ ctx.ui.notify(`stats 失败: ${e instanceof Error?e.message:String(e)}`, "error"); }
     },

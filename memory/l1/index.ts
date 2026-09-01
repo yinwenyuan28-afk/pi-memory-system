@@ -80,9 +80,10 @@ export function setupL1Extractor(
 
 		const db = getPipelineJobsDB(profilePath);
 		ctx.ui.setStatus("memory", job.source === "manual" ? "Memory ⚙L1 (manual)..." : "Memory ⚙L1...");
+		const abortCtl = new AbortController();
 		const waitP = waitWhileRunning(() => db.getJob(job.id), SUBAGENT_TIMEOUT_MS);
 		try {
-			const spawnP = runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS);
+			const spawnP = runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS, abortCtl.signal);
 			void spawnP.catch((err) => {
 				console.warn(`[memory-system][l1] spawn later: ${err instanceof Error ? err.message : String(err)}`);
 			});
@@ -95,10 +96,16 @@ export function setupL1Extractor(
 				saveL1State(s2);
 				return "done";
 			}
-			if (after?.status === "skipped") return "skipped";
+			if (after?.status === "skipped") {
+				abortCtl.abort();
+				await spawnP.catch(() => {});
+				return "skipped";
+			}
 			if (after?.status === "running") {
 				db.complete(job.id, "failed", "timeout without l1_commit");
 			}
+			abortCtl.abort();
+			await spawnP.catch(() => {});
 			const s2 = loadL1State();
 			s2.consecutiveFailures++;
 			console.warn(`[memory-system][l1] extract ended without commit (job ${job.id}, status=${after?.status})`);
@@ -112,6 +119,7 @@ export function setupL1Extractor(
 			saveL1State(s2);
 			return "failed";
 		} catch (err) {
+			abortCtl.abort();
 			const s2 = loadL1State();
 			s2.consecutiveFailures++;
 			console.warn(`[memory-system][l1] extract failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -126,6 +134,8 @@ export function setupL1Extractor(
 			const still = db.getJob(job.id);
 			if (still?.status === "running") db.complete(job.id, "failed", err instanceof Error ? err.message : String(err));
 			return "failed";
+		} finally {
+			ctx.ui.setStatus("memory", "Memory");
 		}
 	}
 

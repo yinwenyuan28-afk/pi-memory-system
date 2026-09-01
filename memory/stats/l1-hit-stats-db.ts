@@ -25,6 +25,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MEMORY_DB_DIR } from "../paths.js";
+import { loadActiveDayKeys } from "../l1/active-days.js";
 
 /** 单条 L1 命中统计 */
 export interface L1HitStat {
@@ -91,16 +92,41 @@ function mapRow(r: Row): L1HitStat {
 export class L1HitStatsDB {
   private db: DatabaseSync;
   private dbPath: string;
+  private profilePath: string;
 
   constructor(profilePath: string) {
     const memDir = join(profilePath, MEMORY_DB_DIR);
     mkdirSync(memDir, { recursive: true });
     this.dbPath = join(memDir, "l1-hit-stats.sqlite");
+    this.profilePath = profilePath;
     this.db = new DatabaseSync(this.dbPath);
     // WAL + busy_timeout：多进程并发写（后台子代理 + 主代理）安全
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec(SCHEMA_SQL);
+    // 会话内首次拿到实例时刷新一次侧车：即使用户这轮没召回任何记忆，
+    // 新产生的活跃日也会被写进侧车，records-viewer 的衰减时钟不会滞后。
+    this.exportSidecar();
+  }
+
+  /**
+   * 导出 JSON 侧车供 records-viewer.html 直接 fetch（file:// 可用）
+   *
+   * 结构：`{ generatedAt, activeDays, stats }`。activeDays 是活跃会话日（YYYY-MM-DD），
+   * 供前端按与 quality.ts 一致的「活跃日时钟」计算 decay——前端跑在 file:// 下列不了
+   * l0-conversations 目录，只能由后端喂。
+   */
+  private exportSidecar(): void {
+    try {
+      const rows = this.db.prepare("SELECT * FROM l1_hit_stats").all() as Row[];
+      const jsonPath = this.dbPath.replace(/\.sqlite$/, ".json");
+      const payload = {
+        generatedAt: new Date().toISOString(),
+        activeDays: loadActiveDayKeys(this.profilePath) ?? [],
+        stats: rows,
+      };
+      writeFileSync(jsonPath, JSON.stringify(payload, null, 2), "utf-8");
+    } catch {}
   }
 
   /**
@@ -129,12 +155,7 @@ export class L1HitStatsDB {
       this.db.exec("ROLLBACK");
       throw e;
     }
-    // 同步导出 JSON 侧车供 records-viewer.html 直接 fetch（file:// 可用）
-    try {
-      const rows = this.db.prepare("SELECT * FROM l1_hit_stats").all() as Row[];
-      const jsonPath = this.dbPath.replace(/\.sqlite$/, ".json");
-      writeFileSync(jsonPath, JSON.stringify(rows, null, 2), "utf-8");
-    } catch {}
+    this.exportSidecar();
   }
 
   /**
@@ -154,11 +175,7 @@ export class L1HitStatsDB {
          updated_at = excluded.updated_at`,
     );
     stmt.run(recordId, now, now, now);
-    try {
-      const rows = this.db.prepare("SELECT * FROM l1_hit_stats").all() as Row[];
-      const jsonPath = this.dbPath.replace(/\.sqlite$/, ".json");
-      writeFileSync(jsonPath, JSON.stringify(rows, null, 2), "utf-8");
-    } catch {}
+    this.exportSidecar();
   }
 
   /** 读取单条统计 */
