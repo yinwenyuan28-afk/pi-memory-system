@@ -30,8 +30,12 @@ import { loadActiveDayKeys } from "../l1/active-days.js";
 /** 单条 L1 命中统计 */
 export interface L1HitStat {
   recordId: string;
-  /** 命中次数（被召回次数） */
+  /** 命中次数（被召回次数 = injectHits + toolHits） */
   hits: number;
+  /** 自动注入路径命中次数（2026-09-02 起区分两条召回路径） */
+  injectHits: number;
+  /** 工具召回路径命中次数 */
+  toolHits: number;
   /** 无效命中次数（召回后被判定无参考价值并清除） */
   invalidHits: number;
   /** 有效命中次数 = hits - invalid_hits（永不为负） */
@@ -48,6 +52,8 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS l1_hit_stats (
   record_id       TEXT PRIMARY KEY,
   hits            INTEGER NOT NULL DEFAULT 0,
+  inject_hits     INTEGER NOT NULL DEFAULT 0,
+  tool_hits       INTEGER NOT NULL DEFAULT 0,
   invalid_hits    INTEGER NOT NULL DEFAULT 0,
   effective_hits  INTEGER NOT NULL DEFAULT 0,
   last_hit_at     TEXT,
@@ -63,6 +69,8 @@ CREATE INDEX IF NOT EXISTS idx_l1_hit_effective
 interface Row {
   record_id: string;
   hits: number;
+  inject_hits?: number;
+  tool_hits?: number;
   invalid_hits: number;
   effective_hits: number;
   last_hit_at: string | null;
@@ -75,6 +83,8 @@ function mapRow(r: Row): L1HitStat {
   return {
     recordId: r.record_id,
     hits: r.hits,
+    injectHits: r.inject_hits ?? 0,
+    toolHits: r.tool_hits ?? 0,
     invalidHits: r.invalid_hits,
     effectiveHits: r.effective_hits,
     lastHitAt: r.last_hit_at,
@@ -83,6 +93,9 @@ function mapRow(r: Row): L1HitStat {
     updatedAt: r.updated_at,
   };
 }
+
+/** 命中来源（区分自动注入 / 工具召回两条路径） */
+export type HitSource = "inject" | "tool";
 
 /**
  * L1HitStatsDB — L1 命中统计库（node:sqlite）
@@ -104,9 +117,30 @@ export class L1HitStatsDB {
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec(SCHEMA_SQL);
+    // 存量库迁移：2026-09-02 起区分 inject/tool 命中来源。
+    // CREATE TABLE IF NOT EXISTS 不会给已有表加列，需显式 ALTER（node:sqlite 下用 pragma_table_info 检测）。
+    this.ensureSourceColumns();
     // 会话内首次拿到实例时刷新一次侧车：即使用户这轮没召回任何记忆，
     // 新产生的活跃日也会被写进侧车，records-viewer 的衰减时钟不会滞后。
     this.exportSidecar();
+  }
+
+  /** 迁移：给存量 l1_hit_stats 表补 inject_hits / tool_hits 列（幂等）。 */
+  private ensureSourceColumns(): void {
+    try {
+      const cols = this.db
+        .prepare("SELECT name FROM pragma_table_info('l1_hit_stats')")
+        .all() as Array<{ name: string }>;
+      const has = new Set(cols.map((c) => c.name));
+      if (!has.has("inject_hits")) {
+        this.db.exec("ALTER TABLE l1_hit_stats ADD COLUMN inject_hits INTEGER NOT NULL DEFAULT 0");
+      }
+      if (!has.has("tool_hits")) {
+        this.db.exec("ALTER TABLE l1_hit_stats ADD COLUMN tool_hits INTEGER NOT NULL DEFAULT 0");
+      }
+    } catch {
+      // 迁移失败不阻塞主流程（新库由 SCHEMA_SQL 直接建出两列）
+    }
   }
 
   /**
@@ -132,16 +166,25 @@ export class L1HitStatsDB {
   /**
    * 召回命中：每条 record_id 命中 +1（同一批内去重）
    * 在 recallL1Records() 返回成功召回的 record 后调用。
+   *
+   * @param source 命中来源（"inject" 自动注入 / "tool" 工具召回）。
+   *               2026-09-02 起区分两条路径，分别计入 inject_hits / tool_hits；
+   *               未传 source（历史调用点）只加 hits，向后兼容。
    */
-  recordHits(recordIds: string[]): void {
+  recordHits(recordIds: string[], source?: HitSource): void {
     const ids = [...new Set(recordIds)].filter(Boolean);
     if (ids.length === 0) return;
     const now = new Date().toISOString();
+    const injectDelta = source === "inject" ? 1 : 0;
+    const toolDelta = source === "tool" ? 1 : 0;
     const insert = this.db.prepare(
-      `INSERT INTO l1_hit_stats (record_id, hits, effective_hits, created_at, updated_at, last_hit_at)
-       VALUES (?, 1, 1, ?, ?, ?)
+      `INSERT INTO l1_hit_stats
+         (record_id, hits, inject_hits, tool_hits, effective_hits, created_at, updated_at, last_hit_at)
+       VALUES (?, 1, ${injectDelta}, ${toolDelta}, 1, ?, ?, ?)
        ON CONFLICT(record_id) DO UPDATE SET
          hits = l1_hit_stats.hits + 1,
+         inject_hits = l1_hit_stats.inject_hits + ${injectDelta},
+         tool_hits = l1_hit_stats.tool_hits + ${toolDelta},
          effective_hits = l1_hit_stats.hits + 1 - l1_hit_stats.invalid_hits,
          last_hit_at = excluded.last_hit_at,
          updated_at = excluded.updated_at`,

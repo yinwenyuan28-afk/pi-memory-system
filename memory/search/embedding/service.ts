@@ -64,8 +64,9 @@ export async function getEmbeddingService(profilePath?: string): Promise<Embeddi
   const config = loadEmbeddingConfig(profilePath ?? process.env.PI_PROFILE_PATH ?? "");
   if (!config) {
     throw new Error(
-      "embedding 未配置。请在 memoryDB/config/memory-system-model.json 中添加 type=embedding 条目（apiKey + url）。\n" +
-        "参考格式：{\"type\":\"embedding\",\"apiKey\":\"sk-xxx\",\"url\":\"https://xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1\"}"
+      "embedding 未配置。请在 memoryDB/config/application-propertis.json 的 model.embedding 节添加（apiKey + url）。\n" +
+        "参考格式：{\"model\":{\"embedding\":{\"apiKey\":\"sk-xxx\",\"url\":\"https://xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1\"}}}" +
+        "（迁移期仍兼容旧文件 memoryDB/config/memory-system-model.json 的 type=embedding 条目）"
     );
   }
 

@@ -4,13 +4,14 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { decodeCwdFromSessionPath } from "../l0/index.js";
 import { L1_CONFIG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.js";
+import { loadAppProps, saveAppSection } from "../../config/app-config.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 配置 / 游标 / 分片清单（纯函数，无 pi 依赖，可单测）
 // ══════════════════════════════════════════════════════════════
 
 /** 触发间隔：每 N 轮用户消息启动一次 L1 提取。 */
-export const L1_INTERVAL = 5;
+export const L1_INTERVAL = 10;
 /** 子代理超时（L1 每轮只提取 ≤10 条，3 分钟足够；原 10 分钟过长，hung 子代理会长期占锁）。 */
 export const SUBAGENT_TIMEOUT_MS = 180_000;
 /** 连续失败多少次后熔断（暂停自动提取并通知用户）。 */
@@ -36,39 +37,33 @@ export interface L1Config {
 	mode: L1Mode;
 }
 
-/** 读取 L1 配置；无配置/非法时返回默认 code。 */
+/**
+ * 读取 L1 配置（2026-09-02 起收束到 application-propertis.json 的 l1 节）；
+ * 无配置/非法时返回默认 code。兜底链：app 配置 l1.mode → 旧 l1-config.json → code。
+ */
 export function loadL1Config(profilePath: string): L1Config {
+	// 1) 统一配置中心 l1 节
+	const appProps = loadAppProps(profilePath);
+	const section = appProps?.l1 as Partial<L1Config> | undefined;
+	if (section && typeof section === "object") {
+		if (section.mode === "chat" || section.mode === "code") return { mode: section.mode };
+	}
+	// 2) 旧独立 l1-config.json（迁移期兜底）
 	const filePath = join(profilePath, MEMORY_DB_DIR, CONFIG_FILE);
-	if (!existsSync(filePath)) return { mode: "code" };
-	try {
-		const data = JSON.parse(readFileSync(filePath, "utf-8")) as Partial<L1Config>;
-		if (data.mode === "chat" || data.mode === "code") return { mode: data.mode };
-	} catch {
-		// 非法配置回退默认
+	if (existsSync(filePath)) {
+		try {
+			const data = JSON.parse(readFileSync(filePath, "utf-8")) as Partial<L1Config>;
+			if (data.mode === "chat" || data.mode === "code") return { mode: data.mode };
+		} catch {
+			// 非法配置回退默认
+		}
 	}
 	return { mode: "code" };
 }
 
-/** 写入 L1 模式（原子写：tmp + rename）。 */
+/** 写入 L1 模式（收束：写 application-propertis.json 的 l1 节，合并保留其他节）。 */
 export function saveL1Mode(profilePath: string, mode: L1Mode): void {
-	const filePath = join(profilePath, MEMORY_DB_DIR, CONFIG_FILE);
-	const tmpPath = join(profilePath, MEMORY_DB_DIR, `.tmp_l1_config_${Date.now()}`);
-	writeFileSync(tmpPath, JSON.stringify({ mode } as L1Config, null, 2), "utf-8");
-	try {
-		rmSync(filePath, { force: true });
-	} catch {
-		// ignore
-	}
-	try {
-		renameSync(tmpPath, filePath);
-	} catch {
-		writeFileSync(filePath, readFileSync(tmpPath, "utf-8"), "utf-8");
-	}
-	try {
-		rmSync(tmpPath, { force: true });
-	} catch {
-		// ignore
-	}
+	saveAppSection(profilePath, "l1", { mode } as L1Config);
 }
 
 /** 读取 L1 游标 lastRecordedAt（ISO 字符串；无则返回空串）。 */

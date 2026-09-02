@@ -26,10 +26,15 @@ export function registerRecallL1RecordsTool(pi: ExtensionAPI, hitDedupSet?: Set<
   pi.registerTool({
     name: "recall_l1_records",
     description:
-      "Recall L1 atomic memories from vector store via embedding cosine similarity. " +
-      "Returns top-K L1 records with {recordId, score, content, type, priority, scene_name, createdAt}. " +
-      "Use when you want to find which L1 atomic memories (work_fact/work_method/work_task/work_artifact) " +
-      "are relevant to a query. Independent of the legacy memory system (jieba inverted index / sub-memories).",
+      "Search your L1 atomic memories (durable facts, work methods, tasks, and artifacts " +
+      "extracted from past sessions) by semantic similarity. " +
+      "Use when: (a) the auto-injected <l1-records> block at the top does not cover what you need; " +
+      "(b) the user references something from earlier sessions — past decisions, project conventions, " +
+      "preferences, or previously fixed issues; (c) you need more candidates than the injected top-3. " +
+      "Returns top-K records as {recordId, score, content, type, priority, scene_name, createdAt}. " +
+      "Call limit: max 3 times per turn total. " +
+      "If 3 attempts return nothing relevant, the memory is not stored — answer from existing context. " +
+      "Independent of the legacy memory system (jieba inverted index / sub-memories).",
     parameters: {
       queryText: {
         type: "string",
@@ -51,7 +56,7 @@ export function registerRecallL1RecordsTool(pi: ExtensionAPI, hitDedupSet?: Set<
         const { recallL1Records } = await import("./hybrid-recall.js");
         const profilePath = process.env.PI_PROFILE_PATH ?? "";
 
-        const result = await recallL1Records(queryText, profilePath, { topK, hitDedupSet });
+        const result = await recallL1Records(queryText, profilePath, { topK, hitDedupSet, source: "tool" });
         return {
           candidates: result.l1Records,
           stats: {

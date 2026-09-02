@@ -28,11 +28,37 @@ import { registerL3CommitTool } from "./memory/l3/commit-tool.js";
 import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.js";
 import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.js";
 import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.js";
+import { loadRecallConfig } from "./memory/search/recall-config.js";
 import { handleSkillManageTool } from "./skill/skill-tool.js";
 import { handleSkillViewTool } from "./skill/skill-view-tool.js";
 import { callLLM } from "./util/llm.js";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+
+// ── L1 召回 query 条件式扩展（2026-09-02，L1_RECALL_GATE_PLAN 任务 9） ──────────
+// 背景：无条件拼 10 条历史会向量稀释且语义自相矛盾（历史本就在 context 里），被否决。
+// conditional 只在指代消解场景触发，把裸 prompt 扩成 prompt + 最近 2 条 user 消息。
+
+/** 是否命中指代消解场景：prompt 过短（<12 字）或含指代词。 */
+function needsContextExpansion(prompt: string): boolean {
+  const t = (prompt || "").trim();
+  if (!t) return false;
+  if (t.length < 12) return true;
+  return /(?:它|这个|那个|刚才|上面|同上|再|还是|前者|后者)/.test(t);
+}
+
+/** 提取一条 message entry 的纯文本（兼容 string content 与分段 content）。 */
+function extractMessageText(e: any): string {
+  const content = e?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+      .join(" ");
+  }
+  return "";
+}
 
 export default function (pi: ExtensionAPI) {
   const agentDir = getAgentDir();
@@ -371,31 +397,48 @@ export default function (pi: ExtensionAPI) {
     // 新 turn 开始：清空 L1 命中计数的 turn 级去重集合
     currentTurnHitSet.clear();
 
-    // Build combined query: current user input + recent conversation history
+    // ── L1 召回 query 构造（2026-09-02 起条件式，取代无条件拼 10 条历史） ──
+    // 默认裸 prompt = 本轮意图信号（腾讯三端同款）。
+    // 仅当 contextExpansion=conditional 且 prompt 命中指代消解（含指代词 / 过短）时，
+    // 追加最近 1-2 条 role=user 消息（排除 assistant/toolResult，它们含报错堆栈/文件内容，
+    // 是向量稀释主因）。always 仅作 A/B 对照组，用于复现旧拼接行为。
+    // 注意：最终 queryText 只在 recallL1Records()（下方 L1 召回）使用；
+    // maybeRefreshKeywords 两个参数语义不变（话题检测用裸 prompt、关键词刷新用 queryText）。
     let queryText = event.prompt;
     try {
-      const entries = ctx.sessionManager.getEntries();
-      const recentMessages = entries
-        .filter((e: any) => e.type === "message")
-        .slice(-10)
-        .map((e: any) => {
-          const content = e.message?.content;
-          if (typeof content === "string") return `[${e.message?.role}] ${content}`;
-          if (Array.isArray(content)) {
-            return content
-              .filter((c: any) => c.type === "text")
-              .map((c: any) => c.text)
-              .join(" ");
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n");
-      if (recentMessages) {
-        queryText = `${event.prompt}\n${recentMessages}`;
+      const recallCfg = loadRecallConfig(
+        manager?.getProfileManager().getActiveProfile()?.path ?? ""
+      );
+      if (recallCfg.contextExpansion === "always") {
+        const entries = ctx.sessionManager.getEntries();
+        const recentMessages = entries
+          .filter((e: any) => e.type === "message")
+          .slice(-10)
+          .map((e: any) => `[${e.message?.role}] ${extractMessageText(e)}`)
+          .filter(Boolean)
+          .join("\n");
+        if (recentMessages) queryText = `${event.prompt}\n${recentMessages}`;
+      } else if (recallCfg.contextExpansion === "conditional" && needsContextExpansion(event.prompt)) {
+        // 指代消解：只取最近 2 条 user 消息（slice(-3,-1) 排除本轮 prompt 自身），截断 200 字
+        const entries = ctx.sessionManager.getEntries();
+        const recentUser = entries
+          .filter((e: any) => e.type === "message" && e.message?.role === "user")
+          .slice(-3, -1)
+          .map((e: any) => extractMessageText(e))
+          .filter(Boolean)
+          .slice(-2)
+          .join("\n")
+          .slice(0, 200);
+        if (recentUser) {
+          queryText = `${event.prompt}\n${recentUser}`;
+          console.log(
+            `[memory-system][l1-query] contextExpansion 触发: q="${event.prompt.slice(0, 40)}…" + ${recentUser.length}字历史`
+          );
+        }
       }
+      // contextExpansion === "off" → queryText 保持裸 event.prompt
     } catch {
-      // sessionManager not available, fall back to prompt only
+      // sessionManager / config 不可用 → fall back to prompt only
     }
 
     // 冻结快照（固定不变）→ system prompt 前缀稳定 → 命中 provider 前缀缓存
@@ -447,9 +490,10 @@ export default function (pi: ExtensionAPI) {
         const profile = manager?.getProfileManager().getActiveProfile();
       if (profile) {
         const { recallL1Records } = await import("./memory/search/hybrid-recall.js");
-        const result = await recallL1Records(event.prompt, profile.path, {
+        const result = await recallL1Records(queryText, profile.path, {
           topK: 3,
           hitDedupSet: currentTurnHitSet,
+          source: "inject",
         });
         const parts = result.l1Records.map((r) => `- ${r.content}`);
         if (parts.length > 0) {

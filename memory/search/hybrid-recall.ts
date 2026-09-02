@@ -16,6 +16,8 @@
  */
 
 import { loadL1RecordById } from "./embedding/record-loader.js";
+import { loadRecallConfig } from "./recall-config.js";
+import type { HitSource } from "../stats/l1-hit-stats-db.js";
 
 /** L1 record 召回候选 */
 export interface L1RecordCandidate {
@@ -37,6 +39,16 @@ export interface RecallL1RecordsResult {
 export interface RecallL1RecordsOptions {
   /** top-K（默认 5） */
   topK?: number;
+  /**
+   * 相似度下限（cosine）。显式传入时覆盖 recall-config.json 的 minScore；
+   * 未传则用配置默认值（默认 0 = 不过滤）。
+   */
+  minScore?: number;
+  /**
+   * 命中来源：区分自动注入（"inject"）与工具召回（"tool"）。
+   * 2026-09-02 起写入 l1_hit_stats.inject_hits / tool_hits，用于量化两条路径的贡献。
+   */
+  source?: HitSource;
   /**
    * turn 级去重集合（可选）：同一 agent turn 内已计过命中的 recordId 集合。
    * 传入后，同一 turn 内重复召回（loop-start 自动注入 + 工具多次调用）只计一次命中；
@@ -65,6 +77,10 @@ export async function recallL1Records(
   if (!queryText || !profilePath) return result;
 
   const topK = options.topK ?? 5;
+  // 闸门参数来源：recall-config.json（profile 级可覆盖），options 显式传参优先
+  const cfg = loadRecallConfig(profilePath);
+  const minScore = options.minScore ?? cfg.minScore;
+  const shadowMode = cfg.shadowMode;
 
   try {
     const { getEmbeddingService } = await import("./embedding/service.js");
@@ -77,20 +93,46 @@ export async function recallL1Records(
       const queryVec = await embService.embed(queryText);
       const hits = await vecStore.search(queryVec, topK);
 
+      // ── 闸门 1：相关性阈值 ─────────────────────────────
+      // shadowMode=true：只统计会被滤掉多少，不真剔除（标定期观察用）
+      let kept = hits;
+      let filtered = 0;
+      if (minScore > 0) {
+        filtered = hits.filter((h) => h.score < minScore).length;
+        if (!shadowMode) kept = hits.filter((h) => h.score >= minScore);
+      }
+
+      // ── 闸门 2：字符预算（单条截断 + 总量封顶） ─────────
       // 加载完整 record 内容
-      for (const hit of hits) {
+      let totalChars = 0;
+      for (const hit of kept) {
         const rec = await loadL1RecordById(hit.recordId, profilePath);
-        if (rec && !rec.deleted) {
-          result.l1Records.push({
-            recordId: hit.recordId,
-            score: hit.score,
-            content: rec.content,
-            type: rec.type,
-            priority: rec.priority,
-            scene_name: rec.scene_name,
-            createdAt: rec.createdAt,
-          });
+        if (!rec || rec.deleted) continue;
+        let content = rec.content;
+        if (cfg.maxCharsPerRecord > 0 && content.length > cfg.maxCharsPerRecord) {
+          content = content.slice(0, cfg.maxCharsPerRecord) + "…";
         }
+        totalChars += content.length + 2; // 每条加换行开销
+        if (cfg.maxTotalChars > 0 && totalChars > cfg.maxTotalChars) break;
+        result.l1Records.push({
+          recordId: hit.recordId,
+          score: hit.score,
+          content,
+          type: rec.type,
+          priority: rec.priority,
+          scene_name: rec.scene_name,
+          createdAt: rec.createdAt,
+        });
+      }
+
+      // 观测日志：调 minScore 的唯一依据（filtered 多 → 阈值偏低；0 且全进 → 可下调）
+      if (hits.length > 0) {
+        console.log(
+          `[l1-recall] recall=${hits.length} filtered=${filtered}` +
+            ` kept=${result.l1Records.length} minScore=${minScore}` +
+            (shadowMode ? " (shadow)" : "") +
+            ` q="${queryText.slice(0, 40)}${queryText.length > 40 ? "…" : ""}"`
+        );
       }
     }
   } catch (e) {
@@ -115,7 +157,7 @@ export async function recallL1Records(
         // 本 turn 见过的都标记（含已计过的），后续调用不再计数
         for (const id of allIds) dedupSet.add(id);
       }
-      if (ids.length > 0) getL1HitStatsDB(profilePath).recordHits(ids);
+      if (ids.length > 0) getL1HitStatsDB(profilePath).recordHits(ids, options.source);
     } catch (e) {
       console.warn(
         `[recall-l1Records] 命中计数失败（不影响召回）: ${e instanceof Error ? e.message : String(e)}`,

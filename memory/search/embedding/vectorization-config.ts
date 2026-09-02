@@ -1,16 +1,19 @@
 /**
- * vectorization.json 配置读取
+ * 向量化配置读取（2026-09-02 收束到 application-propertis.json 的 vectorization 节）
  *
- * 位置：{profilePath}/memoryDB/config/vectorization.json
+ * 位置：{profile}/memoryDB/config/application-propertis.json 的 `vectorization` 节
  * 内容：enabled（是否启用向量化）、triggerThreshold（触发阈值，L1 records 达到此数量后启用）
+ * 兜底：旧 {profile}/memoryDB/config/vectorization.json（迁移期兼容）
  *
  * 与 embedding 配置分离：
- * - embedding 配置（memory-system-model.json 的 type=embedding 条目）= 连接配置（apiKey/url/model/dimensions）→ 必须配
- * - vectorization.json = 业务策略（enabled/threshold）→ 可选，有默认值
+ * - embedding 配置（application-propertis.json 的 model.embedding 节）= 连接配置（apiKey/url/model/dimensions）→ 必须配
+ * - vectorization 节 = 业务策略（enabled/threshold）→ 可选，有默认值
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { MEMORY_DB_DIR } from "../../../memory/paths.js";
+import { loadAppProps } from "../../../config/app-config.js";
 import { isEmbeddingConfigAvailable } from "./config.js";
 
 export interface VectorizationConfig {
@@ -25,25 +28,37 @@ const DEFAULTS: VectorizationConfig = {
   triggerThreshold: 500,
 };
 
-/**
- * 读取 vectorization.json 配置
- *
- * @param profilePath profile 根目录
- * @returns 配置对象（文件不存在时返回默认值）
- */
-export function loadVectorizationConfig(profilePath: string): VectorizationConfig {
-  const configPath = join(profilePath, "memoryDB", "config", "vectorization.json");
-  if (!existsSync(configPath)) return { ...DEFAULTS };
+function merge(raw: Partial<VectorizationConfig> | null | undefined): VectorizationConfig {
+  if (!raw || typeof raw !== "object") return { ...DEFAULTS };
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULTS.enabled,
+    triggerThreshold:
+      typeof raw.triggerThreshold === "number" ? raw.triggerThreshold : DEFAULTS.triggerThreshold,
+  };
+}
 
+/** 读取旧独立 vectorization.json（迁移期兜底）。 */
+function loadLegacyVectorizationConfig(profilePath: string): Partial<VectorizationConfig> | null {
+  const configPath = join(profilePath, MEMORY_DB_DIR, "config", "vectorization.json");
+  if (!existsSync(configPath)) return null;
   try {
     const raw = JSON.parse(readFileSync(configPath, "utf-8")) as Partial<VectorizationConfig>;
-    return {
-      enabled: raw.enabled ?? DEFAULTS.enabled,
-      triggerThreshold: raw.triggerThreshold ?? DEFAULTS.triggerThreshold,
-    };
+    return raw && typeof raw === "object" ? raw : null;
   } catch {
-    return { ...DEFAULTS };
+    return null;
   }
+}
+
+/**
+ * 读取向量化配置：application-propertis.json(.vectorization) → 旧 vectorization.json → 默认。
+ */
+export function loadVectorizationConfig(profilePath: string): VectorizationConfig {
+  const appProps = loadAppProps(profilePath);
+  const section = appProps?.vectorization;
+  if (section && typeof section === "object") {
+    return merge(section as Partial<VectorizationConfig>);
+  }
+  return merge(loadLegacyVectorizationConfig(profilePath));
 }
 
 /**

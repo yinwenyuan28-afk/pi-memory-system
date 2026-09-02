@@ -251,10 +251,14 @@ async function createSqliteVecStore(vectorsDir: string): Promise<VectorStore> {
     },
 
     /**
-     * 向量总数
+     * 向量总数（真实存在的向量行数）
+     *
+     * 2026-09-02 修复：原实现查 l1_vector_index 映射表行数——当向量被清空（删除/重建失败）
+     * 而映射表残留时，count()>0 会误导调用方走 search（恒空、白调 embedding API）。
+     * 改为查 vec0 虚拟表真实行数：count=0 时调用方应跳过检索。
      */
     async count(): Promise<number> {
-      const row = db.prepare("SELECT count(*) as n FROM l1_vector_index").get() as { n: number };
+      const row = db.prepare("SELECT count(*) as n FROM l1_vectors").get() as { n: number };
       return row.n;
     },
 
@@ -271,12 +275,20 @@ async function createSqliteVecStore(vectorsDir: string): Promise<VectorStore> {
     },
 
     /**
-     * 返回所有已向量化的 record_id（来自 l1_vector_index 辅助映射表）
-     * 供 /vectorize-list 命令使用：与 loadAllL1Records() 对比得出未向量化的清单。
+     * 返回已向量化的 record_id（映射表 ∩ vec0 实际有向量的行）
+     *
+     * 2026-09-02 修复：原实现只查 l1_vector_index——向量被清空但映射表残留时会误报
+     * 「已向量化」，导致 backfill 永不补。现改为仅返回 vec0 中真实存在向量的 rowid
+     * （插入时 index 与 vec0 共用同一 rowid，见 insert()）。
+     * 供 /vectorize-list 与 backfill 使用：与 loadAllL1Records() 对比得出未向量化清单。
      */
     async getAllVectorizedRecordIds(): Promise<string[]> {
       const rows = db
-        .prepare("SELECT record_id FROM l1_vector_index ORDER BY rowid")
+        .prepare(
+          `SELECT i.record_id FROM l1_vector_index i
+           WHERE i.rowid IN (SELECT rowid FROM l1_vectors)
+           ORDER BY i.rowid`
+        )
         .all() as Array<{ record_id: string }>;
       return rows.map((r) => r.record_id);
     },
