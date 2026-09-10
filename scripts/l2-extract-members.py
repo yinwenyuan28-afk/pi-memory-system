@@ -31,7 +31,7 @@ import sys
 from collections import OrderedDict
 
 PROFILE = sys.argv[1] if len(sys.argv) > 1 else "C:/Users/leaf/.pi/agent/profiles/default"
-PLAN_DIR = sys.argv[2] if len(sys.argv) > 2 else "C:/Users/leaf/.pi/plan/memory-system/待观察/L2-场景块合并"
+PLAN_DIR = sys.argv[2] if len(sys.argv) > 2 else "C:/Users/leaf/.pi/plan/memory-system/observation/L2_SCENE_CONSOLIDATION"
 RECORDS_DIR = os.path.join(PROFILE, "memoryDB", "l1-records")
 BLOCKS_DIR = os.path.join(PROFILE, "memoryDB", "l2-scene-blocks")
 
