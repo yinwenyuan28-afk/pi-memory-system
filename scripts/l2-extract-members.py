@@ -18,8 +18,8 @@
 用法：
   python scripts/l2-extract-members.py [profilePath]
 输出：
-  <planDir>/L2-场景块合并-成员抽取-分析.md        报告
-  <planDir>/L2-场景块合并-成员候选-数据.json      候选成员（block 文件名 → 存活 L1 id 列表）
+  <planDir>/L2_SCENE_CONSOLIDATION-成员抽取-分析.md        报告
+  <planDir>/L2_SCENE_CONSOLIDATION-成员候选-数据.json      候选成员（block 文件名 → 存活 L1 id 列表）
 """
 
 import glob
@@ -233,11 +233,11 @@ def main():
     out.append("- 本脚本**只读** memoryDB，只写本报告与候选 JSON；不写 `scene_members.json`（那一步需人工确认后单独执行）。")
     out.append("- 历史块的成员**必然不完整**（未被文本引用的记录无从追溯）——这是回填的固有上限，不是脚本缺陷。")
 
-    report_path = os.path.join(PLAN_DIR, "L2-场景块合并-成员抽取-分析.md")
+    report_path = os.path.join(PLAN_DIR, "L2_SCENE_CONSOLIDATION-成员抽取-分析.md")
     io.open(report_path, "w", encoding="utf-8").write("\n".join(out) + "\n")
-    cand_path = os.path.join(PLAN_DIR, "L2-场景块合并-成员候选-数据.json")
+    cand_path = os.path.join(PLAN_DIR, "L2_SCENE_CONSOLIDATION-成员候选-数据.json")
     io.open(cand_path, "w", encoding="utf-8").write(json.dumps(candidate, ensure_ascii=False, indent=2) + "\n")
-    amb_path = os.path.join(PLAN_DIR, "L2-场景块合并-成员歧义-数据.json")
+    amb_path = os.path.join(PLAN_DIR, "L2_SCENE_CONSOLIDATION-成员歧义-数据.json")
     io.open(amb_path, "w", encoding="utf-8").write(json.dumps(ambiguous, ensure_ascii=False, indent=2) + "\n")
 
     print(f"块数 {len(blocks)}｜引用 {total_refs} 处｜展开 {total_exp} 个 id｜命中 {total_hit}｜未命中 {total_exp - total_hit}")
