@@ -2,7 +2,9 @@ import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, rename
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.js";
+import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, L2_SCENE_MEMBERS_PATH, MEMORY_DB_DIR } from "../paths.js";
+import { loadAppProps } from "../../config/app-config.js";
+import { loadL1Config } from "../l1/config.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 配置 / 游标 / 任务构造（纯函数，无 pi 依赖，可单测）
@@ -16,8 +18,12 @@ export const L2_BATCH = 1;
 export const L2_SUBAGENT_TIMEOUT_MS = 180_000;
 /** 连续失败多少次后熔断（暂停自动提取并通知用户）。 */
 export const L2_FAILURE_THRESHOLD = 3;
-/** 场景数量上限（腾讯默认）。 */
-export const MAX_SCENES = 15;
+/**
+ * 场景块数量硬上限的**兜底默认值**（配置缺失/非法时使用）。
+ * 真正的取值来自统一配置中心 `application-propertis.json` 的 `l2.maxScenes`（见 `loadL2Config`）。
+ * 2026-09-10 起不再用本常量直接约束行为——它只是 fallback，避免各自硬编码 15。
+ */
+export const MAX_SCENES_DEFAULT = 15;
 
 /** L2 游标文件名（lastRecordId）。 */
 export const L2_CURSOR_FILE = PATHS_L2_CURSOR;
@@ -25,9 +31,33 @@ export const L2_CURSOR_FILE = PATHS_L2_CURSOR;
 export const SCENE_DIR_NAME = L2_SCENE_DIR;
 /** 场景索引路径（{memoryDB}/.metadata/scene_index.json）。 */
 export const SCENE_INDEX_PATH = L2_SCENE_INDEX_PATH;
+/** 场景成员清单 sidecar 路径（{memoryDB}/.metadata/scene_members.json）。 */
+export const SCENE_MEMBERS_PATH = L2_SCENE_MEMBERS_PATH;
 
 /** 规则文件目录（本模块同目录下的 prompts/）。 */
 export const PROMPT_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
+
+/** `application-propertis.json` 的 `l2` 节结构。 */
+export interface L2Config {
+	/** 场景块数量硬上限。 */
+	maxScenes: number;
+}
+
+/**
+ * 读取 L2 配置（收束到 `application-propertis.json` 的 `l2` 节，2026-09-10）。
+ * 无配置 / 非法 / 非正数 → 返回 `MAX_SCENES_DEFAULT`。
+ *
+ * 抽取动因：`scene-extraction-personal.md` 与 `scene-extraction.md` 都声明了 `{maxScenes}`
+ * 占位符并写明"按任务消息中的实际值替换"，但**任务消息从未注入过该字段**（第四处死模板，
+ * 与 L1 的 `{previous_scene_name}` 同类），结果 `l2-scene-organizer.md` 只能把 15 写死。
+ * 现在由 `buildL2Task` 注入 `MaxScenes` 行，值统一来自本配置。
+ */
+export function loadL2Config(profilePath: string): L2Config {
+	const section = loadAppProps(profilePath)?.l2 as Partial<L2Config> | undefined;
+	const n = section?.maxScenes;
+	if (typeof n === "number" && Number.isFinite(n) && n > 0) return { maxScenes: Math.floor(n) };
+	return { maxScenes: MAX_SCENES_DEFAULT };
+}
 
 /** 从 record id（格式 l1_{timestamp}_{random}）解析 epoch 毫秒；解析失败返回 0。 */
 export function recordEpochMs(id: string): number {
@@ -107,6 +137,11 @@ export function buildL2Task(profilePath: string, _recordsFilesOverride?: string[
 		`IndexPath: ${join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH)}`,
 		`CursorPath: ${join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE)}`,
 		`PromptDir: ${PROMPT_DIR}`,
+		// Mode 也是此前未注入的死模板（agent 定义的任务消息模板里列了它、并规定「Mode=code 读
+		// scene-extraction-personal.md / chat 读 scene-extraction.md」，但任务消息从不输出 →
+		// 子代理只能猜读哪份规则）。L2 模式与 L1 一致，故直接取 L1 配置。
+		`Mode: ${loadL1Config(profilePath).mode}`,
+		`MaxScenes: ${loadL2Config(profilePath).maxScenes}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）`,
 	].join("\n");
 }
 

@@ -25,6 +25,27 @@ function localDate(d: Date): string {
 	return `${y}-${m}-${day}`;
 }
 
+/**
+ * 用代码时间覆写记录的时间字段——时间字段归代码所有。
+ *
+ * 子代理自填的 `createdAt`/`updatedAt` 无代码来源、粒度参差（实测 277 行中 57% 毫秒恰为
+ * `.000`，另有同批逐秒伪唯一、整批同值、个别缺失），故一律覆写：
+ * - active 行：`createdAt` = `updatedAt` = 落盘时刻；
+ * - `deleted: true` 标记行：只覆写 `updatedAt`，`createdAt` 保留原值（它表示「原记录创建于
+ *   何时」，实测标记行确实沿用旧值），缺失或不可解析才取 `now`。
+ *
+ * `timestamps` 是源消息事件时刻（`l1-extractor.md` 约定），语义不同，**不在覆写范围**。
+ */
+export function stampRecordTimes(record: Record<string, unknown>, isDeleted: boolean, now: string): void {
+	record.updatedAt = now;
+	if (!isDeleted) {
+		record.createdAt = now;
+		return;
+	}
+	const created = record.createdAt;
+	if (typeof created !== "string" || Number.isNaN(Date.parse(created))) record.createdAt = now;
+}
+
 /** 内容归一化哈希（去重用）：去空白、转小写、sha1。 */
 function contentHash(content: string): string {
 	const norm = content.replace(/\s+/g, " ").trim().toLowerCase();
@@ -85,7 +106,7 @@ export function registerL1CommitTool(
 			properties: {
 				records: {
 					type: "array",
-					description: "L1 memory record objects: {id, content, type, priority, scene_name, source_message_ids, metadata, timestamps, createdAt, updatedAt, version, sessionKey, sessionId, deleted}",
+					description: "L1 memory record objects: {id, content, type, priority, scene_name, source_message_ids, metadata, timestamps, createdAt, updatedAt, version, sessionKey, sessionId, deleted}. 注意 timestamps 与 createdAt 分工：timestamps = 源消息事件时刻（子代理填，用于追溯该记忆对应哪段对话）；createdAt/updatedAt = 记录落盘时刻（由 l1_commit 用代码时间覆写，子代理填的值会被忽略）；deleted:true 的标记行 createdAt 保留原记录的创建时刻",
 					items: { type: "object" },
 				},
 				cursor: {
@@ -145,6 +166,7 @@ export function registerL1CommitTool(
 					if (typeof r.content === "string" && existingHashes.has(contentHash(r.content))) continue; // 内容重复
 				}
 				const { embedding: _emb, ...clean } = r as any;
+				stampRecordTimes(clean, isDeleted, new Date().toISOString());
 				appendedLines.push(JSON.stringify(clean));
 				if (isDeleted) toDelete.push(r);
 				else toEmbed.push(r);

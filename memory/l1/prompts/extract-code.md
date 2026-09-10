@@ -1,3 +1,5 @@
+> **[DEPRECATED]** 团队版旧稿，勿引用、勿修改；个人编码版见同目录 `extract-code-personal.md`（当前 `l1-extractor` 子代理读取的是个人版）。本文件保留仅作迁移回溯用，其中 `previous_scene_name`、情境继承条件、"全局唯一"命名规则等表述均已过时。
+
 <!--
   来源：TencentDB-Agent-Memory 2.0.0 MemoryCore/src/core/prompts/l1-extraction.ts（1:1 迁移）
   用途：l1-extractor 子代理的记忆提取规则。子代理先 read 本文件，再按规则提取。

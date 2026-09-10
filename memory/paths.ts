@@ -38,6 +38,15 @@ export const L1_CONFIG_FILE = "l1-config.json";
 export const L2_SCENE_DIR = "l2-scene-blocks";
 /** L2 场景索引路径（{memoryDB}/.metadata/scene_index.json）。 */
 export const L2_SCENE_INDEX_PATH = join(".metadata", "scene_index.json");
+/**
+ * L2 场景块 → 成员 L1 记录 id 的 sidecar（2026-09-10）。
+ *
+ * 为什么不直接写进 `scene_index.json`：该索引由 `syncSceneIndex()` 在每次提交后**从块文件全量重建**，
+ * 任何只存在于索引里的字段都会在下次重建时丢失。所以成员清单需要独立的持久化载体，由
+ * `syncSceneIndex()` 读取并并进索引条目 —— 对外表现仍是"成员的机读入口在索引里"，
+ * 块文件保持轻量。
+ */
+export const L2_SCENE_MEMBERS_PATH = join(".metadata", "scene_members.json");
 /** L2 游标文件名。 */
 export const L2_CURSOR_FILE = "l2-cursor.json";
 

@@ -74,21 +74,21 @@
 
 # 冲突检测 Prompt（code 模式）
 
-你是团队工作记忆冲突检测器。批量比较多条【新记忆】与【统一候选记忆池】中的已有记忆，逐条决定如何处理。
+你是个人工作记忆冲突检测器。批量比较多条【新记忆】与【统一候选记忆池】中的已有记忆，逐条决定如何处理。
 
 **输出语言**：`merged_content` 使用与候选池中已有记忆相同的语言；JSON 字段名、枚举值、record_id、ISO 时间戳保持英文。
 
 ## 核心规则
 
-- **跨 type 合并**：不同 type（work_fact / work_task / work_method / work_artifact）的记忆如果语义上描述同一工作对象、任务、方法或资产，**可以合并**。
+- **跨 type 合并**：不同 type（work_fact / work_task / work_method / work_artifact）的记忆如果语义上描述同一工作对象、任务、方法或资产，**可以合并**。但**跨 type 合并仅限同一抽象层级**——work_fact（单次事件/决策/结论）与 work_method（可复用原则/方法）即使描述同一工作对象也不得合并，须各自保留。
 - **多对多合并**：一条新记忆可以同时替换/合并候选池中的**多条**已有记忆（通过 target_ids 数组指定）。
 - 合并后你必须判断新记忆的最佳 type（merged_type）。
-- 记忆默认会在项目团队内共享，合并内容应只保留工作相关信息。
+- 记忆默认供该用户后续编码任务召回使用，合并内容保留与编码工作相关的信息。
 
 ## 判断逻辑
 
 1. **分辨记忆性质**：
-   - **工作事实类（work_fact）**：项目事实、需求、决策、状态、风险、约束、实验结果、客户反馈。
+   - **工作事实类（work_fact）**：项目事实、需求、决策、状态、风险、约束、实验结果。
    - **工作任务类（work_task）**：待办、owner、deadline、下一步计划、任务状态变化。
    - **工作方法类（work_method）**：SOP、禁忌、原则、经验、设计思路、判断标准、Agent 行为规则。
    - **工作资产类（work_artifact）**：文档、PR、Issue、Prompt、报告、代码分支、设计稿、链接等。
@@ -107,9 +107,9 @@
 4. **策略倾向**：
    - work_fact：同一事实/决策/状态的补充或修正 → 倾向 update 或 merge。
    - work_task：同一任务的 owner、deadline、状态变化 → 倾向 update；补充依赖或验收标准 → 倾向 merge。
-   - work_method：同一 SOP、禁忌、原则、经验的补充 → 倾向 merge；更清晰通用的表述 → 倾向 update。
+   - work_method：同一 SOP、禁忌、原则、经验的补充 → 倾向 merge；更清晰通用的表述 → 倾向 update。原则类记忆出现语义矛盾时，先判断适用范围是否不同——范围不同 → 新记忆 store（不指定 target_ids），content 写明自身适用范围，不得与旧记忆 merge；同范围直接矛盾（用户改主意/依据被证伪）→ 必须 update 覆盖，不得 merge 共存。
    - work_artifact：同一文档、PR、Prompt、报告等资产的用途、版本、链接补充 → 倾向 merge 或 update。
-   - 跨类型示例：一条 work_fact "团队决定 L1 type 保持少量高层分类" + 一条 work_method "L1 type 不宜过细，否则影响 L2/L3 聚合" → 可 merge 为 work_method。
+   - 跨类型示例：一条 work_fact "用户决定 L1 分类收为 3 类" + 一条 work_task "待跟进 L1 分类的切换验证" → 可 merge（同一决策的事件与跟进）。注意 work_fact 与 work_method 不得跨抽象层级合并（见核心规则）。
 
 5. **timestamp 处理**：
    - merge / update 时，merged_timestamps 应包含**所有相关记忆的时间戳并集**（去重排序）。

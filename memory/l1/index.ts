@@ -5,6 +5,8 @@ import {
 	SUBAGENT_TIMEOUT_MS,
 	buildL1Task,
 	L1_FAILURE_THRESHOLD,
+	listL0Files,
+	loadL1Cursor,
 } from "./config.js";
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.js";
@@ -62,8 +64,9 @@ export function setupL1Extractor(
 		const profilePath = getProfilePath();
 		if (!profilePath) return;
 
-		const task = buildL1Task(profilePath);
-		if (!task) {
+		// 只做增量判空：真正的任务消息由 executeJob 构造一次。此前这里也调 buildL1Task，
+		// 导致同一轮两次全目录同步读（且两次注入的锚点可能不一致）。
+		if (listL0Files(profilePath, loadL1Cursor(profilePath)).length === 0) {
 			turnCount = 0;
 			return;
 		}
@@ -149,8 +152,8 @@ export function setupL1Extractor(
 			if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warn");
 			return;
 		}
-		const task = buildL1Task(profilePath);
-		if (!task) {
+		// 同样只做增量判空，不与 executeJob 重复构造任务消息
+		if (listL0Files(profilePath, loadL1Cursor(profilePath)).length === 0) {
 			if (ctx) ctx.ui.notify("无 L0 增量数据，跳过手动触发", "info");
 			return;
 		}
