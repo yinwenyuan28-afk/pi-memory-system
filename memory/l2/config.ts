@@ -151,7 +151,9 @@ const L2_STAGING_DIR = ".l2-staging"; // 2026-08-20 废弃：保留路径常量�
 export function readAllRecords(profilePath: string): Array<{ id: string; epoch: number; raw: string }> {
 	const recordsDir = join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR);
 	if (!existsSync(recordsDir)) return [];
-	const out: Array<{ id: string; epoch: number; raw: string }> = [];
+	// LWW（2026-09-11）：同 id 取追加序最后一行（覆盖式聚合），
+	// 避免墓碑/改写产生的同 id 多行被重复计数（countNewRecords 高估、L2 调度误触发）。
+	const lastById = new Map<string, { id: string; epoch: number; raw: string }>();
 	for (const f of readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f)).sort()) {
 		try {
 			const text = readFileSync(join(recordsDir, f), "utf-8");
@@ -161,7 +163,7 @@ export function readAllRecords(profilePath: string): Array<{ id: string; epoch: 
 				try {
 					const obj = JSON.parse(t);
 					const id = typeof obj?.id === "string" ? obj.id : "";
-					if (id) out.push({ id, epoch: recordEpochMs(id), raw: t });
+					if (id) lastById.set(id, { id, epoch: recordEpochMs(id), raw: t });
 				} catch {
 					// 跳过坏行
 				}
@@ -170,7 +172,7 @@ export function readAllRecords(profilePath: string): Array<{ id: string; epoch: 
 			// 跳过坏文件
 		}
 	}
-	return out;
+	return [...lastById.values()];
 }
 
 /** 游标之后还有多少未组织记录（不写盘，供调度判断，避免每次 mtime tick 都建 staging）。 */

@@ -2,7 +2,6 @@ import { runPiSubagent } from "../../util/subagent.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.js";
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
-import { registerReadL1IncrementTool } from "./read-tool.js";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.js";
 import type { PipelineJobResult, PipelineWorker } from "../pipeline/worker.js";
 
@@ -20,7 +19,8 @@ export function setupL2Organizer(
 	executeJob: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
 	isCooledDown: () => boolean;
 } {
-	registerReadL1IncrementTool(pi, getProfilePath);
+	// 【2026-09-11】read_l1_increment 注册已上移至 index.ts 模块顶层（子代理可达）；
+	// 本函数仅在主进程 session_start 后执行，若在此注册将造成子代理缺工具（死线，已修）。
 
 	function loadL2State(): LayerFailureState {
 		const p = getProfilePath();

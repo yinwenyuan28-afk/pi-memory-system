@@ -104,16 +104,13 @@ const DEFAULT_PROMPTS: MemoryPrompts = {
    Bounded-task-class executable SOP (recurring trigger + steps + validation) → skill, not memory.
    When unsure, prefer sub-memory (narrowest scope).`,
   toolReminder:
-    "\n\n[Memory] You have persistent memory across sessions. Save durable facts using the memory " +
-    "tool. Memory is injected into every turn, so keep entries compact and high-signal.\n" +
-    "SAVE when: user preference/correction/style instruction, root-cause analysis (causal structure), " +
-    "non-obvious API behavior (pitfalls verified), project/architecture facts.\n" +
-    "DO NOT save: task progress / temporary TODO, one-shot fix without root cause, " +
-    "version/release logs, facts directly inferable from code/docs.\n" +
-    "Bounded-task-class executable SOP → skill (skill_manage), NOT memory. User preferences → memory (target user), NOT skill.\n" +
-    "If you decide to save → call load_memory_rules for full classification rules and scope list.\n" +
-    "Uncertain → stage in .staging/, do not write directly.\n" +
-    "\n[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (memory-reviewer, skill-reviewer, memory-organizer) " +
+    "\n\n[Memory → L1] 你的持久记忆写入通道是 l1_commit（source=main-agent）；旧的 memory 工具已退役，不要再调它。\n" +
+    "RECORD when: 用户偏好/纠正/风格指令、根因结论（含因果结构）、非显然的约束或事实、用户拍板的决策（含理由与被否项）、踩坑经验、未定事项。\n" +
+    "DO NOT record: 任务进度 / 临时 TODO、无根因的一次性修复、版本与发布日志、可直接从代码/文档查到的事实、纯抱怨式负面断言。\n" +
+    "有界任务类可执行 SOP（recurring trigger + 步骤 + 验证）→ skill_manage，不是 L1。\n" +
+    "调用形态：l1_commit({ source: main-agent, records: [ { content, type, priority? } ] })；只需 content + type，id/时间/会话/cwd 由服务端补齐，不要自己编 id。\n" +
+    "完整规则 → 调 load_memory_rules。\n" +
+    "\n[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (l1-extractor, l2-scene-organizer, l3-persona-generator, skill-reviewer) " +
     "are protected. ONLY use edit, NEVER write on these files.\n" +
     "[Protected Files] C:\\Users\\leaf\\.pi\\agent\\extensions\\memory-system\\memory\\prompts\\*.md " +
     "(keyword-extraction, filter, filter-relevance, save-guidelines, tool-reminder) " +

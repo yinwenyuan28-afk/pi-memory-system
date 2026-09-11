@@ -50,7 +50,7 @@ export async function loadL1RecordById(
   const recordsDir = join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME);
   if (!existsSync(recordsDir)) return null;
 
-  // 列出最近 days 天的分片文件（从最新到最旧搜索）
+  // 枚举最近 days 天的分片文件（按日期升序 = 追加序前半段；行内顺序为后半段）
   const now = new Date();
   const files: string[] = [];
   for (let d = days - 1; d >= 0; d--) {
@@ -62,6 +62,9 @@ export async function loadL1RecordById(
     }
   }
 
+  // LWW（2026-09-11）：同一 id 取追加序最后一行（分片升序+行序），
+  // 同分片多行也取最后一行；deleted 判定 strict === true（与 config.ts 锚点读者对齐）。
+  let found: L1Record | null = null;
   for (const filePath of files) {
     try {
       const content = readFileSync(filePath, "utf-8");
@@ -70,7 +73,7 @@ export async function loadL1RecordById(
         try {
           const record = JSON.parse(line) as L1Record;
           if (record.id === recordId) {
-            return record;
+            found = record; // 持续覆盖 → 循环结束时为最后一行
           }
         } catch {
           // 跳过格式错误的行
@@ -81,15 +84,21 @@ export async function loadL1RecordById(
     }
   }
 
-  return null;
+  return found;
 }
 
 /**
- * 加载全部非 deleted 的 L1 records（最近 days 天）
+ * 加载全部存活的 L1 records（最近 days 天，LWW 语义）
+ *
+ * LWW（2026-09-11 改造，与 config.ts readRecentSceneContext 同口径）：
+ * 同 id 按「追加序最后一行」（分片日期升序 + 行序）判定存活：
+ *   last.deleted === true → 该 id 不输出；否则输出最后一行。
+ * 背景：旧实现逐行 `!deleted` 过滤，导致「追加墓碑删不掉旧行」且同 id 多行重复输出；
+ * 同 id 多行属历史档案（清理/改写产物），由本函数聚合裁决，无需物理清洗。
  *
  * @param profilePath profile 根目录
  * @param days 搜索回溯天数（默认 30）
- * @returns 非 deleted 的 records 数组
+ * @returns 存活的 records 数组（每 id 至多一条）
  */
 export async function loadAllL1Records(
   profilePath: string,
@@ -111,7 +120,8 @@ export async function loadAllL1Records(
     }
   }
 
-  const records: L1Record[] = [];
+  // 追加序聚合：Map 覆盖式写入 → 保留每个 id 的最后一行
+  const lastById = new Map<string, L1Record>();
   for (const filePath of files) {
     try {
       const content = readFileSync(filePath, "utf-8");
@@ -119,8 +129,8 @@ export async function loadAllL1Records(
       for (const line of lines) {
         try {
           const record = JSON.parse(line) as L1Record;
-          if (!record.deleted) {
-            records.push(record);
+          if (typeof record.id === "string") {
+            lastById.set(record.id, record);
           }
         } catch {
           // 跳过格式错误的行
@@ -129,6 +139,12 @@ export async function loadAllL1Records(
     } catch {
       // 跳过读取失败的文件
     }
+  }
+
+  const records: L1Record[] = [];
+  for (const record of lastById.values()) {
+    if (record.deleted === true) continue; // LWW：最后一行 deleted → 该 id 不存活
+    records.push(record);
   }
 
   return records;

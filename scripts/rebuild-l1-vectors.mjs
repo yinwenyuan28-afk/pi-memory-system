@@ -32,24 +32,29 @@ function parseArgs(argv) {
 }
 const PROFILE = parseArgs(process.argv.slice(2)).profile;
 
-// ── 1. 加载全部非 deleted records（模仿 loadAllL1Records） ──
+// ── 1. 加载全部存活 records（LWW 语义，与 record-loader.ts 同口径；2026-09-11 同步） ──
+// 同 id 按「追加序最后一行」判定：last.deleted === true → 不输出；否则输出最后一行。
+// 旧实现逐行 !deleted 会把「已判死但旧行仍活跃」的残活行重新入向量，必须保持同口径。
 function loadAliveRecords(profilePath) {
   const dir = join(profilePath, "memoryDB", "l1-records");
   if (!existsSync(dir)) {
     console.error(`l1-records 目录不存在: ${dir}`);
     process.exit(1);
   }
-  const records = [];
+  const lastById = new Map();
   for (const f of readdirSync(dir).filter((x) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(x)).sort()) {
     for (const line of readFileSync(join(dir, f), "utf-8").split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
         const r = JSON.parse(line);
-        if (r && r.id && !r.deleted) {
-          records.push({ id: r.id, content: r.content ?? "", createdAt: r.createdAt ?? "" });
-        }
+        if (r && r.id) lastById.set(r.id, r); // 追加序覆盖 → 最后一行
       } catch { /* 跳过坏行 */ }
     }
+  }
+  const records = [];
+  for (const r of lastById.values()) {
+    if (r.deleted === true) continue;
+    records.push({ id: r.id, content: r.content ?? "", createdAt: r.createdAt ?? "" });
   }
   records.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
   return records;

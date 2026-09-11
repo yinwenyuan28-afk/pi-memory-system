@@ -2,9 +2,11 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.js";
+import { CURSOR_FILE, RECORDS_DIR_NAME, readRecentSceneContext, RECENT_SCENE_LIMIT } from "./config.js";
+import { countNewRecords, loadL2Cursor } from "../l2/config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.js";
+import { acquireWriteLock } from "./write-lock.js";
 import { loadEmbeddingConfig } from "../search/embedding/config.js";
 import { isVectorizationReady } from "../search/embedding/vectorization-config.js";
 
@@ -50,6 +52,28 @@ export function stampRecordTimes(record: Record<string, unknown>, isDeleted: boo
 function contentHash(content: string): string {
 	const norm = content.replace(/\s+/g, " ").trim().toLowerCase();
 	return createHash("sha1").update(norm, "utf-8").digest("hex");
+}
+
+/**
+ * main-agent 模式的 `scene_name` 缺省值（计划 C4）：优先「同 cwd 的最近存活记录」的情境名，
+ * 无则全局最近一条，再无则固定占位 `main-agent-live`。
+ *
+ * 刻意**不注入提醒词**：`MEMORY_TOOL_REMINDER` 拼在系统提示里，须保持常量以命中 provider
+ * prefix cache（架构说明 §5.3）；动态候选会破坏前缀缓存，故在写入时服务端取值。
+ */
+function resolveMainAgentSceneName(profilePath: string, currentCwd: string): string {
+	try {
+		const anchor = readRecentSceneContext(profilePath, RECENT_SCENE_LIMIT, currentCwd || process.cwd());
+		if (currentCwd) {
+			const sameCwd = anchor.recent.find((r) => r.cwd === currentCwd);
+			if (sameCwd) return sameCwd.name;
+		}
+		if (anchor.previous?.name) return anchor.previous.name;
+		if (anchor.recent.length > 0) return anchor.recent[0].name;
+	} catch {
+		// 降级为固定占位
+	}
+	return "main-agent-live";
 }
 
 /** 原子写 l1-cursor.json（tmp + rename）。 */
@@ -98,23 +122,34 @@ export function registerL1CommitTool(
 		name: "l1_commit",
 		label: "L1 Commit Records",
 		description:
-			"Commit extracted L1 memory records and advance the L1 cursor. " +
-			"Called by the l1-extractor subagent after extraction and dedup. " +
-			"Params: records (array of record objects per L1 schema), cursor (lastRecordedAt ISO string).",
+			"Commit L1 memory records. Two modes via 'source':\n" +
+			"  - 'subagent' (default): the l1-extractor subagent after extraction/dedup; " +
+			"requires 'records' + 'cursor' (advances the L1 cursor = L0 incremental watermark).\n" +
+			"  - 'main-agent': the main agent proactively records a durable fact mid-session; " +
+			"requires only 'records' (each item needs just {content, type, priority?}). " +
+			"id / timestamps / sessionKey / sessionId / cwd are filled server-side; the L1 cursor is " +
+			"NOT advanced and L2 is NOT enqueued.",
 		parameters: {
 			type: "object",
 			properties: {
+				source: {
+					type: "string",
+					enum: ["subagent", "main-agent"],
+					description:
+						"'subagent' (default) = extractor path (advances cursor). " +
+						"'main-agent' = proactive main-agent write; cursor optional, no cursor advance, no L2 enqueue.",
+				},
 				records: {
 					type: "array",
-					description: "L1 memory record objects: {id, content, type, priority, scene_name, source_message_ids, metadata, timestamps, createdAt, updatedAt, version, sessionKey, sessionId, deleted}. 注意 timestamps 与 createdAt 分工：timestamps = 源消息事件时刻（子代理填，用于追溯该记忆对应哪段对话）；createdAt/updatedAt = 记录落盘时刻（由 l1_commit 用代码时间覆写，子代理填的值会被忽略）；deleted:true 的标记行 createdAt 保留原记录的创建时刻",
+					description: "L1 memory record objects: {id, content, type, priority, scene_name, source_message_ids, metadata, timestamps, createdAt, updatedAt, version, sessionKey, sessionId, deleted}. 注意 timestamps 与 createdAt 分工：timestamps = 源消息事件时刻（子代理填，用于追溯该记忆对应哪段对话）；createdAt/updatedAt = 记录落盘时刻（由 l1_commit 用代码时间覆写，子代理填的值会被忽略）；deleted:true 的标记行 createdAt 保留原记录的创建时刻。main-agent 模式下只需 {content, type}，其余缺省由服务端补齐。",
 					items: { type: "object" },
 				},
 				cursor: {
 					type: "string",
-					description: "Advance L1 cursor to this lastRecordedAt ISO string.",
+					description: "Advance L1 cursor to this lastRecordedAt ISO string. Required for source='subagent'; ignored for 'main-agent'.",
 				},
 			},
-			required: ["records", "cursor"],
+			required: ["records"],
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			try {
@@ -122,10 +157,68 @@ export function registerL1CommitTool(
 				if (!profilePath) {
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "No active profile" }) }], details: {} };
 				}
+				const source = params?.source === "main-agent" ? "main-agent" : "subagent";
+				const isMainAgent = source === "main-agent";
 				const records = params?.records;
 				const cursor = typeof params?.cursor === "string" ? params.cursor : "";
-				if (!Array.isArray(records) || !cursor) {
-					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "records must be an array and cursor must be a string" }) }], details: {} };
+				if (!Array.isArray(records)) {
+					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "records must be an array" }) }], details: {} };
+				}
+				// cursor 仅子代理路径需要（它是 L0 增量水位）；主代理不得推进。
+				if (!isMainAgent && !cursor) {
+					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "cursor must be a non-empty string when source='subagent'" }) }], details: {} };
+				}
+				// main-agent：补齐缺省字段 + 必填校验。
+				// id 必须服务端生成——格式不符会让 recordEpochMs 返回 0，该记录永久 ≤ L2 水位、永不可见。
+				if (isMainAgent) {
+					const nowIso = new Date().toISOString();
+					let sessionKey = "";
+					let sessionId: string | null = null;
+					try {
+						const sm = (ctx as { sessionManager?: { getSessionFile?: () => string; getSessionId?: () => string } } | undefined)?.sessionManager;
+						const sf = sm?.getSessionFile?.();
+						if (typeof sf === "string" && sf) {
+							sessionKey = sf.replace(/\\/g, "/").split("/").pop()?.replace(/\.jsonl$/, "") ?? "";
+						}
+						const sid = sm?.getSessionId?.();
+						sessionId = typeof sid === "string" ? sid : null;
+					} catch {
+						// ctx 不可用时留空
+					}
+					const ctxCwd = (ctx as { cwd?: unknown } | undefined)?.cwd;
+					const cwd = typeof ctxCwd === "string" ? ctxCwd : "";
+					for (let i = 0; i < records.length; i++) {
+						const r = records[i] as Record<string, unknown>;
+						if (typeof r.content !== "string" || !r.content.trim()) {
+							return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].content is required (non-empty string)` }) }], details: {} };
+						}
+						if (typeof r.type !== "string" || !r.type.trim()) {
+							return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].type is required (work_fact/work_task/work_method/work_artifact)` }) }], details: {} };
+						}
+						if (typeof r.id !== "string" || !/^l1_\d+_/.test(r.id)) {
+							r.id = `l1_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+						}
+						if (!Array.isArray(r.timestamps) || (r.timestamps as unknown[]).length === 0) r.timestamps = [nowIso];
+						if (typeof r.priority !== "number") r.priority = 70;
+						if (typeof r.version !== "number") r.version = 1;
+						if (typeof r.deleted !== "boolean") r.deleted = false;
+						if (typeof r.sessionKey !== "string" || !r.sessionKey) r.sessionKey = sessionKey;
+						if (r.sessionId === undefined) r.sessionId = sessionId;
+						if (typeof r.cwd !== "string") r.cwd = cwd;
+						if (typeof r.scene_name !== "string" || !r.scene_name.trim()) {
+							r.scene_name = resolveMainAgentSceneName(profilePath, cwd);
+						}
+						if (!Array.isArray(r.source_message_ids)) r.source_message_ids = [];
+						const md = typeof r.metadata === "object" && r.metadata !== null ? (r.metadata as Record<string, unknown>) : {};
+						r.metadata = { ...md, origin: "main-agent" };
+					}
+				}
+
+				// B2（2026-09-11）：跨进程写锁——就地标记段是整分片 read-modify-write，
+				// l1_commit（子代理进程）/ fix-tool（主进程 exec）/ 手动 l1-admin 可能并发改写同一分片。
+				const writeLock = acquireWriteLock(profilePath);
+				if (!writeLock) {
+					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "L1 库被其他写者占用（写锁超时 10s），请稍后重试" }) }], details: {} };
 				}
 
 			// 0. 去重：扫描现有 records 建 id 集合 + 内容哈希集合（仅非 deleted）
@@ -133,17 +226,21 @@ export function registerL1CommitTool(
 			const recordsDir = join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME);
 			const existingIds = new Set<string>();
 			const existingHashes = new Set<string>();
+			// B2（2026-09-11）：记录每个 id 追加序最后的活跃行位置（用于 deleted 行就地标记）
+			const lastAliveById = new Map<string, { file: string; lineIdx: number }>();
 			if (existsSync(recordsDir)) {
 				for (const f of readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f))) {
 					try {
 						const text = readFileSync(join(recordsDir, f), "utf-8");
-						for (const line of text.split(/\r?\n/)) {
-							const t = line.trim();
+						const fileLines = text.split(/\r?\n/);
+						for (let li = 0; li < fileLines.length; li++) {
+							const t = fileLines[li].trim();
 							if (!t) continue;
 							try {
 								const o = JSON.parse(t);
 								if (typeof o?.id === "string") existingIds.add(o.id);
 								if (!o?.deleted && typeof o?.content === "string") existingHashes.add(contentHash(String(o.content)));
+								if (typeof o?.id === "string" && o.deleted !== true) lastAliveById.set(o.id, { file: f, lineIdx: li });
 							} catch {
 								// 跳过坏行
 							}
@@ -154,11 +251,15 @@ export function registerL1CommitTool(
 				}
 			}
 
-			// 1. 追加写 records 分片（按当前本地日期）；同 id 重投 / 内容重复 跳过
+			// 1. 追加写 records 分片（按当前本地日期）；同 id 重投 / 内容重复 跳过。
+			// B2（2026-09-11）：deleted 行不再追加墓碑——loader 为 LWW 语义（同 id 取最后一行），
+			// 追加墓碑只会旧行仍在；改为就地标记旧活跃行（保留 content 溯源）。
 			let written = 0;
 			const toEmbed: any[] = [];
 			const toDelete: any[] = [];
 			const appendedLines: string[] = [];
+			const markByFile = new Map<string, Set<number>>(); // 就地标记：file → 行索引集合
+			const nowStamp = new Date().toISOString();
 			for (const r of records) {
 				const isDeleted = r.deleted === true;
 				if (!isDeleted) {
@@ -166,18 +267,55 @@ export function registerL1CommitTool(
 					if (typeof r.content === "string" && existingHashes.has(contentHash(r.content))) continue; // 内容重复
 				}
 				const { embedding: _emb, ...clean } = r as any;
-				stampRecordTimes(clean, isDeleted, new Date().toISOString());
-				appendedLines.push(JSON.stringify(clean));
-				if (isDeleted) toDelete.push(r);
-				else toEmbed.push(r);
-				existingIds.add(r.id); // 防止同批内重复
-				if (!isDeleted && typeof r.content === "string") existingHashes.add(contentHash(r.content));
+				if (isDeleted) {
+					// 就地标记旧活跃行（不追加墓碑行）
+					const target = lastAliveById.get(r.id);
+					if (!target) continue; // 幂等：目标已死或不存在
+					if (!markByFile.has(target.file)) markByFile.set(target.file, new Set());
+					markByFile.get(target.file)!.add(target.lineIdx);
+					toDelete.push(r); // 向量删除（按 id，deleteBatch）
+					lastAliveById.delete(r.id); // 同批重复标记同一 id 只首次生效
+				} else {
+					stampRecordTimes(clean, false, nowStamp);
+					appendedLines.push(JSON.stringify(clean));
+					toEmbed.push(r);
+					existingIds.add(r.id); // 防止同批内重复
+					if (typeof r.content === "string") existingHashes.add(contentHash(r.content));
+				}
 			}
 			if (appendedLines.length > 0) {
 				if (!existsSync(recordsDir)) mkdirSync(recordsDir, { recursive: true });
 				const shardPath = join(recordsDir, `${localDate(new Date())}.jsonl`);
 				appendFileSync(shardPath, appendedLines.join("\n") + "\n", "utf-8");
 				written = appendedLines.length;
+			}
+
+			// B2（2026-09-11）：就地标记段——对受影响历史分片整文件重写（原子 tmp+rename；已持跨进程锁）。
+			// 顺序在后：等新行 append 完再重写历史分片（两者不冲突，但避免同日分片被两阶段写）。
+			for (const [file, lineSet] of markByFile) {
+				const fp = join(recordsDir, file);
+				if (!existsSync(fp)) continue;
+				const fileLines = readFileSync(fp, "utf-8").split(/\r?\n/);
+				let changed = 0;
+				const out = fileLines.map((l, i) => {
+					const t = l.trim();
+					if (!t || !lineSet.has(i)) return l;
+					try {
+						const o = JSON.parse(t);
+						if (o.deleted === true) return l; // 幂等
+						o.deleted = true;
+						o.updatedAt = nowStamp;
+						o.metadata = { ...(o.metadata || {}), l1Cleanup: { ...(o.metadata?.l1Cleanup || {}), action: "commit-deleted", tool: "l1_commit", appliedAt: nowStamp } };
+						changed++;
+						return JSON.stringify(o);
+					} catch {
+						return l;
+					}
+				});
+				if (changed > 0) {
+					writeFileSync(fp + ".tmp", out.join("\n"), "utf-8");
+					renameSync(fp + ".tmp", fp);
+				}
 			}
 
 			// 2. 同步写入向量（仅当 VECTORIZATION_ENABLED=true 且 embedding 配置可用）
@@ -227,14 +365,23 @@ export function registerL1CommitTool(
 				ctx.ui.notify(`L1 commit 成功，但向量化写入失败: ${msg}`, "error");
 			}
 
-				// 3. 回写游标
-				saveCursor(profilePath, cursor);
+				// 3. 回写游标 —— 仅子代理路径。cursor 是 L0 增量水位，主代理推进会让
+				//    l1-extractor 跳过对应 L0 消息（C1）。
+				if (!isMainAgent) saveCursor(profilePath, cursor);
 
-				// 4. 流水线：完成 running 的 l1 job；有新 records 则入队 l2（主进程 worker 消费）
+				// 4. 流水线 —— 仅子代理路径。main-agent 跳过两者（C2/C8）：
+				//    completeRunningL1 是"子代理 job 完成"信号；入队 L2 会打开
+				//    "提取器在途时 L2 越水位"的竞态窗口（C8）。
+				//    C9（R1 阻断 B1）：入队条件不再只看本批 written——只要 L1 里存在游标之后的
+				//    记录（含主代理写入的）就入队，否则主代理记录可能永不进 L2。
 				try {
-					const jobs = getPipelineJobsDB(profilePath);
-					jobs.completeRunningL1();
-					if (written > 0) jobs.enqueue("l2", "l1_commit");
+					if (!isMainAgent) {
+						const jobs = getPipelineJobsDB(profilePath);
+						jobs.completeRunningL1();
+						if (countNewRecords(profilePath, loadL2Cursor(profilePath).lastProcessedAt) > 0) {
+							jobs.enqueue("l2", "l1_commit");
+						}
+					}
 				} catch (e) {
 					console.warn(`[l1_commit] pipeline enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
 				}
@@ -252,11 +399,15 @@ export function registerL1CommitTool(
 					: "";
 				ctx.ui.notify(`L1 commit: ${written} 条记录已提交${vInfo}`, "info");
 
+				writeLock.release();
+
+
 				return {
-					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats }) }],
+					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats, markedInPlace: markByFile.size }) }],
 					details: {},
 				};
 			} catch (err) {
+				writeLock?.release();
 				return {
 					content: [{ type: "text", text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }) }],
 					details: {},
