@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { decodeCwdFromSessionPath } from "../l0/index.js";
 import { L1_CONFIG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.js";
 import { loadAppProps, saveAppSection } from "../../config/app-config.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 配置 / 游标 / 分片清单（纯函数，无 pi 依赖，可单测）
@@ -225,7 +226,9 @@ export function appendAnchorLog(profilePath: string, anchor: SceneAnchor): void 
 	}
 }
 
-/** 构造 l1-extractor 子代理任务消息（供 setupL1Extractor 与手动触发共用）。 */
+/** 构造 l1-extractor 子代理任务消息（供 setupL1Extractor 与手动触发共用）。
+ *  模板：prompts/tasks/l1-task.md（registry 单源；anchorLines 为情境锚点块的预拼行，
+ *  属数据整形逻辑，留在代码侧——模板只管骨架与字段契约）。 */
 export function buildL1Task(profilePath: string): string | null {
 	const cursor = loadL1Cursor(profilePath);
 	const l0Files = listL0Files(profilePath, cursor);
@@ -233,7 +236,7 @@ export function buildL1Task(profilePath: string): string | null {
 	const mode = loadL1Config(profilePath).mode;
 	const anchor = readRecentSceneContext(profilePath);
 	appendAnchorLog(profilePath, anchor);
-	const anchorLines = anchor.previous
+	const anchorLines = (anchor.previous
 		? [
 				`PreviousScene: ${anchor.previous.name} | cwd=${anchor.previous.cwd}`,
 				...(anchor.recent.length > 0
@@ -243,17 +246,16 @@ export function buildL1Task(profilePath: string): string | null {
 						]
 					: ["RecentScenes: (无)"]),
 			]
-		: ["PreviousScene: (无)", "RecentScenes: (无)"];
-	return [
-		"L1 extraction task",
-		`L0Files: ${l0Files.join(",")}`,
-		`CursorPath: ${join(profilePath, MEMORY_DB_DIR, CURSOR_FILE)}`,
-		`RecordsDir: ${join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME)}`,
-		`PromptDir: ${PROMPT_DIR}`,
-		`Mode: ${mode}`,
-		`KnownProjects: ${listKnownProjects().join(",")}`,
-		...anchorLines,
-	].join("\n");
+		: ["PreviousScene: (无)", "RecentScenes: (无)"]).join("\n");
+	return renderPrompt("tasks/l1-task", {
+		l0Files: l0Files.join(","),
+		cursorPath: join(profilePath, MEMORY_DB_DIR, CURSOR_FILE),
+		recordsDir: join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME),
+		promptDir: PROMPT_DIR,
+		mode,
+		knownProjects: listKnownProjects().join(","),
+		anchorLines,
+	});
 }
 
 /**

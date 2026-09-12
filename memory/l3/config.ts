@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "../l2/config.js";
 import { loadL1Config, type L1Mode } from "../l1/config.js";
 import { L3_CURSOR_FILE as PATHS_L3_CURSOR, MEMORY_DB_DIR } from "../paths.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 /** P4 记忆阈值（L2 尚未稳定，高于腾讯默认 20）。 */
 export const L3_INTERVAL = 30;
@@ -106,18 +107,16 @@ export function buildL3Task(profilePath: string, triggerReason: string, changedS
 	const scenes = changedScenes.length > 0 ? changedScenes : readSceneIndex(profilePath);
 	if (scenes.length === 0) return null;
 	const mode: L1Mode = loadL1Config(profilePath).mode;
-	const filenames = scenes.map((e) => e.filename).join(",");
-	return [
-		"L3 persona generation task",
-		`ProfilePath: ${profilePath}`,
-		`UserMdPath: ${join(profilePath, USER_FILE)}`,
-		`CursorPath: ${join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE)}`,
-		`SceneDir: ${join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME)}`,
-		`IndexPath: ${join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH)}`,
-		`PromptDir: ${PROMPT_DIR}`,
-		`PromptFile: persona-generation-${mode}.md`,
-		`ChangedScenes: ${filenames}`,
-		`TriggerReason: ${triggerReason}`,
-		`Mode: ${mode}`,
-	].join("\n");
+	return renderPrompt("tasks/l3-task", {
+		profilePath,
+		userMdPath: join(profilePath, USER_FILE),
+		cursorPath: join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE),
+		sceneDir: join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME),
+		indexPath: join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH),
+		promptDir: PROMPT_DIR,
+		promptFile: `persona-generation-${mode}.md`,
+		changedScenes: scenes.map((e) => e.filename).join(","),
+		triggerReason,
+		mode,
+	});
 }

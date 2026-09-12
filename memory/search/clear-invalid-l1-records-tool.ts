@@ -19,6 +19,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 /** 工具参数 */
 interface ClearInvalidL1RecordsArgs {
@@ -34,13 +35,7 @@ interface ClearInvalidL1RecordsArgs {
 export function registerClearInvalidL1RecordsTool(pi: ExtensionAPI) {
   pi.registerTool({
     name: "clear_invalid_l1_records",
-    description:
-      "Mark L1 atomic memories as INVALID (agent judged them irrelevant after recall). " +
-      "For each recordId, increments invalid_hits and recomputes effective_hits = hits - invalid_hits " +
-      "in the L1 hit-stats DB (auto-rewrites l1-hit-stats.json consumed by records-viewer). " +
-      "Only records that were actually recalled (hits > 0) are counted; never-recalled ids are skipped. " +
-      "This is a feedback signal ONLY — the record is NOT deleted, its quality drops and recall may still return it. " +
-      "Call this when you recalled a memory via recall_l1_records but found it useless for the current task.",
+    description: renderPrompt("tools#clear_invalid_l1_records"),
     parameters: {
       recordIds: {
         type: "array",

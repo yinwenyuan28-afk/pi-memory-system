@@ -15,6 +15,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { render as renderPrompt } from "../prompts/registry.js";
 
 /** 单次返回最大增量条数（超限截断，防上下文爆炸）。 */
 const MAX_INCREMENT = 200;
@@ -107,11 +108,7 @@ export function registerReadSkillFeedIncrementTool(
 	pi.registerTool({
 		name: "read_skill_feed_increment",
 		label: "Read Skill Feed Increment",
-		description:
-			"Read skill-feed (5-role sanitized conversation with tool_call/tool_result) increment after a cursor in one call. " +
-			"Called by the skill-reviewer subagent. " +
-			"Params: feedFiles (comma-separated absolute paths of skill-feed files), cursor (lastRecordedAt ISO string, empty for full scan). " +
-			"Returns { messages (new entries with role/content/tool_name/tool_call_id/is_error, time ascending), background (first 5 as context only, never extract from them), nextCursor, truncated }.",
+		description: renderPrompt("tools#read_skill_feed_increment"),
 		parameters: {
 			type: "object",
 			properties: {

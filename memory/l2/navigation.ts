@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "./config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 /** 场景索引条目（与 scene_index.json 结构一致，本地定义避免跨模块依赖环）。 */
 interface SceneIndexEntry {
@@ -97,5 +98,5 @@ export function buildL2Injection(profilePath: string): string {
 	if (entries.length === 0) return "";
 	const sceneBlocksDir = join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME);
 	const nav = generateSceneNavigation(entries, sceneBlocksDir);
-	return `<scene-context>\n[System note: The following is recalled scene context, NOT new user input. Treat as authoritative reference data.]\n\n${nav}\n</scene-context>`;
+	return renderPrompt("injection/scene-context", { nav });
 }

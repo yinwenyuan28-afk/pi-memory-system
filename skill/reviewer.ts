@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { MEMORY_DB_DIR, SKILL_FEED_DIR } from "../memory/paths.js";
 import { loadCursor, saveCursor } from "../memory/review/review-cursor.js";
+import { render as renderPrompt } from "../prompts/registry.js";
 
 /**
  * Skill 审查子代理调度模块。
@@ -83,12 +84,12 @@ export function setupSkillReviewer(
 		}
 
 		const reviewerCursor = cursor && cursor.sessionPath ? cursor.sessionPath : "";
-		const task = [
-			`SkillFeedFiles: ${feedFiles.join(",")}`,
-			`CursorPath: ${join(paths.profilePath, MEMORY_DB_DIR, "skill-feed-cursor.json")}`,
-			`ReviewerCursor: ${reviewerCursor}`,
-			`ProfilePath: ${paths.profilePath}`,
-		].join("\n");
+		const task = renderPrompt("tasks/skill-review#main", {
+			skillFeedFiles: feedFiles.join(","),
+			cursorPath: join(paths.profilePath, MEMORY_DB_DIR, "skill-feed-cursor.json"),
+			reviewerCursor,
+			profilePath: paths.profilePath,
+		});
 
 		return { task, paths, cursor: reviewerCursor };
 	}
@@ -127,7 +128,11 @@ export function setupSkillReviewer(
 			if (!built) {
 				const paths = prepareReviewPaths(ctx);
 				if (paths) {
-					const task = `Review session: ${paths.sessionPath}\nProfile: ${paths.profilePath}${extra ? `\nExtra context: ${extra}` : ""}`;
+					const task = renderPrompt("tasks/skill-review#learn-fallback", {
+						sessionPath: paths.sessionPath,
+						profilePath: paths.profilePath,
+						extra: extra ? `\nExtra context: ${extra}` : "",
+					});
 					try {
 						await runPiSubagent("skill-reviewer", task, ctx, SUBAGENT_TIMEOUT_MS);
 					} finally {

@@ -8,6 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 /** 工具参数 */
 interface RecallL1RecordsArgs {
@@ -25,16 +26,7 @@ interface RecallL1RecordsArgs {
 export function registerRecallL1RecordsTool(pi: ExtensionAPI, hitDedupSet?: Set<string>) {
   pi.registerTool({
     name: "recall_l1_records",
-    description:
-      "Search your L1 atomic memories (durable facts, work methods, tasks, and artifacts " +
-      "extracted from past sessions) by semantic similarity. " +
-      "Use when: (a) the auto-injected <l1-records> block at the top does not cover what you need; " +
-      "(b) the user references something from earlier sessions — past decisions, project conventions, " +
-      "preferences, or previously fixed issues; (c) you need more candidates than the injected top-3. " +
-      "Returns top-K records as {recordId, score, content, type, priority, scene_name, createdAt}. " +
-      "Call limit: max 3 times per turn total. " +
-      "If 3 attempts return nothing relevant, the memory is not stored — answer from existing context. " +
-      "Independent of the legacy memory system (jieba inverted index / sub-memories).",
+    description: renderPrompt("tools#recall_l1_records"),
     parameters: {
       queryText: {
         type: "string",

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { L1_RECORDS_DIR, MEMORY_DB_DIR } from "../paths.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 // ══════════════════════════════════════════════════════════════
 //  read_l1_increment 工具 —— l2-scene-organizer 子代理一次读取游标后增量
@@ -152,11 +153,7 @@ export function registerReadL1IncrementTool(
 	pi.registerTool({
 		name: "read_l1_increment",
 		label: "Read L1 Increment",
-		description:
-			"Read L1 records newer than the L2 cursor in one call (replaces being pointed to a .l2-staging file). " +
-			"Called by the l2-scene-organizer subagent. " +
-			"Params: l1Dir (absolute path of L1 records directory, from RecordsDir in task message), cursor (optional L2 lastRecordId, default read from l2-cursor.json), maxRecords (optional, default 50, hard cap 200). " +
-			"Returns { records (new L1 records with key fields, deleted=true entries preserved for history), nextCursor (last id of returned), totalNew (unfiltered count), returned (this call's count), truncated }.",
+		description: renderPrompt("tools#read_l1_increment"),
 		parameters: {
 			type: "object",
 			properties: {

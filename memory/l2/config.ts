@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, L2_SCENE_MEMBERS_PATH, MEMORY_DB_DIR } from "../paths.js";
 import { loadAppProps } from "../../config/app-config.js";
 import { loadL1Config } from "../l1/config.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 配置 / 游标 / 任务构造（纯函数，无 pi 依赖，可单测）
@@ -129,20 +130,15 @@ export function saveL2Cursor(profilePath: string, lastProcessedAt: number, lastR
  *                    （增量行为由子代理通过 read_l1_increment 工具 + l2-cursor.json 自然保证）
  */
 export function buildL2Task(profilePath: string, _recordsFilesOverride?: string[], _incremental = false): string {
-	const recordsDir = join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR);
-	return [
-		"L2 organization task",
-		`RecordsDir: ${recordsDir}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）`,
-		`SceneDir: ${join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME)}`,
-		`IndexPath: ${join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH)}`,
-		`CursorPath: ${join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE)}`,
-		`PromptDir: ${PROMPT_DIR}`,
-		// Mode 也是此前未注入的死模板（agent 定义的任务消息模板里列了它、并规定「Mode=code 读
-		// scene-extraction-personal.md / chat 读 scene-extraction.md」，但任务消息从不输出 →
-		// 子代理只能猜读哪份规则）。L2 模式与 L1 一致，故直接取 L1 配置。
-		`Mode: ${loadL1Config(profilePath).mode}`,
-		`MaxScenes: ${loadL2Config(profilePath).maxScenes}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）`,
-	].join("\n");
+	return renderPrompt("tasks/l2-task", {
+		recordsDir: join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR),
+		sceneDir: join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME),
+		indexPath: join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH),
+		cursorPath: join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE),
+		promptDir: PROMPT_DIR,
+		mode: loadL1Config(profilePath).mode,
+		maxScenes: String(loadL2Config(profilePath).maxScenes),
+	});
 }
 
 const L2_STAGING_DIR = ".l2-staging"; // 2026-08-20 废弃：保留路径常量以备旧任务清理，但已不再使用

@@ -16,6 +16,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadL1RecordById } from "./record-loader.js";
+import { render as renderPrompt } from "../../../prompts/registry.js";
 
 /** 工具参数 */
 interface EmbedAndSearchArgs {
@@ -32,10 +33,7 @@ interface EmbedAndSearchArgs {
 export function registerEmbedAndSearchTool(pi: { registerTool: (tool: any) => void }) {
   pi.registerTool({
     name: "embed_and_search",
-    description:
-      "Embed queryText into vector, then cosine search top-K similar L1 records. " +
-      "Returns record_id + content + type + priority + score. " +
-      "Used by l1-extractor to find candidates for dedup (replaces 30-day full read).",
+    description: renderPrompt("tools#embed_and_search"),
     parameters: {
       queryText: {
         type: "string",

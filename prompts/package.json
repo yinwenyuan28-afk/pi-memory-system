@@ -1,0 +1,4 @@
+{
+  "type": "module",
+  "description": "prompts/ 目录内 .ts（registry.ts）按 ESM 解析——供 scripts/verify-prompt-contracts.mjs 以 --experimental-strip-types 直接导入；pi 宿主 jiti 加载不受影响"
+}

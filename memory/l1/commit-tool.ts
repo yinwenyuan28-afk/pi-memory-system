@@ -9,6 +9,7 @@ import { getPipelineJobsDB } from "../pipeline/jobs-db.js";
 import { acquireWriteLock } from "./write-lock.js";
 import { loadEmbeddingConfig } from "../search/embedding/config.js";
 import { isVectorizationReady } from "../search/embedding/vectorization-config.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 // ══════════════════════════════════════════════════════════════
 //  l1_commit 工具 —— 子代理写盘桥接
@@ -121,14 +122,7 @@ export function registerL1CommitTool(
 	pi.registerTool({
 		name: "l1_commit",
 		label: "L1 Commit Records",
-		description:
-			"Commit L1 memory records. Two modes via 'source':\n" +
-			"  - 'subagent' (default): the l1-extractor subagent after extraction/dedup; " +
-			"requires 'records' + 'cursor' (advances the L1 cursor = L0 incremental watermark).\n" +
-			"  - 'main-agent': the main agent proactively records a durable fact mid-session; " +
-			"requires only 'records' (each item needs just {content, type, priority?}). " +
-			"id / timestamps / sessionKey / sessionId / cwd are filled server-side; the L1 cursor is " +
-			"NOT advanced and L2 is NOT enqueued.",
+		description: renderPrompt("tools#l1_commit"),
 		parameters: {
 			type: "object",
 			properties: {

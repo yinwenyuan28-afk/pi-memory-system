@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MEMORY_DB_DIR } from "../paths.js";
 import { getL1HitStatsDB } from "../stats/l1-hit-stats-db.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 const TOOL_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "l1-admin");
 const AUDIT_RE = /【\d{4}-\d{2}-\d{2} L1 修正/;
@@ -134,11 +135,7 @@ export function registerFixTool(
 	pi.registerTool({
 		name: "l1_fix",
 		label: "Fix L1 Record",
-		description:
-			"Fix or remove an L1 memory record found to be wrong (agent-initiated correction). " +
-			"Executes the same in-place semantics as the l1-admin CLI (rewrite = new id + old row tombstoned in place; tombstone = mark deleted). " +
-			"Guards: evidence (>=20 chars, required), audit annotation auto-appended, 24h debounce per record, high-value protection (hits>=5 or referenced by L2 scene members -> rejected, use '/my-memory:l1:fix --force'). " +
-			"Params: recordId (required), action ('rewrite'|'tombstone'), newContent (required for rewrite), evidence (required), reason (optional), priority (optional 0-100 reassessment for rewrite).",
+		description: renderPrompt("tools#l1_fix"),
 		parameters: {
 			type: "object",
 			properties: {

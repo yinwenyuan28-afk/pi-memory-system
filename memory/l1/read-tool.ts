@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 // ══════════════════════════════════════════════════════════════
 //  read_l0_increment 工具 —— 子代理一次读取游标后增量（性能修复）
@@ -112,11 +113,7 @@ export function registerReadL0IncrementTool(
 	pi.registerTool({
 		name: "read_l0_increment",
 		label: "Read L0 Increment",
-		description:
-			"Read L0 conversation increment after a cursor in one call (replaces piecewise read). " +
-			"Called by the l1-extractor subagent. " +
-			"Params: l0Files (comma-separated absolute paths of L0 shards), cursor (lastRecordedAt ISO string, empty for full scan). " +
-			"Returns { messages (new messages with cwd, time ascending), background (first 5 as context only, never extract from them), nextCursor, truncated }.",
+		description: renderPrompt("tools#read_l0_increment"),
 		parameters: {
 			type: "object",
 			properties: {

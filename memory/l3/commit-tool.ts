@@ -11,6 +11,7 @@ import {
 } from "./config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
 import { escapeXmlTags } from "./sanitize.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 export interface L3CommitResult {
 	success: boolean;
@@ -56,10 +57,7 @@ export function registerL3CommitTool(
 	pi.registerTool({
 		name: "l3_commit",
 		label: "L3 Commit Persona",
-		description:
-			"Commit generated persona to USER.md and advance L3 cursor. " +
-			"Called by l3-persona-generator after generation. " +
-			"Params: content (final USER.md body), cursor (last scene updated ISO string).",
+		description: renderPrompt("tools#l3_commit"),
 		parameters: {
 			type: "object",
 			properties: {

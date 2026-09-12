@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config } from "./config.js";
 import { MEMORY_DB_DIR } from "../paths.js";
+import { render as renderPrompt } from "../../prompts/registry.js";
 
 // ══════════════════════════════════════════════════════════════
 //  l2_commit 工具 —— 子代理场景写盘桥接
@@ -611,12 +612,7 @@ export function registerL2CommitTool(
 	pi.registerTool({
 		name: "l2_commit",
 		label: "L2 Commit Scene Writes",
-		description:
-			"Commit scene block writes and advance the L2 cursor. Called by the l2-scene-organizer subagent. " +
-			"Params: sceneWrites (array of {action: create|update|merge|delete|consolidate, filename, sources, meta: {created,updated,summary,heat}, content, members}), cursor (lastRecordId string), personaSignal (optional boolean), personaReason (optional string). " +
-			"CONSOLIDATE is the preferred action for merging blocks: pass sources=[blockA.md,blockB.md,...] plus the merged content — the host backs up the sources, verifies no entry was dropped (rejects the batch when the target body is drastically shorter than the sources, or when an explicit members list misses source members), then writes the target and deletes the sources atomically. " +
-			"NOTE: the total scene-block count has a hard cap (config l2.maxScenes, passed as the MaxScenes line in the task message). " +
-			"If this batch would push the count above the cap, the whole batch is REJECTED and you must first consolidate same-project blocks to free slots, then retry.",
+		description: renderPrompt("tools#l2_commit"),
 		parameters: {
 			type: "object",
 			properties: {
