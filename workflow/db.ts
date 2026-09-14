@@ -149,9 +149,12 @@ export class WorkflowDB {
   private db: DatabaseSync;
   private dbPath: string;
 
-  constructor(profilePath: string) {
-    mkdirSync(profilePath, { recursive: true });
-    this.dbPath = join(profilePath, "workflows.db");
+	constructor(profilePath: string) {
+		mkdirSync(profilePath, { recursive: true });
+		// 注意：workflow 系统当前在 index.ts 处 [DISABLED]（2026-09-14 前已停用）；其历史数据
+		// 于 2026-09-14 profile 根整理时归档到 {profile}/deprecated/workflows.db
+		// —— 若将来恢复本系统，需把数据移回此处，或把本路径改指 deprecated/。
+		this.dbPath = join(profilePath, "workflows.db");
     this.db = new DatabaseSync(this.dbPath);
     // WAL + busy_timeout：多进程并发写（后台审查子代理 + 主代理）安全
     this.db.exec("PRAGMA journal_mode = WAL;");

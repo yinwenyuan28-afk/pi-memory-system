@@ -23,8 +23,9 @@
  *
  * 边界（不归 memoryDB）：
  *   - MEMORY.md / USER.md：注入画像，保持 profile 根目录
- *   - sub-memories/ skills/ memory-index.json memory-save-log.jsonl：旧记忆系统
- *   - review-cursor.json：review 模块独立游标（非 L0-L2 产物）
+ *   - state/review-cursor.json：review 模块独立游标（见 REVIEW_CURSOR_FILE，不经 MEMORY_DB_DIR）
+ *   - {profile}/deprecated/：已停用的旧系统文件（memory-index.json / memory-save-log.jsonl /
+ *     workflows.db* / 记忆保存信号.md / 记忆分类框架.md）—— 2026-09-14 profile 根整理，见其 README.md
  *
  * 用法：所有数据文件路径 = join(profilePath, MEMORY_DB_DIR, <常量>)
  *       —— 常量值可为**多段相对路径**，`join` 会自动拼斜杠，调用点无需感知层级。
@@ -93,3 +94,14 @@ export const FAILURE_STATE_FILE = join("state", "failure-state.json");
 export const VIEWER_DIR = "viewers";
 /** 备份目录（{memoryDB}/backups：l1-admin/ 与 user-backups/）。 */
 export const BACKUP_DIR = "backups";
+
+// ── profile 级运行态（**不经 MEMORY_DB_DIR**）────────────────────
+/**
+ * 审查游标（{profile}/state/review-cursor.json）。
+ *
+ * 与上面所有常量不同：**不放进 memoryDB/** —— 它是 review 模块（memory-reviewer /
+ * skill-reviewer）的独立游标，不属于 L0–L3 管线产物。2026-09-14 由 profile 根整理至此
+ * （原先散在 profile 根，与 MEMORY.md/USER.md 混放）。
+ * 用法：`join(profilePath, REVIEW_CURSOR_FILE)`（**不要**再拼 MEMORY_DB_DIR）。
+ */
+export const REVIEW_CURSOR_FILE = join("state", "review-cursor.json");

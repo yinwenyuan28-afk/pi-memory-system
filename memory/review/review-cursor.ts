@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { REVIEW_CURSOR_FILE } from "../paths.ts";
 
 /**
  * 审查游标管理模块。
@@ -16,11 +17,13 @@ import { join } from "node:path";
  *      （任务边界识别交给 LLM agent，代码不做时间启发式——工作流可能横跨多天）
  *   - C. 未完成检测：末尾 user 消息无 assistant text 回复时跳过本次审查
  *
- * cursor 文件：{profilePath}/review-cursor.json
+ * cursor 文件：{profilePath}/state/review-cursor.json（见 paths.ts 的 REVIEW_CURSOR_FILE；
+ * 2026-09-14 由 profile 根整理进 state/，原先与 MEMORY.md/USER.md 混放在根）
  * 结构：{ "memoryReviewer": { "sessionPath": "...", "line": 123 }, "skillReviewer": {...} }
  */
 
-const CURSOR_FILE = "review-cursor.json";
+/** 游标所在目录（相对 profile 根）：原子写的临时文件必须与目标同目录，故复用。 */
+const CURSOR_DIR = dirname(REVIEW_CURSOR_FILE);
 
 /** 每次审查最多覆盖的用户消息数（防止审查间隔太久导致区间爆炸）。 */
 export const MAX_USER_MSGS = 10;
@@ -47,7 +50,7 @@ export interface ReviewRange {
 
 /** 读取某 reviewer 的游标。 */
 export function loadCursor(profilePath: string, key: string): CursorEntry | null {
-	const filePath = join(profilePath, CURSOR_FILE);
+	const filePath = join(profilePath, REVIEW_CURSOR_FILE);
 	if (!existsSync(filePath)) return null;
 	try {
 		const raw = readFileSync(filePath, "utf-8");
@@ -62,7 +65,7 @@ export function loadCursor(profilePath: string, key: string): CursorEntry | null
 
 /** 写入某 reviewer 的游标（原子写）。 */
 export function saveCursor(profilePath: string, key: string, sessionPath: string, line: number): void {
-	const filePath = join(profilePath, CURSOR_FILE);
+	const filePath = join(profilePath, REVIEW_CURSOR_FILE);
 	let data: Record<string, CursorEntry> = {};
 	if (existsSync(filePath)) {
 		try {
@@ -72,7 +75,9 @@ export function saveCursor(profilePath: string, key: string, sessionPath: string
 		}
 	}
 	data[key] = { sessionPath, line };
-	const tmpPath = join(profilePath, `.tmp_cursor_${Date.now()}`);
+	// state/ 可能尚不存在（首次写）——先建目录；临时文件与目标同目录，保证 rename 原子
+	mkdirSync(join(profilePath, CURSOR_DIR), { recursive: true });
+	const tmpPath = join(profilePath, CURSOR_DIR, `.tmp_cursor_${Date.now()}`);
 	writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
 	// 重命名覆盖（Windows 上 renameSync 目标已存在会抛错，先删后写）
 	try {
