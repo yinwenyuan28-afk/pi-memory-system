@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  read_l0_increment 工具 —— 子代理一次读取游标后增量（性能修复）

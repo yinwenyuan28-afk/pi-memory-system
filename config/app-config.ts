@@ -14,8 +14,8 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../memory/paths.js";
-import { parseJsonc } from "../util/jsonc.js";
+import { MEMORY_DB_DIR } from "../memory/paths.ts";
+import { parseJsonc } from "../util/jsonc.ts";
 
 /** 统一配置中心文件名（相对 {profile}/memoryDB/）。 */
 export const APP_CONFIG_FILE = join("config", "application-propertis.json");

@@ -24,8 +24,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { loadActiveDayKeys } from "../l1/active-days.js";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { loadActiveDayKeys } from "../l1/active-days.ts";
 
 /** 单条 L1 命中统计 */
 export interface L1HitStat {

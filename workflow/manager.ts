@@ -15,10 +15,10 @@ import {
   type ContextCategory,
   type WorkflowStatus,
   type TaskStatus,
-} from "./db.js";
+} from "./db.ts";
 import { readFileSync } from "node:fs";
-import { callLLM } from "../util/llm.js";
-import { loadPrompts, renderPrompt } from "./prompts.js";
+import { callLLM } from "../util/llm.ts";
+import { loadPrompts, renderPrompt } from "./prompts.ts";
 
 // ---------------------------------------------------------------------------
 // WorkflowManager 类

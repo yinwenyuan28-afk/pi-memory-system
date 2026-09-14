@@ -7,9 +7,9 @@
 // 设计：全部命令通过 ctx.ui.notify 输出，数据来自 WorkflowManager 的 WorkflowDB
 // ============================================================================
 
-import type { WorkflowManager } from "./manager.js";
+import type { WorkflowManager } from "./manager.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { WorkflowStatus, SummaryStatus, WorkflowRow } from "./db.js";
+import type { WorkflowStatus, SummaryStatus, WorkflowRow } from "./db.ts";
 import { readFileSync, existsSync } from "node:fs";
 
 const VALID_STATUSES: WorkflowStatus[] = ["draft", "approved", "in_progress", "completed", "abandoned", "superseded", "suspended"];

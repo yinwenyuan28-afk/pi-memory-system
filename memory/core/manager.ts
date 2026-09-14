@@ -1,7 +1,7 @@
-import { ProfileManager } from "./profile.js";
-import { MemoryStore } from "./store.js";
-import type { MemoryManagerConfig } from "./types.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { ProfileManager } from "./profile.ts";
+import { MemoryStore } from "./store.ts";
+import type { MemoryManagerConfig } from "./types.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /**
  * 将记忆内容包装为标准的 <memory-context> 注入块。

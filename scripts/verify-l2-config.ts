@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildL2Task, loadL2Config, MAX_SCENES_DEFAULT } from "../memory/l2/config.js";
+import { buildL2Task, loadL2Config, MAX_SCENES_DEFAULT } from "../memory/l2/config.ts";
 import {
 	backupSceneBlocks,
 	checkConsolidation,
@@ -13,7 +13,7 @@ import {
 	mergeSceneMembers,
 	resolveConsolidationMembers,
 	syncSceneIndex,
-} from "../memory/l2/commit-tool.js";
+} from "../memory/l2/commit-tool.ts";
 
 let pass = 0;
 let fail = 0;

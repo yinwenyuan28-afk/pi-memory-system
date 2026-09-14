@@ -2,14 +2,14 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CURSOR_FILE, RECORDS_DIR_NAME, readRecentSceneContext, RECENT_SCENE_LIMIT } from "./config.js";
-import { countNewRecords, loadL2Cursor } from "../l2/config.js";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { getPipelineJobsDB } from "../pipeline/jobs-db.js";
-import { acquireWriteLock } from "./write-lock.js";
-import { loadEmbeddingConfig } from "../search/embedding/config.js";
-import { isVectorizationReady } from "../search/embedding/vectorization-config.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { CURSOR_FILE, RECORDS_DIR_NAME, readRecentSceneContext, RECENT_SCENE_LIMIT } from "./config.ts";
+import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
+import { acquireWriteLock } from "./write-lock.ts";
+import { loadEmbeddingConfig } from "../search/embedding/config.ts";
+import { isVectorizationReady } from "../search/embedding/vectorization-config.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  l1_commit 工具 —— 子代理写盘桥接
@@ -321,8 +321,8 @@ export function registerL1CommitTool(
 				} else if (!isVectorizationReady(profilePath)) {
 					// VECTORIZATION_ENABLED=false 或未达阈值，跳过向量写入
 				} else if (toEmbed.length > 0 || toDelete.length > 0) {
-					const { getEmbeddingService } = await import("../search/embedding/service.js");
-					const { getVectorStore } = await import("../search/vector-store/store.js");
+					const { getEmbeddingService } = await import("../search/embedding/service.ts");
+					const { getVectorStore } = await import("../search/vector-store/store.ts");
 					const embService = await getEmbeddingService(profilePath);
 					const vecStore = await getVectorStore(profilePath);
 

@@ -6,7 +6,7 @@ import {
 	loadL3Cursor,
 	readSceneIndex,
 	type SceneIndexEntry,
-} from "./config.js";
+} from "./config.ts";
 
 export interface TriggerResult {
 	should: boolean;

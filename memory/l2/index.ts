@@ -1,9 +1,9 @@
-import { runPiSubagent } from "../../util/subagent.js";
+import { runPiSubagent } from "../../util/subagent.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.js";
-import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
-import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.js";
-import type { PipelineJobResult, PipelineWorker } from "../pipeline/worker.js";
+import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.ts";
+import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
+import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
+import type { PipelineJobResult, PipelineWorker } from "../pipeline/worker.ts";
 
 /**
  * 注册 L2 组织调度。

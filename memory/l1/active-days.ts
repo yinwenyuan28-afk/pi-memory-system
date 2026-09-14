@@ -13,7 +13,7 @@
 
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../paths.js";
+import { MEMORY_DB_DIR } from "../paths.ts";
 
 /** 缓存：key = l0 分片目录，value = [目录 mtimeMs, 升序日期键数组] */
 const cache = new Map<string, { mtimeMs: number; keys: string[] }>();

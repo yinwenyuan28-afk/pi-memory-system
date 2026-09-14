@@ -12,9 +12,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../../../memory/paths.js";
-import { loadAppProps } from "../../../config/app-config.js";
-import { isEmbeddingConfigAvailable } from "./config.js";
+import { MEMORY_DB_DIR } from "../../../memory/paths.ts";
+import { loadAppProps } from "../../../config/app-config.ts";
+import { isEmbeddingConfigAvailable } from "./config.ts";
 
 export interface VectorizationConfig {
   /** 是否启用向量化（默认 false） */

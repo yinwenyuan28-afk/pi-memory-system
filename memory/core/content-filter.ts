@@ -1,4 +1,4 @@
-import type { FilterResult } from "./types.js";
+import type { FilterResult } from "./types.ts";
 
 // ══════════════════════════════════════════════════════════════
 // ⚠ 孤儿保留（2026-09-12）——本文件当前【无任何调用方】，删除前请先读下文。
@@ -8,7 +8,7 @@ import type { FilterResult } from "./types.js";
 // —— 建议在 `l1_commit` 写入循环与 `l1_fix` 的 runFix 入口复用其阻断规则。若在此删除，
 // 该加固建议将失去现成实现（需重写）。
 //
-// 依赖：仅 `import type { FilterResult } from "./types.js"`，无其他模块依赖，保留不影响编译。
+// 依赖：仅 `import type { FilterResult } from "./types.ts"`，无其他模块依赖，保留不影响编译。
 // 处置：待 P1-1 落地接线，或经评估后另立计划删除。
 // ══════════════════════════════════════════════════════════════
 

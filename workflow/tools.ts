@@ -7,9 +7,9 @@
 // 设计：全部为按需调用（非每轮注入），数据来自 WorkflowManager 的 WorkflowDB
 // ============================================================================
 
-import type { WorkflowManager } from "./manager.js";
+import type { WorkflowManager } from "./manager.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ContextCategory, WorkflowStatus, TaskStatus } from "./db.js";
+import type { ContextCategory, WorkflowStatus, TaskStatus } from "./db.ts";
 import { readFileSync } from "node:fs";
 
 // 辅助上下文 7 类枚举（工具描述用）
@@ -261,7 +261,7 @@ export function registerWorkflowTools(
  * 供 refiner 子代理 + 主代理 /workflow show 复用
  * 计划本体从 plan_path 文件读取（人类可读可改），库只存标准信息/执行情况/辅助信息
  */
-function renderWorkflowRecord(mgr: WorkflowManager, wf: import("./db.js").WorkflowRow): string {
+function renderWorkflowRecord(mgr: WorkflowManager, wf: import("./db.ts").WorkflowRow): string {
   const dbInst = mgr.getDB();
   const lines: string[] = [];
   lines.push(`# 工作流 #${wf.id} ${wf.title}`);

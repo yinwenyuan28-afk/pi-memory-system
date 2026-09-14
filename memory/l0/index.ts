@@ -8,9 +8,9 @@ import {
 	appendFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { parseSessionLines } from "./session-parser.js";
-import { buildRuleSet, replaceBase64WithImage, sanitizeText, shouldCaptureL0 } from "./sanitize.js";
-import { L0_CONVERSATIONS_DIR, L0_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.js";
+import { parseSessionLines } from "./session-parser.ts";
+import { buildRuleSet, replaceBase64WithImage, sanitizeText, shouldCaptureL0 } from "./sanitize.ts";
+import { L0_CONVERSATIONS_DIR, L0_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  L0 净化归档层

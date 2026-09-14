@@ -12,7 +12,7 @@
  * （不通过 globalThis 桥接，避免依赖外部包）
  */
 
-import { readModelEntry } from "../../../config/memory-system-config.js";
+import { readModelEntry } from "../../../config/memory-system-config.ts";
 
 /** type=embedding 条目结构 */
 export interface EmbeddingConfig {

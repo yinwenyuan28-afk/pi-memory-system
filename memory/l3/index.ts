@@ -1,10 +1,10 @@
-import { runPiSubagent } from "../../util/subagent.js";
+import { runPiSubagent } from "../../util/subagent.ts";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildL3Task, L3_CURSOR_FILE, L3_SUBAGENT_TIMEOUT_MS, loadL3Cursor } from "./config.js";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { evaluateTrigger } from "./trigger.js";
+import { buildL3Task, L3_CURSOR_FILE, L3_SUBAGENT_TIMEOUT_MS, loadL3Cursor } from "./config.ts";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { evaluateTrigger } from "./trigger.ts";
 
 function incrementMemoriesSince(profilePath: string, count: number): void {
 	const filePath = join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE);

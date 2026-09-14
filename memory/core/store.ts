@@ -9,7 +9,7 @@ import {
 	type MemoryEntry,
 	type MemoryManagerConfig,
 	type Target,
-} from "./types.js";
+} from "./types.ts";
 
 const MEMORY_FILE = "MEMORY.md";
 const USER_FILE = "USER.md";

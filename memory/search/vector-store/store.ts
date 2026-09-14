@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
-import { loadEmbeddingConfig } from "../embedding/config.js";
+import { loadEmbeddingConfig } from "../embedding/config.ts";
 
 /** 搜索结果 hit */
 export interface VectorHit {

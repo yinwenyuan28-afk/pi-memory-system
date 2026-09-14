@@ -15,8 +15,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { loadAppProps, saveAppSection } from "../../config/app-config.js";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { loadAppProps, saveAppSection } from "../../config/app-config.ts";
 
 /** 旧独立配置文件（已废弃，仅读取兜底兼容，不再写入）。 */
 const LEGACY_RECALL_CONFIG_REL = "recall-config.json";

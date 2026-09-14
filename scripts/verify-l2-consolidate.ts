@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSceneBlock, registerL2CommitTool } from "../memory/l2/commit-tool.js";
+import { parseSceneBlock, registerL2CommitTool } from "../memory/l2/commit-tool.ts";
 
 let pass = 0;
 let fail = 0;

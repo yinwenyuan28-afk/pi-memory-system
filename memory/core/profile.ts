@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_PROFILE, PROFILES_DIR_NAME, type Profile } from "./types.js";
+import { DEFAULT_PROFILE, PROFILES_DIR_NAME, type Profile } from "./types.ts";
 
 const PROFILES_DIR = PROFILES_DIR_NAME;
 const SETTINGS_FILE = "settings.json";

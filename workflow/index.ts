@@ -8,11 +8,11 @@
 //       db/manager 每次 session_start 重建（profile 跟随）
 // ============================================================================
 
-import { WorkflowDB } from "./db.js";
-import { WorkflowManager } from "./manager.js";
-import { WorkflowDetector } from "./detector.js";
-import { registerWorkflowTools } from "./tools.js";
-import { registerWorkflowCommands } from "./commands.js";
+import { WorkflowDB } from "./db.ts";
+import { WorkflowManager } from "./manager.ts";
+import { WorkflowDetector } from "./detector.ts";
+import { registerWorkflowTools } from "./tools.ts";
+import { registerWorkflowCommands } from "./commands.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // 续接注入内容（session_start 构建，context 事件注入）

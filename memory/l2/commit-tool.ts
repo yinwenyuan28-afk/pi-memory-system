@@ -9,9 +9,9 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config } from "./config.js";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config } from "./config.ts";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  l2_commit 工具 —— 子代理场景写盘桥接

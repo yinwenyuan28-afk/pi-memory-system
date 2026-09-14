@@ -11,8 +11,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { EmbeddingCache, type Vector } from "./cache.js";
-import { loadEmbeddingConfig, type EmbeddingConfig } from "./config.js";
+import { EmbeddingCache, type Vector } from "./cache.ts";
+import { loadEmbeddingConfig, type EmbeddingConfig } from "./config.ts";
 
 /** 监控统计 */
 export interface EmbeddingStats {

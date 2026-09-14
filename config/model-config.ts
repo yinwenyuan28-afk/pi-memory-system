@@ -16,7 +16,7 @@
  */
 
 import { getModel as resolveBuiltinModel } from "@earendil-works/pi-ai/compat";
-import { readModelEntry } from "./memory-system-config.js";
+import { readModelEntry } from "./memory-system-config.ts";
 
 /** type=llm 条目结构。 */
 export interface MemoryModelConfig {

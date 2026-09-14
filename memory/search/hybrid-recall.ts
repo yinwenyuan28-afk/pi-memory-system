@@ -15,9 +15,9 @@
  * - recall_l1_records：基于 query 找 top-K 相关（召回）
  */
 
-import { loadL1RecordById } from "./embedding/record-loader.js";
-import { loadRecallConfig } from "./recall-config.js";
-import type { HitSource } from "../stats/l1-hit-stats-db.js";
+import { loadL1RecordById } from "./embedding/record-loader.ts";
+import { loadRecallConfig } from "./recall-config.ts";
+import type { HitSource } from "../stats/l1-hit-stats-db.ts";
 
 /** L1 record 召回候选 */
 export interface L1RecordCandidate {
@@ -83,8 +83,8 @@ export async function recallL1Records(
   const shadowMode = cfg.shadowMode;
 
   try {
-    const { getEmbeddingService } = await import("./embedding/service.js");
-    const { getVectorStore } = await import("./vector-store/store.js");
+    const { getEmbeddingService } = await import("./embedding/service.ts");
+    const { getVectorStore } = await import("./vector-store/store.ts");
 
     const embService = await getEmbeddingService(profilePath);
     const vecStore = await getVectorStore(profilePath);
@@ -148,7 +148,7 @@ export async function recallL1Records(
   // （embed_and_search 走 l1-extractor 去重，不调用本函数，不计数）
   if (result.l1Records.length > 0) {
     try {
-      const { getL1HitStatsDB } = await import("../stats/l1-hit-stats-db.js");
+      const { getL1HitStatsDB } = await import("../stats/l1-hit-stats-db.ts");
       const dedupSet = options.hitDedupSet;
       const allIds = result.l1Records.map((r) => r.recordId);
       let ids = allIds;

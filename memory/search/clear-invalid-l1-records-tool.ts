@@ -19,7 +19,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /** 工具参数 */
 interface ClearInvalidL1RecordsArgs {
@@ -58,7 +58,7 @@ export function registerClearInvalidL1RecordsTool(pi: ExtensionAPI) {
         if (!profilePath) {
           return { incremented: 0, skipped: 0, error: "PI_PROFILE_PATH 未设置" };
         }
-        const { getL1HitStatsDB } = await import("../stats/l1-hit-stats-db.js");
+        const { getL1HitStatsDB } = await import("../stats/l1-hit-stats-db.ts");
         const db = getL1HitStatsDB(profilePath);
 
         const incremented: string[] = [];

@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { render as renderPrompt } from "../prompts/registry.js";
+import { render as renderPrompt } from "../prompts/registry.ts";
 
 /** 单次返回最大增量条数（超限截断，防上下文爆炸）。 */
 const MAX_INCREMENT = 200;

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "./paths.js";
+import { MEMORY_DB_DIR } from "./paths.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  熔断状态持久化（跨进程重启）

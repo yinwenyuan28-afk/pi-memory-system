@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../paths.js";
+import { MEMORY_DB_DIR } from "../paths.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  L0 降噪规则（SanitizeRule 可扩展机制）

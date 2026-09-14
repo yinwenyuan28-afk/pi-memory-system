@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /** 工具参数 */
 interface RecallL1RecordsArgs {
@@ -45,7 +45,7 @@ export function registerRecallL1RecordsTool(pi: ExtensionAPI, hitDedupSet?: Set<
       }
 
       try {
-        const { recallL1Records } = await import("./hybrid-recall.js");
+        const { recallL1Records } = await import("./hybrid-recall.ts");
         const profilePath = process.env.PI_PROFILE_PATH ?? "";
 
         const result = await recallL1Records(queryText, profilePath, { topK, hitDedupSet, source: "tool" });

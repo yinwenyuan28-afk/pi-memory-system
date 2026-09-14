@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { L1_RECORDS_DIR, MEMORY_DB_DIR } from "../paths.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { L1_RECORDS_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  read_l1_increment 工具 —— l2-scene-organizer 子代理一次读取游标后增量

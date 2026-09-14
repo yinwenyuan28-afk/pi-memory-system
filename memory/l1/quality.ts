@@ -37,9 +37,9 @@
  * 高 priority 与 work_method 类记忆永不自动淘汰，只降权、不删除（仍可被向量召回）。
  */
 
-import { loadAllL1Records, type L1Record } from "../search/embedding/record-loader.js";
-import { getL1HitStatsDB, type L1HitStat } from "../stats/l1-hit-stats-db.js";
-import { activeDayKeysToTimestamps, loadActiveDayKeys } from "./active-days.js";
+import { loadAllL1Records, type L1Record } from "../search/embedding/record-loader.ts";
+import { getL1HitStatsDB, type L1HitStat } from "../stats/l1-hit-stats-db.ts";
+import { activeDayKeysToTimestamps, loadActiveDayKeys } from "./active-days.ts";
 
 /** 质量分计算结果 */
 export interface QualityScore {

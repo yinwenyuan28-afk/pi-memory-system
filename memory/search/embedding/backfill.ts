@@ -12,11 +12,11 @@
  * - 批量回填：每批 10 条，千问 API 限流
  */
 
-import { loadAllL1Records } from "./record-loader.js";
-import { getEmbeddingService } from "./service.js";
-import { getVectorStore } from "../vector-store/store.js";
-import { loadEmbeddingConfig } from "./config.js";
-import type { L1Record } from "./record-loader.js";
+import { loadAllL1Records } from "./record-loader.ts";
+import { getEmbeddingService } from "./service.ts";
+import { getVectorStore } from "../vector-store/store.ts";
+import { loadEmbeddingConfig } from "./config.ts";
+import type { L1Record } from "./record-loader.ts";
 
 /** 向量化状态查询结果 */
 export interface VectorizationStatus {

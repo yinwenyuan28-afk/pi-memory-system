@@ -8,8 +8,8 @@
 //       LLM 超时/失败回退到正则结论（保守选择）
 // ============================================================================
 
-import { callLLM } from "../util/llm.js";
-import { loadPrompts } from "./prompts.js";
+import { callLLM } from "../util/llm.ts";
+import { loadPrompts } from "./prompts.ts";
 
 // 全新需求信号正则（兜底分支：默认延续，只有明确新需求信号才创建新工作流）
 const NEW_REQUEST_REGEX =

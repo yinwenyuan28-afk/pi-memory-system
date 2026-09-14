@@ -30,16 +30,16 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { MEMORY_DB_DIR, SKILL_FEED_CURSOR_FILE, SKILL_FEED_DIR } from "../memory/paths.js";
-import { decodeCwdFromSessionPath } from "../memory/l0/index.js";
+import { MEMORY_DB_DIR, SKILL_FEED_CURSOR_FILE, SKILL_FEED_DIR } from "../memory/paths.ts";
+import { decodeCwdFromSessionPath } from "../memory/l0/index.ts";
 import {
 	buildRuleSet,
 	replaceBase64WithImage,
 	sanitizeText,
 	shouldCaptureL0,
 	type SanitizeRule,
-} from "../memory/l0/sanitize.js";
-import type { SkillFeedArchiveResult, SkillFeedEntry, SkillFeedRole } from "./feed-types.js";
+} from "../memory/l0/sanitize.ts";
+import type { SkillFeedArchiveResult, SkillFeedEntry, SkillFeedRole } from "./feed-types.ts";
 
 // ── 可调参数（设计评审确认值） ──────────────────────────────────
 

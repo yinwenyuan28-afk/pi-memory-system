@@ -2,10 +2,10 @@ import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSy
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { decodeCwdFromSessionPath } from "../l0/index.js";
-import { L1_CONFIG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.js";
-import { loadAppProps, saveAppSection } from "../../config/app-config.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { decodeCwdFromSessionPath } from "../l0/index.ts";
+import { L1_CONFIG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { loadAppProps, saveAppSection } from "../../config/app-config.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 配置 / 游标 / 分片清单（纯函数，无 pi 依赖，可单测）

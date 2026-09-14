@@ -2,10 +2,10 @@ import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, rename
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, L2_SCENE_MEMBERS_PATH, MEMORY_DB_DIR } from "../paths.js";
-import { loadAppProps } from "../../config/app-config.js";
-import { loadL1Config } from "../l1/config.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { L1_RECORDS_DIR, L2_CURSOR_FILE as PATHS_L2_CURSOR, L2_SCENE_DIR, L2_SCENE_INDEX_PATH, L2_SCENE_MEMBERS_PATH, MEMORY_DB_DIR } from "../paths.ts";
+import { loadAppProps } from "../../config/app-config.ts";
+import { loadL1Config } from "../l1/config.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  L2 配置 / 游标 / 任务构造（纯函数，无 pi 依赖，可单测）

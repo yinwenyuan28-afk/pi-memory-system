@@ -1,4 +1,4 @@
-import type { SkillManager } from "./skill-manager.js";
+import type { SkillManager } from "./skill-manager.ts";
 
 /**
  * OpenAI Function-Calling schema for the `skill_manage` tool.

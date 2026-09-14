@@ -1,4 +1,4 @@
-import { runPiSubagent } from "../../util/subagent.js";
+import { runPiSubagent } from "../../util/subagent.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	L1_INTERVAL,
@@ -7,10 +7,10 @@ import {
 	L1_FAILURE_THRESHOLD,
 	listL0Files,
 	loadL1Cursor,
-} from "./config.js";
-import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.js";
-import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.js";
-import { waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.js";
+} from "./config.ts";
+import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
+import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
+import { waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 
 /**
  * 注册 L1 提取调度。
@@ -185,4 +185,4 @@ export function setupL1Extractor(
 	};
 }
 
-export { loadL1Config } from "./config.js";
+export { loadL1Config } from "./config.ts";

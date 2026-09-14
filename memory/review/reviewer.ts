@@ -1,11 +1,11 @@
-import { runPiSubagent } from "../../util/subagent.js";
+import { runPiSubagent } from "../../util/subagent.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { MemoryManager } from "../core/manager.js";
-import { listL0Files, loadL1Cursor } from "../l1/config.js";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { loadCursor, saveCursor } from "./review-cursor.js";
+import type { MemoryManager } from "../core/manager.ts";
+import { listL0Files, loadL1Cursor } from "../l1/config.ts";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { loadCursor, saveCursor } from "./review-cursor.ts";
 
 /**
  * 记忆审查子代理调度模块。

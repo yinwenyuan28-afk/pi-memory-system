@@ -14,8 +14,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../memory/paths.js";
-import { loadAppProps } from "./app-config.js";
+import { MEMORY_DB_DIR } from "../memory/paths.ts";
+import { loadAppProps } from "./app-config.ts";
 
 /** 配置文件相对 profile 的目录（旧格式遗留路径）。 */
 const LEGACY_CONFIG_DIR = join("memoryDB", "config");

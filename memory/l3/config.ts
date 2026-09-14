@@ -2,10 +2,10 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "../l2/config.js";
-import { loadL1Config, type L1Mode } from "../l1/config.js";
-import { L3_CURSOR_FILE as PATHS_L3_CURSOR, MEMORY_DB_DIR } from "../paths.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "../l2/config.ts";
+import { loadL1Config, type L1Mode } from "../l1/config.ts";
+import { L3_CURSOR_FILE as PATHS_L3_CURSOR, MEMORY_DB_DIR } from "../paths.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /** P4 记忆阈值（L2 尚未稳定，高于腾讯默认 20）。 */
 export const L3_INTERVAL = 30;

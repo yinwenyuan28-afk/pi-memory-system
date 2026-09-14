@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SkillManager } from "./skill-manager.js";
+import type { SkillManager } from "./skill-manager.ts";
 
 const SUPPORT_FILE_PREFIXES = ["references/", "templates/", "scripts/", "assets/"];
 

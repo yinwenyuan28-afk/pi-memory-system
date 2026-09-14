@@ -10,8 +10,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../../paths.js";
-import { RECORDS_DIR_NAME } from "../../l1/config.js";
+import { MEMORY_DB_DIR } from "../../paths.ts";
+import { RECORDS_DIR_NAME } from "../../l1/config.ts";
 
 /** L1 record 结构（与 agents/l1-extractor.md 第六步字段模板一致） */
 export interface L1Record {

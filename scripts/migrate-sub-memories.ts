@@ -22,8 +22,8 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, join, relative } from "node:path";
-import { callLLM } from "../util/llm.js";
-import { resolveConfiguredModel } from "../config/model-config.js";
+import { callLLM } from "../util/llm.ts";
+import { resolveConfiguredModel } from "../config/model-config.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  CLI 解析

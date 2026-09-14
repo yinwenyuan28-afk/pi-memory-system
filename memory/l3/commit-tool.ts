@@ -1,17 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { MemoryManager } from "../core/manager.js";
-import { DEFAULT_USER_CHAR_LIMIT } from "../core/types.js";
+import type { MemoryManager } from "../core/manager.ts";
+import { DEFAULT_USER_CHAR_LIMIT } from "../core/types.ts";
 import {
 	L3_CURSOR_FILE,
 	USER_FILE,
 	loadL3Cursor,
 	type L3Cursor,
-} from "./config.js";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { escapeXmlTags } from "./sanitize.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+} from "./config.ts";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { escapeXmlTags } from "./sanitize.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 export interface L3CommitResult {
 	success: boolean;

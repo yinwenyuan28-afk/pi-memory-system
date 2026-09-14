@@ -1,36 +1,36 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   MemoryManager,
-} from "./memory/index.js";
+} from "./memory/index.ts";
 import {
   SkillManager,
   setBundledSkillsPaths,
-} from "./skill/index.js";
-import { setupMemoryReviewer } from "./memory/review/reviewer.js";
-import { setupSkillReviewer } from "./skill/reviewer.js";
+} from "./skill/index.ts";
+import { setupMemoryReviewer } from "./memory/review/reviewer.ts";
+import { setupSkillReviewer } from "./skill/reviewer.ts";
 // [DISABLED] workflow 保存系统已禁用（保留代码，恢复时取消注释即可）
-// import { setupWorkflowSystem } from "./workflow/index.js";
-import { archiveSessionIncrement } from "./memory/l0/index.js";
-import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.js";
-import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.js";
-import { registerL1CommitTool } from "./memory/l1/commit-tool.js";
-import { registerReadL0IncrementTool } from "./memory/l1/read-tool.js";
-import { registerReadL1IncrementTool } from "./memory/l2/read-tool.js";
-import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.js";
-import { setupL2Organizer } from "./memory/l2/index.js";
-import { setupPipelineWorker, type PipelineExecutors, type PipelineWorker } from "./memory/pipeline/worker.js";
-import { getPipelineJobsDB } from "./memory/pipeline/jobs-db.js";
-import { registerL2CommitTool } from "./memory/l2/commit-tool.js";
-import { setupL3Persona } from "./memory/l3/index.js";
-import { registerL3CommitTool } from "./memory/l3/commit-tool.js";
-import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.js";
-import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.js";
-import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.js";
-import { registerFixTool } from "./memory/l1/fix-tool.js";
-import { loadRecallConfig } from "./memory/search/recall-config.js";
-import { handleSkillManageTool } from "./skill/skill-tool.js";
-import { handleSkillViewTool } from "./skill/skill-view-tool.js";
-import { render as renderPrompt, checkPromptAssets } from "./prompts/registry.js";
+// import { setupWorkflowSystem } from "./workflow/index.ts";
+import { archiveSessionIncrement } from "./memory/l0/index.ts";
+import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.ts";
+import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.ts";
+import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
+import { registerReadL0IncrementTool } from "./memory/l1/read-tool.ts";
+import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
+import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
+import { setupL2Organizer } from "./memory/l2/index.ts";
+import { setupPipelineWorker, type PipelineExecutors, type PipelineWorker } from "./memory/pipeline/worker.ts";
+import { getPipelineJobsDB } from "./memory/pipeline/jobs-db.ts";
+import { registerL2CommitTool } from "./memory/l2/commit-tool.ts";
+import { setupL3Persona } from "./memory/l3/index.ts";
+import { registerL3CommitTool } from "./memory/l3/commit-tool.ts";
+import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.ts";
+import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.ts";
+import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.ts";
+import { registerFixTool } from "./memory/l1/fix-tool.ts";
+import { loadRecallConfig } from "./memory/search/recall-config.ts";
+import { handleSkillManageTool } from "./skill/skill-tool.ts";
+import { handleSkillViewTool } from "./skill/skill-view-tool.ts";
+import { render as renderPrompt, checkPromptAssets } from "./prompts/registry.ts";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -465,7 +465,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const profile = manager?.getProfileManager().getActiveProfile();
       if (profile) {
-        const { recallL1Records } = await import("./memory/search/hybrid-recall.js");
+        const { recallL1Records } = await import("./memory/search/hybrid-recall.ts");
         const result = await recallL1Records(queryText, profile.path, {
           topK: 3,
           hitDedupSet: currentTurnHitSet,
@@ -870,7 +870,7 @@ export default function (pi: ExtensionAPI) {
       }
       const limit = parseInt((args || "").trim(), 10) || 10;
       try {
-        const { getVectorizationStatus, formatStatus } = await import("./memory/search/embedding/backfill.js");
+        const { getVectorizationStatus, formatStatus } = await import("./memory/search/embedding/backfill.ts");
         const status = await getVectorizationStatus(profile.path);
         ctx.ui.notify(formatStatus(status, limit), "info");
       } catch (e) {
@@ -892,7 +892,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       try {
-        const { backfillMissingVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.js");
+        const { backfillMissingVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.ts");
         const status = await getVectorizationStatus(profile.path);
         if (status.unVectorizedCount === 0) {
           ctx.ui.notify(`✅ 所有 ${status.totalRecords} 条 L1 records 都已向量化，无需回填`, "info");
@@ -930,7 +930,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       try {
-        const { rebuildAllVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.js");
+        const { rebuildAllVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.ts");
         const status = await getVectorizationStatus(profile.path);
         if (status.totalRecords === 0) {
           ctx.ui.notify("❌ 没有 L1 records 可重建", "error");
@@ -969,7 +969,7 @@ export default function (pi: ExtensionAPI) {
         const reason = get("--reason");
         const pv = get("--priority");
         const force = rest.includes("--force");
-        const { runFix } = await import("./memory/l1/fix-tool.js");
+        const { runFix } = await import("./memory/l1/fix-tool.ts");
         const params: any = { recordId: id, action, newContent: content, evidence, reason };
         if (pv !== undefined) params.priority = Number(pv);
         const text = await runFix(params, profilePath, { force });
@@ -1007,7 +1007,7 @@ export default function (pi: ExtensionAPI) {
       if (!profile) { ctx.ui.notify("No active profile", "error"); return; }
       const top = Math.min(Math.max(parseInt((_args||"20").trim())||20, 1), 100);
       try {
-        const { getQualityRanked } = await import("./memory/l1/quality.js");
+        const { getQualityRanked } = await import("./memory/l1/quality.ts");
         const ranked = await getQualityRanked(profile.path, top);
         if (ranked.length===0) { ctx.ui.notify("暂无 L1 records", "info"); return; }
         const clockNote = ranked.some(r=>r.activeDayClock) ? "days=活跃会话日" : "days=日历天(活跃日数据不可得)";
@@ -1029,7 +1029,7 @@ export default function (pi: ExtensionAPI) {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) { ctx.ui.notify("No active profile", "error"); return; }
       try {
-        const { getQualityStats } = await import("./memory/l1/quality.js");
+        const { getQualityStats } = await import("./memory/l1/quality.ts");
         const s=await getQualityStats(profile.path);
         const unit = s.clock.activeDayClock ? "活跃日" : "日历天";
         const lines=[`L1 质量汇总: 总数=${s.total} | 分布 热${s.dist["热"]??0}/温${s.dist["温"]??0}/冷${s.dist["冷"]??0}/新${s.dist["新"]??0}/待观察${s.dist["待观察"]??0}/噪${s.dist["噪"]??0}`,

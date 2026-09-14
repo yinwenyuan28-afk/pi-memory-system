@@ -8,9 +8,9 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { MEMORY_DB_DIR } from "../paths.js";
-import { getL1HitStatsDB } from "../stats/l1-hit-stats-db.js";
-import { render as renderPrompt } from "../../prompts/registry.js";
+import { MEMORY_DB_DIR } from "../paths.ts";
+import { getL1HitStatsDB } from "../stats/l1-hit-stats-db.ts";
+import { render as renderPrompt } from "../../prompts/registry.ts";
 
 const TOOL_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "l1-admin");
 const AUDIT_RE = /【\d{4}-\d{2}-\d{2} L1 修正/;

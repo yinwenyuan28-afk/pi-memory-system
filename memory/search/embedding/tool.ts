@@ -15,8 +15,8 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { loadL1RecordById } from "./record-loader.js";
-import { render as renderPrompt } from "../../../prompts/registry.js";
+import { loadL1RecordById } from "./record-loader.ts";
+import { render as renderPrompt } from "../../../prompts/registry.ts";
 
 /** 工具参数 */
 interface EmbedAndSearchArgs {
@@ -54,8 +54,8 @@ export function registerEmbedAndSearchTool(pi: { registerTool: (tool: any) => vo
 
       try {
         // 1. 获取 embedding service 和 vector store（懒加载）
-        const { getEmbeddingService } = await import("./service.js");
-        const { getVectorStore } = await import("../vector-store/store.js");
+        const { getEmbeddingService } = await import("./service.ts");
+        const { getVectorStore } = await import("../vector-store/store.ts");
 
         const embeddingService = await getEmbeddingService();
         const vectorStore = await getVectorStore();

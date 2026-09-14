@@ -2,8 +2,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildL1Task, RECENT_SCENE_LIMIT, readRecentSceneContext } from "../memory/l1/config.js";
-import { stampRecordTimes } from "../memory/l1/commit-tool.js";
+import { buildL1Task, RECENT_SCENE_LIMIT, readRecentSceneContext } from "../memory/l1/config.ts";
+import { stampRecordTimes } from "../memory/l1/commit-tool.ts";
 
 const REAL = "C:/Users/leaf/.pi/agent/profiles/default";
 let pass = 0;

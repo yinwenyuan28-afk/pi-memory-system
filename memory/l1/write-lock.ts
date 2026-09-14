@@ -11,7 +11,7 @@
 // （CLI 用），改动需两边同步并互指注释。
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../paths.js";
+import { MEMORY_DB_DIR } from "../paths.ts";
 
 export interface WriteLock {
 	release: () => void;

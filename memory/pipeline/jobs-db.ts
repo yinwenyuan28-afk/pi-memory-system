@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR, PIPELINE_JOBS_FILE } from "../paths.js";
+import { MEMORY_DB_DIR, PIPELINE_JOBS_FILE } from "../paths.ts";
 
 export type PipelineJobType = "l1" | "l2";
 export type PipelineJobSource = "interval" | "manual" | "l1_commit";

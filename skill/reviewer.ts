@@ -1,10 +1,10 @@
-import { runPiSubagent } from "../util/subagent.js";
+import { runPiSubagent } from "../util/subagent.ts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { MEMORY_DB_DIR, SKILL_FEED_DIR } from "../memory/paths.js";
-import { loadCursor, saveCursor } from "../memory/review/review-cursor.js";
-import { render as renderPrompt } from "../prompts/registry.js";
+import { MEMORY_DB_DIR, SKILL_FEED_DIR } from "../memory/paths.ts";
+import { loadCursor, saveCursor } from "../memory/review/review-cursor.ts";
+import { render as renderPrompt } from "../prompts/registry.ts";
 
 /**
  * Skill 审查子代理调度模块。
