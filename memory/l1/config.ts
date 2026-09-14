@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { decodeCwdFromSessionPath } from "../l0/index.ts";
-import { L1_CONFIG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { L1_ANCHOR_LOG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.ts";
 import { loadAppProps, saveAppSection } from "../../config/app-config.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
@@ -22,14 +22,14 @@ export const RECENT_SCENE_LIMIT = 15;
 /** 情境锚点扫描窗口（天）：与 loadAllL1Records 的窗口一致，避免无界同步读。 */
 export const SCENE_LOOKBACK_DAYS = 30;
 /** 锚点注入日志文件名——复用率度量的**分母口径**（每次提取提供了哪些候选）。 */
-export const ANCHOR_LOG_FILE = "l1-anchor-log.jsonl";
+export const ANCHOR_LOG_FILE = L1_ANCHOR_LOG_FILE; // 单一来源见 paths.ts（2026-09-14 收束）
 /** 锚点日志体积上限（超出则保留最后 500 条重写，避免无界增长）。 */
 export const ANCHOR_LOG_MAX_BYTES = 1024 * 1024;
 
 /** 配置文件名（mode 持久化）。 */
-export const CONFIG_FILE = "l1-config.json";
+export const CONFIG_FILE = "l1-config.json"; // [DEPRECATED 2026-09-14] 旧独立配置文件已迁入 config/application-propertis.json；本常量仅作 loadL1Config 的迁移期兜底（文件实际已不存在）
 /** 游标文件名（全局 lastRecordedAt，子代理回写）。 */
-export const CURSOR_FILE = "l1-cursor.json";
+export const CURSOR_FILE = L1_CURSOR_FILE; // 单一来源见 paths.ts（2026-09-14 收束）
 /** L0 分片目录名（{profilePath}/memoryDB/l0-conversations，单一来源见 paths.ts）。 */
 export const L0_DIR_NAME = L0_CONVERSATIONS_DIR;
 /** L1 记忆输出目录名（{profilePath}/memoryDB/l1-records，单一来源见 paths.ts）。 */

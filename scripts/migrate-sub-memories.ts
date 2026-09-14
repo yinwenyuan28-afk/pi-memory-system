@@ -3,10 +3,10 @@
  *
  * 背景：新记忆系统（L0 对话分片 → L1 原子记忆）与旧系统（sub-memories 长文 md）
  * 完全解耦、并行存在。本脚本把有价值的旧 sub-memory 文档经 LLM 拆解为 L1 原子记忆，
- * 写入 {profilePath}/memoryDB/l1-records/ 分片，供新系统检索注入利用。
+ * 写入 {profilePath}/memoryDB/l1/records/ 分片，供新系统检索注入利用。
  *
  * 关键决策：
- *  - 不推进 l1-cursor.json（迁移记录不是对话增量，推进会跳过后续真实对话提取）
+ *  - 不推进 l1/cursor.json（迁移记录不是对话增量，推进会跳过后续真实对话提取）
  *  - source_message_ids 标注 `migration#sub-memories/<相对路径>#<mtimeMs>`，
  *    sessionKey="migration"——与对话提取天然区分，可溯源/可批量回溯
  *  - 内容哈希去重（对齐 l1_commit 的 contentHash 语义），可安全重跑
@@ -220,7 +220,7 @@ async function main(): Promise<void> {
 	console.log(`扫描到 ${files.length} 个 md（scope=${opts.scope ?? "all"}）`);
 
 	// 2. 已有记录哈希集合（去重）
-	const recordsDir = join(opts.profilePath, "memoryDB", "l1-records");
+	const recordsDir = join(opts.profilePath, "memoryDB", "l1", "records");
 	const existingHashes = new Set<string>();
 	if (existsSync(recordsDir)) {
 		for (const f of readdirSync(recordsDir).filter((f) => f.endsWith(".jsonl"))) {
@@ -346,7 +346,7 @@ async function main(): Promise<void> {
 	if (result.failed.length > 0) {
 		console.log(`失败文件: ${result.failed.join(", ")}`);
 	}
-	console.log("注意：未推进 l1-cursor.json（迁移记录非对话增量）");
+	console.log("注意：未推进 l1/cursor.json（迁移记录非对话增量）");
 }
 
 main().catch((e) => {

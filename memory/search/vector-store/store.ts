@@ -2,7 +2,7 @@
  * sqlite-vec vector store 实现
  *
  * 存储 L1 records 的 embedding 向量
- * 位置：{profile}/memoryDB/.vectors/l1-vectors.sqlite
+ * 位置：{profile}/memoryDB/search/vectors/l1-vectors.sqlite
  *
  * ⚠️ POC 发现（2026-08-18）：
  * - sqlite-vec v0.1.9 vec0 虚拟表**不支持 prepared statement 参数绑定**
@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { loadEmbeddingConfig } from "../embedding/config.ts";
+import { MEMORY_DB_DIR, VECTORS_DIR } from "../../paths.ts";
 
 /** 搜索结果 hit */
 export interface VectorHit {
@@ -51,7 +52,7 @@ export async function getVectorStore(profilePath?: string): Promise<VectorStore>
   if (storeInstance) return storeInstance;
 
   const baseProfilePath = profilePath ?? process.env.PI_PROFILE_PATH ?? "";
-  const vectorsDir = join(baseProfilePath, "memoryDB", ".vectors");
+  const vectorsDir = join(baseProfilePath, MEMORY_DB_DIR, VECTORS_DIR);
 
   if (!existsSync(vectorsDir)) {
     mkdirSync(vectorsDir, { recursive: true });

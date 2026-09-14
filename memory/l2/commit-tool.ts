@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config } from "./config.ts";
-import { MEMORY_DB_DIR } from "../paths.ts";
+import { BACKUP_DIR, L2_INDEX_DIR, MEMORY_DB_DIR } from "../paths.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
@@ -480,7 +480,7 @@ export function mergeSceneMembers(
 /** 原子写成员清单 sidecar。 */
 function saveSceneMembers(profilePath: string, members: Record<string, string[]>): void {
 	const filePath = join(profilePath, MEMORY_DB_DIR, SCENE_MEMBERS_PATH);
-	const metaDir = join(profilePath, MEMORY_DB_DIR, ".metadata");
+	const metaDir = join(profilePath, MEMORY_DB_DIR, L2_INDEX_DIR);
 	if (!existsSync(metaDir)) mkdirSync(metaDir, { recursive: true });
 	const tmpPath = join(metaDir, `.tmp_scene_members_${Date.now()}`);
 	writeFileSync(tmpPath, JSON.stringify(members, null, 2), "utf-8");
@@ -505,10 +505,10 @@ export interface ConsolidateBackup {
 }
 
 /**
- * 把即将被删除的源块整体备份到 `{memoryDB}/.backups/l2-consolidate-<tag>/`。
+ * 把即将被删除的源块整体备份到 `{memoryDB}/backups/l2-consolidate-<tag>/`。
  *
  * 为什么由代码做、而不是在规则里要求子代理先备份：合并是**破坏性**操作（删源块），备份是唯一
- * 回退手段，而"记得先备份"恰恰是 LLM 最不可靠的一类要求。放在 `.backups/` 下与 memoryDB 主体
+ * 回退手段，而"记得先备份"恰恰是 LLM 最不可靠的一类要求。放在 `backups/` 下与 memoryDB 主体
  * 隔离，只保留最近 `CONSOLIDATE_BACKUP_KEEP` 份以免无界增长。
  *
  * 刻意**不用 `git stash`** 做整体快照——该项目 08-18 有过 stash 丢密钥的事故。
@@ -519,7 +519,7 @@ export function backupSceneBlocks(
 	tag: string,
 	manifest: Record<string, unknown>,
 ): ConsolidateBackup {
-	const backupRoot = join(profilePath, MEMORY_DB_DIR, ".backups");
+	const backupRoot = join(profilePath, MEMORY_DB_DIR, BACKUP_DIR);
 	const dirName = `l2-consolidate-${tag}`;
 	const dir = join(backupRoot, dirName);
 	mkdirSync(dir, { recursive: true });
@@ -538,7 +538,7 @@ export function backupSceneBlocks(
 		// ignore
 	}
 	pruneConsolidateBackups(backupRoot);
-	return { dir: join(".backups", dirName), files: written };
+	return { dir: join(BACKUP_DIR, dirName), files: written };
 }
 
 /** 只保留最近 `CONSOLIDATE_BACKUP_KEEP` 份 consolidate 备份。 */
@@ -589,7 +589,7 @@ export function syncSceneIndex(profilePath: string): SceneIndexEntry[] {
 	}
 	entries.sort((a, b) => b.heat - a.heat);
 	const idxPath = join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH);
-	const idxDir = join(profilePath, MEMORY_DB_DIR, ".metadata");
+	const idxDir = join(profilePath, MEMORY_DB_DIR, L2_INDEX_DIR);
 	if (!existsSync(idxDir)) mkdirSync(idxDir, { recursive: true });
 	writeFileSync(idxPath, JSON.stringify(entries, null, 2), "utf-8");
 	return entries;

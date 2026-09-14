@@ -1,6 +1,6 @@
 # L1 work_method 存量记录审计报告（2026-08-22）
 
-依据 extract-code.md 新判别标准（规范性 / 可迁移性 / 指向性 + 明确排除项），对 `l1-records/*.jsonl` 中 43 条未删除 work_method 逐条复核。
+依据 extract-code.md 新判别标准（规范性 / 可迁移性 / 指向性 + 明确排除项），对 `l1/records/*.jsonl` 中 43 条未删除 work_method 逐条复核。
 
 ## 处理统计
 
@@ -78,7 +78,7 @@
 
 ## 执行方式（确认后执行）
 
-1. 备份 `memoryDB/l1-records/` 到 `memoryDB/backup-l1-records-20260822/`
+1. 备份 `memoryDB/l1/records/` 到 `memoryDB/backup-l1-records-20260822/`
 2. 运行 `fix-l1-method-types.py`（`--mode=inline` 原地改 type+updatedAt；`--mode=append` 对齐 dedup update 语义：旧记录标 deleted + 追加修正记录）
 3. 若启用向量化：执行 `/my-memory:l1:embedding:rebuild` 重建向量（deleted/改 type 后旧向量需同步）
 4. 抽验：`grep work_method` 确认修正后剩余 type 均为合法 method

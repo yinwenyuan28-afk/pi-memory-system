@@ -2,7 +2,7 @@ import { runPiSubagent } from "../util/subagent.ts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { MEMORY_DB_DIR, SKILL_FEED_DIR } from "../memory/paths.ts";
+import { MEMORY_DB_DIR, SKILL_FEED_CURSOR_FILE, SKILL_FEED_DIR } from "../memory/paths.ts";
 import { loadCursor, saveCursor } from "../memory/review/review-cursor.ts";
 import { render as renderPrompt } from "../prompts/registry.ts";
 
@@ -86,7 +86,7 @@ export function setupSkillReviewer(
 		const reviewerCursor = cursor && cursor.sessionPath ? cursor.sessionPath : "";
 		const task = renderPrompt("tasks/skill-review#main", {
 			skillFeedFiles: feedFiles.join(","),
-			cursorPath: join(paths.profilePath, MEMORY_DB_DIR, "skill-feed-cursor.json"),
+			cursorPath: join(paths.profilePath, MEMORY_DB_DIR, SKILL_FEED_CURSOR_FILE),
 			reviewerCursor,
 			profilePath: paths.profilePath,
 		});

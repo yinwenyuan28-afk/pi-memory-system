@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // l1-admin viewer-bridge：记录查看器的本地写盘桥
-// 职责：① 静态托管 memoryDB（records-viewer.html / l1-records/*.jsonl / l1-hit-stats.json）
+// 职责：① 静态托管 memoryDB（viewers/records-viewer.html / l1/records/*.jsonl / l1/hit-stats.json）
 //       ② POST /api/tombstone {ids:[...]} → 真实落盘（tombstone.mjs：自动备份 + 跨进程写锁 + 就地标记 + 校验）
 // 用法：
 //   node viewer-bridge.mjs [--port 5174] [--profile <dir>]
@@ -21,6 +21,9 @@ const profileIdx = argv.indexOf("--profile");
 const PROFILE = profileIdx >= 0 ? argv[profileIdx + 1] : "C:/Users/leaf/.pi/agent/profiles/default";
 const MEMORY_DB = join(PROFILE, "memoryDB");
 if (!existsSync(MEMORY_DB)) { console.error(`NG profile memoryDB 不存在：${MEMORY_DB}`); process.exit(2); }
+// 与 memory/paths.ts 同步：viewer 已迁入 memoryDB/viewers/
+const VIEWER_DIR = "viewers";
+const VIEWER_PAGE = "records-viewer.html";
 
 const ID_RE = /^l1_[0-9a-z_]+$/;
 const MIME = { ".html": "text/html; charset=utf-8", ".json": "application/json", ".jsonl": "text/plain; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".sqlite": "application/octet-stream" };
@@ -77,7 +80,7 @@ const server = createServer((req, res) => {
 
   // ── 静态托管 memoryDB（防止 path traversal） ──
   if (req.method === "GET") {
-    const rel = url === "/" ? "records-viewer.html" : url.replace(/^\/+/, "");
+    const rel = url === "/" ? `${VIEWER_DIR}/${VIEWER_PAGE}` : url.replace(/^\/+/, "");
     const fp = normalize(join(MEMORY_DB, rel));
     if (!fp.startsWith(normalize(MEMORY_DB))) {
       res.writeHead(403); res.end("forbidden"); return;
@@ -97,7 +100,7 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`[l1-admin viewer-bridge] http://127.0.0.1:${PORT}  profile=${PROFILE}`);
-  console.log(`  打开查看器：http://localhost:${PORT}/records-viewer.html?port=${PORT}`);
+  console.log(`  打开查看器：http://localhost:${PORT}/${VIEWER_DIR}/${VIEWER_PAGE}?port=${PORT}`);
   console.log(`  删除 = POST /api/tombstone {ids:[...]} → tombstone.mjs（自动备份+写锁+就地标记）`);
   console.log(`  关停：Ctrl+C`);
 });

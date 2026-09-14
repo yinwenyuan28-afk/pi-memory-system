@@ -32,8 +32,10 @@ from collections import OrderedDict
 
 PROFILE = sys.argv[1] if len(sys.argv) > 1 else "C:/Users/leaf/.pi/agent/profiles/default"
 PLAN_DIR = sys.argv[2] if len(sys.argv) > 2 else "C:/Users/leaf/.pi/plan/memory-system/observation/L2_SCENE_CONSOLIDATION"
-RECORDS_DIR = os.path.join(PROFILE, "memoryDB", "l1-records")
-BLOCKS_DIR = os.path.join(PROFILE, "memoryDB", "l2-scene-blocks")
+# 路径与扩展的 memory/paths.ts 同步（脚本无法 import TS，改动需手动对齐，见 plan MEMORYDB_LAYOUT_PLAN 3.2-B）
+MEMORY_DB = os.path.join(PROFILE, "memoryDB")
+RECORDS_DIR = os.path.join(MEMORY_DB, "l1", "records")
+BLOCKS_DIR = os.path.join(MEMORY_DB, "l2", "scene-blocks")
 
 # 引用：l1_<字母前缀可选><13 位左右数字>[可选 -<尾部数字>]
 REF_RE = re.compile(r"l1_[A-Za-z_]{0,12}?(\d{10,13})(?:-(\d{1,10}))?")

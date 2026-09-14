@@ -4,7 +4,7 @@
 背景：情境名碎片化的根因是「上一批用的名字」从未注入子代理，导致每批各自造句。
 修复后主进程在每次提取前注入 PreviousScene / RecentScenes，本脚本量化收敛效果。
 
-指标定义（分母口径来自 memoryDB/l1-anchor-log.jsonl 的真实注入记录）：
+指标定义（分母口径来自 memoryDB/l1/anchor-log.jsonl 的真实注入记录）：
 
   复用率 = 可归属的新 active 记录中，scene_name 命中「该次提取提供的候选集」的比例
   其中 候选集 = {previous} ∪ {recent 各条名字}
@@ -26,8 +26,10 @@ import sys
 from datetime import datetime, timezone
 
 PROFILE = sys.argv[1] if len(sys.argv) > 1 else "C:/Users/leaf/.pi/agent/profiles/default"
-RECORDS_DIR = os.path.join(PROFILE, "memoryDB", "l1-records")
-ANCHOR_LOG = os.path.join(PROFILE, "memoryDB", "l1-anchor-log.jsonl")
+# 路径与扩展的 memory/paths.ts 同步（脚本无法 import TS，改动需手动对齐，见 plan MEMORYDB_LAYOUT_PLAN 3.2-B）
+MEMORY_DB = os.path.join(PROFILE, "memoryDB")
+RECORDS_DIR = os.path.join(MEMORY_DB, "l1", "records")
+ANCHOR_LOG = os.path.join(MEMORY_DB, "l1", "anchor-log.jsonl")
 
 
 def parse_iso(s):

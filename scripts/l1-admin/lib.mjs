@@ -29,7 +29,9 @@ export function memoryDbDir(profileDir) {
   return d;
 }
 
-export const REC_DIR_NAME = 'l1-records';
+// 路径常量与扩展的 memory/paths.ts 同步（脚本无法 import TS，改动需手动对齐，见 plan MEMORYDB_LAYOUT_PLAN 3.2-B）
+export const REC_DIR_NAME = join('l1', 'records');
+export const BACKUP_DIR_NAME = join('backups', 'l1-admin');
 
 /**
  * 扫描分片；返回：
@@ -39,7 +41,7 @@ export const REC_DIR_NAME = 'l1-records';
  */
 export function scanRecords(profileDir) {
   const dir = join(memoryDbDir(profileDir), REC_DIR_NAME);
-  if (!existsSync(dir)) { console.error('NG l1-records 不存在：' + dir); process.exit(2); }
+  if (!existsSync(dir)) { console.error('NG L1 records 目录不存在：' + dir); process.exit(2); }
   const rows = [];
   const byId = new Map();
   const lww = new Map();
@@ -62,11 +64,11 @@ export function scanRecords(profileDir) {
   return { dir, rows, byId, alive, lww, lwwAlive };
 }
 
-/** 写操作前自动备份：copy l1-records 到 {memoryDB}/.l1-admin-backup/{timestamp}/l1-records */
+/** 写操作前自动备份：copy L1 records 到 {memoryDB}/backups/l1-admin/{timestamp}/l1/records */
 export function autoBackup(profileDir, tag = 'op') {
   const db = memoryDbDir(profileDir);
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const dest = join(db, '.l1-admin-backup', `${ts}-${tag}`);
+  const dest = join(db, BACKUP_DIR_NAME, `${ts}-${tag}`);
   const src = join(db, REC_DIR_NAME);
   mkdirSync(dest, { recursive: true });
   cpSync(src, join(dest, REC_DIR_NAME), { recursive: true });

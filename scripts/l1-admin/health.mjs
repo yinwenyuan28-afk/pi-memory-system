@@ -26,7 +26,8 @@ for (const r of testRes) console.log(`    ${r.obj.id} deleted=${r.obj.deleted} @
 // 3. 孤儿 hit-stats
 try {
   const db = memoryDbDir(profileDir);
-  const statsPath = join(db, 'l1-hit-stats.json');
+  // 与 memory/paths.ts 的 L1_HIT_STATS_JSON 同步（注意侧车已改名：去 l1- 前缀）
+  const statsPath = join(db, 'l1', 'hit-stats.json');
   if (existsSync(statsPath)) {
     const raw = JSON.parse(readFileSync(statsPath, 'utf8'));
     const statIds = (raw.stats || []).map(s => s.record_id).filter(Boolean);

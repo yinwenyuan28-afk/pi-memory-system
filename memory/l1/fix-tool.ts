@@ -8,7 +8,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { MEMORY_DB_DIR } from "../paths.ts";
+import { L1_RECORDS_DIR, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.ts";
 import { getL1HitStatsDB } from "../stats/l1-hit-stats-db.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
@@ -18,7 +18,7 @@ const DEBOUNCE_MS = 24 * 3600e3;
 
 /** 读 LWW 最后一行（追加序覆盖）；返回 null = id 不存在 */
 function lastRow(profilePath: string, recordId: string): Record<string, unknown> | null {
-	const dir = join(profilePath, MEMORY_DB_DIR, "l1-records");
+	const dir = join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR);
 	if (!existsSync(dir)) return null;
 	let last: Record<string, unknown> | null = null;
 	for (const f of readdirSync(dir).filter((x: string) => x.endsWith(".jsonl")).sort()) {
@@ -41,7 +41,7 @@ function isHighValue(profilePath: string, recordId: string): boolean {
 		if (st && (st.hits || 0) >= 5) return true;
 	} catch { /* 统计不可用不阻塞 */ }
 	try {
-		const indexPath = join(profilePath, MEMORY_DB_DIR, ".metadata", "scene_index.json");
+		const indexPath = join(profilePath, MEMORY_DB_DIR, L2_SCENE_INDEX_PATH);
 		if (existsSync(indexPath)) {
 			const idx = JSON.parse(readFileSync(indexPath, "utf8"));
 			if (Array.isArray(idx)) {

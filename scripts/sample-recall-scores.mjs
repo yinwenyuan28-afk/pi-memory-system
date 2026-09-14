@@ -2,7 +2,7 @@
  * L1 recall cosine score 采样定标脚本（2026-09-02）
  *
  * 目的：为 recall-config.json 的 minScore 提供数据依据。
- * 方法：从 l0-conversations/*.jsonl 抽真实 user 消息作 query，
+ * 方法：从 l0/conversations/*.jsonl 抽真实 user 消息作 query，
  *      对每条跑「embed(query) → sqlite-vec top-5」，
  *      统计 top-1 / top-3 / top-5 的 score 分布（P25/P50/P75/P90）+ 直方图。
  *
@@ -42,6 +42,10 @@ const PROFILE = args.profile;
 const LIMIT = args.limit;
 const TOPK = args.topk;
 
+// 路径与 memory/paths.ts 同步（脚本无法 import TS，改动需手动对齐，见 plan MEMORYDB_LAYOUT_PLAN 3.2-B）
+const L0_CONVERSATIONS_REL = join("l0", "conversations");
+const VECTORS_DB_REL = join("search", "vectors", "l1-vectors.sqlite");
+
 // ── trivial prompt 过滤（与 index.ts before_agent_start 同款语义） ──
 function isTrivial(text) {
   if (typeof text !== "string") return true;
@@ -58,7 +62,7 @@ function isTrivial(text) {
 
 // ── 1. 收集样本 query：跨日分片取最近 LIMIT 条非 trivial user 消息 ──
 function collectSampleQueries(profilePath) {
-  const l0Dir = join(profilePath, "memoryDB", "l0-conversations");
+  const l0Dir = join(profilePath, "memoryDB", L0_CONVERSATIONS_REL);
   if (!existsSync(l0Dir)) {
     console.error(`L0 目录不存在: ${l0Dir}`);
     process.exit(1);
@@ -142,7 +146,7 @@ async function embedOne(cfg, text, lastCallTs) {
 
 // ── 4. sqlite-vec 检索 ──
 function openVectorDb(profilePath) {
-  const dbPath = join(profilePath, "memoryDB", ".vectors", "l1-vectors.sqlite");
+  const dbPath = join(profilePath, "memoryDB", VECTORS_DB_REL);
   if (!existsSync(dbPath)) {
     console.error(`向量库不存在: ${dbPath}（先跑向量化 backfill）`);
     process.exit(1);

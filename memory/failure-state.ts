@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "./paths.ts";
+import { FAILURE_STATE_FILE, MEMORY_DB_DIR } from "./paths.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  熔断状态持久化（跨进程重启）
@@ -24,7 +24,7 @@ const EMPTY: LayerFailureState = { consecutiveFailures: 0, cooledDown: false };
 
 /** 读取熔断状态（跨重启持久）。无文件 / 损坏返回全零。 */
 export function loadFailureState(profilePath: string): FailureState {
-	const p = join(profilePath, MEMORY_DB_DIR, "failure-state.json");
+	const p = join(profilePath, MEMORY_DB_DIR, FAILURE_STATE_FILE);
 	if (!existsSync(p)) return { l1: { ...EMPTY }, l2: { ...EMPTY } };
 	try {
 		const d = JSON.parse(readFileSync(p, "utf-8")) as Partial<FailureState>;
@@ -45,7 +45,7 @@ export function loadFailureState(profilePath: string): FailureState {
 
 /** 原子写熔断状态（写失败静默降级，非关键路径）。 */
 export function saveFailureState(profilePath: string, state: FailureState): void {
-	const p = join(profilePath, MEMORY_DB_DIR, "failure-state.json");
+	const p = join(profilePath, MEMORY_DB_DIR, FAILURE_STATE_FILE);
 	const tmp = `${p}.tmp`;
 	try {
 		writeFileSync(tmp, JSON.stringify(state), "utf-8");

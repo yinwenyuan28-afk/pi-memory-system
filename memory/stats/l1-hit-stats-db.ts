@@ -24,7 +24,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MEMORY_DB_DIR } from "../paths.ts";
+import { L1_HIT_STATS_SQLITE, MEMORY_DB_DIR } from "../paths.ts";
 import { loadActiveDayKeys } from "../l1/active-days.ts";
 
 /** 单条 L1 命中统计 */
@@ -110,7 +110,7 @@ export class L1HitStatsDB {
   constructor(profilePath: string) {
     const memDir = join(profilePath, MEMORY_DB_DIR);
     mkdirSync(memDir, { recursive: true });
-    this.dbPath = join(memDir, "l1-hit-stats.sqlite");
+    this.dbPath = join(memDir, L1_HIT_STATS_SQLITE);
     this.profilePath = profilePath;
     this.db = new DatabaseSync(this.dbPath);
     // WAL + busy_timeout：多进程并发写（后台子代理 + 主代理）安全

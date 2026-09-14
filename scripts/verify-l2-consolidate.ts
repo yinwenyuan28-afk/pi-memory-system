@@ -24,8 +24,8 @@ function check(name: string, cond: boolean, extra = "") {
 type ToolResult = { content: Array<{ text: string }> };
 
 const p = mkdtempSync(join(tmpdir(), "l2-consolidate-e2e-"));
-const sceneDir = join(p, "memoryDB", "l2-scene-blocks");
-const metaDir = join(p, "memoryDB", ".metadata");
+const sceneDir = join(p, "memoryDB", "l2", "scene-blocks");
+const metaDir = join(p, "memoryDB", "l2", "index");
 mkdirSync(sceneDir, { recursive: true });
 mkdirSync(metaDir, { recursive: true });
 mkdirSync(join(p, "memoryDB", "config"), { recursive: true });

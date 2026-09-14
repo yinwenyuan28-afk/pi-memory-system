@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// l1-admin rollback：从备份目录恢复 l1-records
+// l1-admin rollback：从备份目录恢复 L1 records
 // 流程：校验备份完整（分片数/行数）→ [--apply] 当前库先自动备份 → 删除当前 jsonl → 复制备份 → verify 摘要
 // 用法：
 //   node rollback.mjs <backupDir>                 # dry-run：只比对
 //   node rollback.mjs <backupDir> --apply         # 实恢复（当前库先自动备份）
 import { existsSync, readdirSync, readFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseArgs, memoryDbDir, autoBackup } from './lib.mjs';
+import { parseArgs, memoryDbDir, autoBackup, REC_DIR_NAME } from './lib.mjs';
 
 const { profileDir, apply, dryRun, rest } = parseArgs(process.argv.slice(2));
 const backupDir = rest[0];
@@ -24,10 +24,13 @@ function shardStats(dir) {
 }
 
 const db = memoryDbDir(profileDir);
-const cur = shardStats(join(db, 'l1-records'));
-// 备份目录优先取 l1-records 子目录（根目录常有 *.jsonl 杂项如 l1-anchor-log）
-const nested = join(backupDir, 'l1-records');
-const bakDirActual = shardStats(nested) && shardStats(nested).files > 0 ? nested : backupDir;
+const cur = shardStats(join(db, REC_DIR_NAME));
+// 备份目录优先取 L1 records 子目录（备份根目录常有 *.jsonl 杂项如 anchor-log）；
+// 兼容 2026-09-14 布局迁移前的旧备份——其子目录名仍是 l1-records。
+const bakDirActual = [
+  join(backupDir, REC_DIR_NAME),
+  join(backupDir, 'l1-records'),
+].find(d => (shardStats(d)?.files ?? 0) > 0) ?? backupDir;
 const bak = shardStats(bakDirActual);
 if (!bak || !bak.files) { console.error('NG 备份目录中没有 jsonl 分片'); process.exit(2); }
 
@@ -41,14 +44,14 @@ if (bak.lines < cur.lines) {
 
 if (dryRun) {
   console.log('\n[dry-run] 未恢复。加 --apply 实恢复（当前库会先自动备份）。');
-  console.log('注意：恢复将删除当前 l1-records 下所有 jsonl（含管线新写入），请确认备份时间点。');
+  console.log('注意：恢复将删除当前 L1 records 下所有 jsonl（含管线新写入），请确认备份时间点。');
   process.exit(0);
 }
 
 // 恢复
 const autoBak = autoBackup(profileDir, 'pre-rollback');
 console.log(`当前库已自动备份：${autoBak}`);
-const target = join(db, 'l1-records');
+const target = join(db, REC_DIR_NAME);
 for (const f of readdirSync(target).filter(x => x.endsWith('.jsonl'))) rmSync(join(target, f));
 for (const f of readdirSync(bakDirActual).filter(x => x.endsWith('.jsonl'))) cpSync(join(bakDirActual, f), join(target, f));
 console.log(`已从备份复制 ${bak.files} 个分片到 ${target}`);

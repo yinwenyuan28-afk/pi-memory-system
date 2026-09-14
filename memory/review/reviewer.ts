@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { MemoryManager } from "../core/manager.ts";
 import { listL0Files, loadL1Cursor } from "../l1/config.ts";
-import { MEMORY_DB_DIR } from "../paths.ts";
+import { L0_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.ts";
 import { loadCursor, saveCursor } from "./review-cursor.ts";
 
 /**
@@ -74,7 +74,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 		const reviewerCursor = cursor && cursor.sessionPath ? cursor.sessionPath : "";
 		const task = [
 			`L0Files: ${l0Files.join(",")}`,
-			`CursorPath: ${join(paths.profilePath, MEMORY_DB_DIR, "l0-cursor.json")}`,
+			`CursorPath: ${join(paths.profilePath, MEMORY_DB_DIR, L0_CURSOR_FILE)}`,
 			`ReviewerCursor: ${reviewerCursor}`,
 			`ProfilePath: ${paths.profilePath}`,
 		].join("\n");
@@ -124,7 +124,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 					const l1Cursor = loadL1Cursor(paths.profilePath);
 					const l0Files = listL0Files(paths.profilePath, l1Cursor);
 					if (l0Files.length > 0) {
-						const task = `L0Files: ${l0Files.join(",")}\nCursorPath: ${join(paths.profilePath, MEMORY_DB_DIR, "l0-cursor.json")}\nReviewerCursor: \nProfilePath: ${paths.profilePath}`;
+						const task = `L0Files: ${l0Files.join(",")}\nCursorPath: ${join(paths.profilePath, MEMORY_DB_DIR, L0_CURSOR_FILE)}\nReviewerCursor: \nProfilePath: ${paths.profilePath}`;
 						try {
 							await runPiSubagent("memory-reviewer", task, ctx, SUBAGENT_TIMEOUT_MS);
 						} finally {

@@ -1036,7 +1036,7 @@ export default function (pi: ExtensionAPI) {
                      `直方图 q 0-2:${s.histogram["0-2"]} 2-4:${s.histogram["2-4"]} 4-6:${s.histogram["4-6"]} 6+:${s.histogram["6+"]}`,
                      s.clock.activeDayClock
                        ? `时钟: 活跃会话日 ${s.clock.activeDays} 个 / 跨度 ${s.clock.spanDays.toFixed(0)} 日历天（停工期间 days 不增长，单位=${unit}）`
-                       : `时钟: 退化为日历天（未找到 l0-conversations 分片）`];
+                       : `时钟: 退化为日历天（未找到 l0/conversations 分片）`];
         if(s.cold.length>0){ lines.push("", `冷清单 (>14${unit}0命中) ${s.cold.length}条 前5:`); s.cold.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} id=${r.id} | ${r.content.slice(0,60)}`)); }
         else lines.push("", `冷清单: 0（>14${unit}0命中暂无，7-14${unit}为待观察）`);
         if(s.noisy.length>0){ lines.push("", `噪清单 (失效率>50%) ${s.noisy.length}条 前5:`); s.noisy.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} eff=${r.effective} hits=${r.hits}/${r.invalid} id=${r.id} | ${r.content.slice(0,60)}`)); }

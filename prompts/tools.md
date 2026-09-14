@@ -39,7 +39,7 @@ Read L0 conversation increment after a cursor in one call (replaces piecewise re
 
 ## read_l1_increment
 
-Read L1 records newer than the L2 cursor in one call (replaces being pointed to a .l2-staging file). Called by the l2-scene-organizer subagent. Params: l1Dir (absolute path of L1 records directory, from RecordsDir in task message), cursor (optional L2 lastRecordId, default read from l2-cursor.json), maxRecords (optional, default 50, hard cap 200). Returns { records (new L1 records with key fields, deleted=true entries preserved for history), nextCursor (last id of returned), totalNew (unfiltered count), returned (this call's count), truncated }.
+Read L1 records newer than the L2 cursor in one call (replaces being pointed to a .l2-staging file). Called by the l2-scene-organizer subagent. Params: l1Dir (absolute path of L1 records directory, from RecordsDir in task message), cursor (optional L2 lastRecordId, default read from l2/cursor.json), maxRecords (optional, default 50, hard cap 200). Returns { records (new L1 records with key fields, deleted=true entries preserved for history), nextCursor (last id of returned), totalNew (unfiltered count), returned (this call's count), truncated }.
 
 ## l2_commit
 
@@ -55,7 +55,7 @@ Search your L1 atomic memories (durable facts, work methods, tasks, and artifact
 
 ## clear_invalid_l1_records
 
-Mark L1 atomic memories as INVALID (agent judged them irrelevant after recall). For each recordId, increments invalid_hits and recomputes effective_hits = hits - invalid_hits in the L1 hit-stats DB (auto-rewrites l1-hit-stats.json consumed by records-viewer). Only records that were actually recalled (hits > 0) are counted; never-recalled ids are skipped. This is a feedback signal ONLY — the record is NOT deleted, its quality drops and recall may still return it. Call this when you recalled a memory via recall_l1_records but found it useless for the current task.
+Mark L1 atomic memories as INVALID (agent judged them irrelevant after recall). For each recordId, increments invalid_hits and recomputes effective_hits = hits - invalid_hits in the L1 hit-stats DB (auto-rewrites l1/hit-stats.json consumed by records-viewer). Only records that were actually recalled (hits > 0) are counted; never-recalled ids are skipped. This is a feedback signal ONLY — the record is NOT deleted, its quality drops and recall may still return it. Call this when you recalled a memory via recall_l1_records but found it useless for the current task.
 
 ## embed_and_search
 

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { L1_RECORDS_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { L1_RECORDS_DIR, L2_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
@@ -163,7 +163,7 @@ export function registerReadL1IncrementTool(
 				},
 				cursor: {
 					type: "string",
-					description: "L2 cursor lastRecordId. Empty string or omit to read default from l2-cursor.json.",
+					description: "L2 cursor lastRecordId. Empty string or omit to read default from l2/cursor.json.",
 					default: "",
 				},
 				maxRecords: {
@@ -191,7 +191,7 @@ export function registerReadL1IncrementTool(
 				if (!effectiveCursor) {
 					const profilePath = getProfilePath();
 					if (profilePath) {
-						const cursorPath = join(profilePath, MEMORY_DB_DIR, "l2-cursor.json");
+						const cursorPath = join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE);
 						if (existsSync(cursorPath)) {
 							try {
 								const data = JSON.parse(readFileSync(cursorPath, "utf-8")) as { lastRecordId?: string };

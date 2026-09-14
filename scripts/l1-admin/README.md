@@ -1,6 +1,6 @@
 # l1-admin —— L1 原子记忆管理工具集
 
-L1 原子记忆（`{profile}/memoryDB/l1-records/*.jsonl`）的日常管理工具，沉淀自 2026-09-11「L1 全量审计 + 清理」实战（233 条逐条处置、两次踩坑后定版）。
+L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工具，沉淀自 2026-09-11「L1 全量审计 + 清理」实战（233 条逐条处置、两次踩坑后定版）。
 
 ## 工具一览
 
@@ -10,7 +10,7 @@ L1 原子记忆（`{profile}/memoryDB/l1-records/*.jsonl`）的日常管理工�
 | `rewrite.mjs` | 改写记录（新 id 追加 + 旧行就地标记） | 同上 |
 | `verify.mjs` | 库体检：行数/存活/坏行/同 id/畸形/错误串白名单 | 只读 |
 | `health.mjs` | 健康指标：超长/test 残留/孤儿 stats/自造 id/畸形/错误串 | 只读 |
-| `rollback.mjs` | 从备份目录恢复 l1-records | `--dry-run` 默认；实恢复前自动备份当前库 |
+| `rollback.mjs` | 从备份目录恢复 L1 records | `--dry-run` 默认；实恢复前自动备份当前库 |
 
 公共参数：`--profile <dir>`（默认 `C:/Users/leaf/.pi/agent/profiles/default`）、`--dry-run` / `--apply`。
 
@@ -47,7 +47,7 @@ node scripts/l1-admin/rollback.mjs C:/temp/pi/backup/l1-cleanup-20260911 --apply
 ## 与管线的边界
 
 - 工具直接读写分片文件，**不触发** L2 队列（只有 `l1_commit` 工具内会入队）。
-- 写操作前自动备份到 `{memoryDB}/.l1-admin-backup/{timestamp}-{op}/`。
+- 写操作前自动备份到 `{memoryDB}/backups/l1-admin/{timestamp}-{op}/`。
 - 写入分片名 = 本地日期（UTC+8），与 `l1_commit` 的 `localDate` 规则一致。
 - ⚠ 时区窗口：loader 按 **UTC 日期**枚举分片。本地 00:00–07:59 写入的今日分片要到本地 08:00 后才进入 30/365 天窗口（召回/回填不可见）。建议写操作在本地 08:00 后执行，或写后等待 08:00。
 - ⚠ 向量一致性：经 `rewrite.mjs`/`tombstone.mjs` 改动后，旧 id 的向量库条目不会自动清理——执行 `/my-memory:l1:embedding:rebuild`（pi 命令）全量重嵌（清空 vecStore 并按存活记录重建）。

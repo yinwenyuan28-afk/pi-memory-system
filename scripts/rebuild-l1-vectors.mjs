@@ -5,7 +5,7 @@
  *      freelist 1027/1041 页是删除痕迹），但 l1_vector_index 残留 208 行 → 线上召回空转。
  * 本脚本：清空映射表 + 全量重嵌所有非 deleted 的 L1 records。
  *
- * 记录本体在 l1-records/*.jsonl，向量只是可重算的索引 → 本操作不丢任何记忆。
+ * 记录本体在 l1/records/*.jsonl，向量只是可重算的索引 → 本操作不丢任何记忆。
  * 自包含 .mjs：不 import 扩展 TS 模块，逻辑与 memory/search/embedding/backfill.ts 的
  * rebuildAllVectors + vector-store/store.ts 的 insertBatch 对齐。
  *
@@ -32,13 +32,17 @@ function parseArgs(argv) {
 }
 const PROFILE = parseArgs(process.argv.slice(2)).profile;
 
+// 路径与 memory/paths.ts 同步（脚本无法 import TS，改动需手动对齐，见 plan MEMORYDB_LAYOUT_PLAN 3.2-B）
+const L1_RECORDS_REL = join("l1", "records");
+const VECTORS_DB_REL = join("search", "vectors", "l1-vectors.sqlite");
+
 // ── 1. 加载全部存活 records（LWW 语义，与 record-loader.ts 同口径；2026-09-11 同步） ──
 // 同 id 按「追加序最后一行」判定：last.deleted === true → 不输出；否则输出最后一行。
 // 旧实现逐行 !deleted 会把「已判死但旧行仍活跃」的残活行重新入向量，必须保持同口径。
 function loadAliveRecords(profilePath) {
-  const dir = join(profilePath, "memoryDB", "l1-records");
+  const dir = join(profilePath, "memoryDB", L1_RECORDS_REL);
   if (!existsSync(dir)) {
-    console.error(`l1-records 目录不存在: ${dir}`);
+    console.error(`L1 records 目录不存在: ${dir}`);
     process.exit(1);
   }
   const lastById = new Map();
@@ -116,7 +120,7 @@ async function embedBatch(cfg, texts, lastCallTs) {
 
 // ── 4. 向量库写入（与 vector-store/store.ts insertBatch 对齐） ──
 function openWritableVectorDb(profilePath) {
-  const dbPath = join(profilePath, "memoryDB", ".vectors", "l1-vectors.sqlite");
+  const dbPath = join(profilePath, "memoryDB", VECTORS_DB_REL);
   if (!existsSync(dbPath)) {
     console.error(`向量库不存在: ${dbPath}`);
     process.exit(1);

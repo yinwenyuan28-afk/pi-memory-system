@@ -25,7 +25,7 @@ const day = (offset: number) => {
 
 function makeProfile(files: Record<string, string[]>): string {
 	const root = mkdtempSync(join(tmpdir(), "l1anchor-"));
-	const dir = join(root, "memoryDB", "l1-records");
+	const dir = join(root, "memoryDB", "l1", "records");
 	mkdirSync(dir, { recursive: true });
 	for (const [name, lines] of Object.entries(files)) {
 		writeFileSync(join(dir, name), lines.join("\n") + "\n", "utf-8");
@@ -132,11 +132,11 @@ console.log("\n=== 7. 边界：目录不存在 / 全作废 ===");
 
 console.log("\n=== 8. buildL1Task 注入结果（临时 profile，避免污染真实锚点日志）===");
 {
-	// 注意：buildL1Task 会向 profile 的 l1-anchor-log.jsonl 追加一条日志，
+	// 注意：buildL1Task 会向 profile 的 l1/anchor-log.jsonl 追加一条日志，
 	// 所以这里必须用临时 profile——早期版本直接对真实 profile 调用，污染了生产日志。
 	const root = mkdtempSync(join(tmpdir(), "l1task-"));
-	const l0dir = join(root, "memoryDB", "l0-conversations");
-	const recdir = join(root, "memoryDB", "l1-records");
+	const l0dir = join(root, "memoryDB", "l0", "conversations");
+	const recdir = join(root, "memoryDB", "l1", "records");
 	mkdirSync(l0dir, { recursive: true });
 	mkdirSync(recdir, { recursive: true });
 	writeFileSync(join(l0dir, `${day(0)}.jsonl`), "{}\n", "utf-8");
@@ -161,7 +161,7 @@ console.log("\n=== 8. buildL1Task 注入结果（临时 profile，避免污染�
 			lines.find((l) => l.startsWith("PreviousScene:")) ?? "",
 		);
 	}
-	const logPath = join(root, "memoryDB", "l1-anchor-log.jsonl");
+	const logPath = join(root, "memoryDB", "l1", "anchor-log.jsonl");
 	check("锚点日志写入临时 profile", existsSync(logPath));
 	if (existsSync(logPath)) {
 		const logged = JSON.parse(readFileSync(logPath, "utf-8").split("\n").filter(Boolean)[0]);

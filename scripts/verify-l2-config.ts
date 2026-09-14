@@ -157,15 +157,15 @@ console.log("\n=== 6. syncSceneIndex 集成：成员清单必须能在索引重�
 {
 	const root = mkdtempSync(join(tmpdir(), "l2idx-"));
 	const dbDir = join(root, "memoryDB");
-	mkdirSync(join(dbDir, "l2-scene-blocks"), { recursive: true });
-	mkdirSync(join(dbDir, ".metadata"), { recursive: true });
-	const sceneFile = join(dbDir, "l2-scene-blocks", "proj-主线.md");
+	mkdirSync(join(dbDir, "l2", "scene-blocks"), { recursive: true });
+	mkdirSync(join(dbDir, "l2", "index"), { recursive: true });
+	const sceneFile = join(dbDir, "l2", "scene-blocks", "proj-主线.md");
 	writeFileSync(
 		sceneFile,
 		["-----META-START-----", "created: 2026-09-01T00:00:00.000Z", "updated: 2026-09-10T00:00:00.000Z", "summary: 摘要", "heat: 7", "-----META-END-----", "", "## 实施区", "内容"].join("\n"),
 		"utf-8",
 	);
-	writeFileSync(join(dbDir, ".metadata", "scene_members.json"), JSON.stringify({ "proj-主线.md": ["l1_1", "l1_2"] }), "utf-8");
+	writeFileSync(join(dbDir, "l2", "index", "scene_members.json"), JSON.stringify({ "proj-主线.md": ["l1_1", "l1_2"] }), "utf-8");
 
 	const first = syncSceneIndex(root);
 	check("索引条目带 members", JSON.stringify(first[0]?.members) === JSON.stringify(["l1_1", "l1_2"]), JSON.stringify(first[0]));
@@ -176,7 +176,7 @@ console.log("\n=== 6. syncSceneIndex 集成：成员清单必须能在索引重�
 	check("二次重建后 members 仍在（sidecar 是权威载体）", JSON.stringify(second[0]?.members) === JSON.stringify(["l1_1", "l1_2"]));
 
 	// sidecar 缺失时降级为空数组而不是崩
-	rmSync(join(dbDir, ".metadata", "scene_members.json"), { force: true });
+	rmSync(join(dbDir, "l2", "index", "scene_members.json"), { force: true });
 	const third = syncSceneIndex(root);
 	check("sidecar 缺失 → members 降级为 []", Array.isArray(third[0]?.members) && third[0].members.length === 0);
 
@@ -316,7 +316,7 @@ console.log("\n=== 9. consolidate 接入：上限预检 / 成员表 / 自动备�
 	for (let i = 0; i < CONSOLIDATE_BACKUP_KEEP + 2; i++) {
 		backupSceneBlocks(p, [{ filename: "a.md", raw: `v${i}` }], `t${100 + i}`, { at: "now" });
 	}
-	const dirs = readdirSync(join(p, "memoryDB", ".backups")).filter((d) => d.startsWith("l2-consolidate-"));
+	const dirs = readdirSync(join(p, "memoryDB", "backups")).filter((d) => d.startsWith("l2-consolidate-"));
 	check(`备份份数封顶在 ${CONSOLIDATE_BACKUP_KEEP}`, dirs.length === CONSOLIDATE_BACKUP_KEEP, `实际 ${dirs.length}`);
 	rmSync(p, { recursive: true, force: true });
 }
