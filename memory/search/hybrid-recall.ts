@@ -55,6 +55,19 @@ export interface RecallL1RecordsOptions {
    * 未传则保持「每次召回 +1」的原行为。
    */
   hitDedupSet?: Set<string>;
+  /**
+   * 是否在此处计命中（默认 true，保持既有行为）。
+   *
+   * 自动注入路径传 `false`（2026-09-15，L1_RECALL_ASYNC）：异步/就绪式注入下，
+   * 「召回成功返回」≠「真的注入进了上下文」——单次答完的 turn 里块从未被读出。
+   * 该路径的正确计数点在 `context` 事件**真正把块入列**的那一次（index.ts）。
+   */
+  countHits?: boolean;
+  /**
+   * 外部取消信号（2026-09-15 新增）：由召回调度闸门注入。
+   * 超时/被新请求覆盖/profile 切换时 abort → 取消底层 embedding HTTP，避免悬留请求。
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -86,11 +99,14 @@ export async function recallL1Records(
     const { getEmbeddingService } = await import("./embedding/service.ts");
     const { getVectorStore } = await import("./vector-store/store.ts");
 
+    // 已被取消（超时/被覆盖/profile 切换）→ 直接空结果，不做任何网络调用
+    if (options.signal?.aborted) return result;
+
     const embService = await getEmbeddingService(profilePath);
     const vecStore = await getVectorStore(profilePath);
 
     if (await vecStore.isAvailable() && (await vecStore.count()) > 0) {
-      const queryVec = await embService.embed(queryText);
+      const queryVec = await embService.embed(queryText, { signal: options.signal });
       const hits = await vecStore.search(queryVec, topK);
 
       // ── 闸门 1：相关性阈值 ─────────────────────────────
@@ -146,7 +162,11 @@ export async function recallL1Records(
   // turn 级去重：传入 hitDedupSet 后，同一 turn 内已计过命中的 record 不再重复 +1
   // （自动注入 top-3 与工具 top-5 语义重叠，若不按 turn 去重会双重计数）。
   // （embed_and_search 走 l1-extractor 去重，不调用本函数，不计数）
-  if (result.l1Records.length > 0) {
+  //
+  // 2026-09-15（L1_RECALL_ASYNC）：自动注入路径传 `countHits: false` —— 「召回返回」≠「真的注入」
+  // （异步/就绪式注入下，单次答完的 turn 里块从未被读出）。该路径改由 context 真正入列时计数。
+  const shouldCountHits = options.countHits !== false;
+  if (shouldCountHits && result.l1Records.length > 0) {
     try {
       const { getL1HitStatsDB } = await import("../stats/l1-hit-stats-db.ts");
       const dedupSet = options.hitDedupSet;

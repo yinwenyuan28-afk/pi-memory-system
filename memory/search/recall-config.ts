@@ -24,6 +24,16 @@ const LEGACY_RECALL_CONFIG_REL = "recall-config.json";
 /** query 扩展模式（与 L1_RECALL_GATE_PLAN 任务 9 对应）。 */
 export type ContextExpansion = "off" | "conditional" | "always";
 
+/**
+ * 自动注入模式（2026-09-15 新增，L1_RECALL_ASYNC）：
+ *   - `blocking`（默认）：`before_agent_start` 内等待召回，上限 `injectTimeoutMs`。
+ *     实测 p50 457ms / p90 1326ms ⇒ 1s 上限让多数 turn 首跳即有记忆；超时后请求仍在飞，
+ *     可在后续 LLM 调用补注入（退化为 async 行为），严格优于纯 async。
+ *   - `async`：不等待，立即放行 agent loop；结果就绪后由 `context` 在后续 LLM 调用前插入。
+ *     代价：该 turn 首次调用必无记忆；「单次答完」（无工具轮次，实测 12.8%–14.6%）整轮无记忆。
+ */
+export type InjectMode = "blocking" | "async";
+
 /** 召回闸门配置结构（application-propertis.json 的 recall 节）。 */
 export interface RecallConfig {
   /** 相似度下限（cosine score = 1 - distance）。低于此值的候选不注入。0 = 不过滤。 */
@@ -37,10 +47,25 @@ export interface RecallConfig {
   maxCharsPerRecord: number;
   /** 注入总字符预算（累计超出即停止追加）。 */
   maxTotalChars: number;
-  /** 召回整体超时（ms，预留；embedding 自带 30s 超时兜底）。 */
+  /**
+   * **工具/一般路径**的召回预算（ms）：`recall_l1_records`（demand 类）用。
+   * 不含 embedding 自带的 30s 上界（单次 embed 最坏 ≈121s：QPM 排队 ≤60s + fetch 30s + 重试）。
+   */
   timeoutMs: number;
   /** query 构造：off=裸 prompt；conditional=仅指代消解时扩展；always=无条件扩展（A/B 对照用）。 */
   contextExpansion: ContextExpansion;
+  /** 自动注入模式：blocking（默认，等 `injectTimeoutMs`）/ async（不等，就绪后补注入）。 */
+  injectMode: InjectMode;
+  /** 自动注入路径的等待/预算上限（ms）。到点即放弃本轮该结果（底层仍在飞，可后续补注入）。 */
+  injectTimeoutMs: number;
+  /**
+   * 召回闸门**最长持有时间**（ms）：底层可能因不可取消的等待（QPM sleep / 重试）长期不结束，
+   * 到点强制释放闸门并 warn，避免「至多一个召回活动」演变成死锁。
+   * 必须 > `injectTimeoutMs`（结果预算）——两者语义不同：前者约束闸门占用，后者约束结果可用性。
+   */
+  maxHoldMs: number;
+  /** 会话启动是否后台预热向量库/embedding 客户端（只开库建客户端，不发 embedding 请求）。 */
+  prewarm: boolean;
 }
 
 /** 内置默认值。minScore 由 scripts/sample-recall-scores.mjs 采样标定（2026-09-02）。 */
@@ -53,6 +78,12 @@ export const DEFAULT_RECALL_CONFIG: RecallConfig = {
   maxTotalChars: 2000,
   timeoutMs: 5000,
   contextExpansion: "conditional",
+  // 实测标定（R2，2026-09-15）：召回链净成本 p50 457ms / p90 1326ms → 1s 上限覆盖约 80–85% turn。
+  injectMode: "blocking",
+  injectTimeoutMs: 1000,
+  // 工折中：不追求覆盖 121s 最坏（会让闸门长期被占），取「远超正常、可脱离」。
+  maxHoldMs: 35000,
+  prewarm: true,
 };
 
 /** 从 JSON 解析 + 逐项校验回退默认（兼容 undefined / 类型错误 / 非法枚举）。 */
@@ -77,7 +108,24 @@ function mergeRecallConfig(raw: Partial<RecallConfig> | null | undefined): Recal
       raw.contextExpansion === "always"
         ? raw.contextExpansion
         : DEFAULT_RECALL_CONFIG.contextExpansion,
+    injectMode:
+      raw.injectMode === "blocking" || raw.injectMode === "async"
+        ? raw.injectMode
+        : DEFAULT_RECALL_CONFIG.injectMode,
+    injectTimeoutMs:
+      typeof raw.injectTimeoutMs === "number" && raw.injectTimeoutMs > 0
+        ? raw.injectTimeoutMs
+        : DEFAULT_RECALL_CONFIG.injectTimeoutMs,
+    maxHoldMs:
+      typeof raw.maxHoldMs === "number" && raw.maxHoldMs > 0
+        ? raw.maxHoldMs
+        : DEFAULT_RECALL_CONFIG.maxHoldMs,
+    prewarm: typeof raw.prewarm === "boolean" ? raw.prewarm : DEFAULT_RECALL_CONFIG.prewarm,
   };
+  // 语义约束：闸门持有上限必须大于结果预算，否则结果永远来不及用（配置写错时自动纠正并保留可解释性）
+  if (merged.maxHoldMs <= merged.injectTimeoutMs) {
+    merged.maxHoldMs = merged.injectTimeoutMs * 2;
+  }
   return merged;
 }
 

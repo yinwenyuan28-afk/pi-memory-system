@@ -25,8 +25,12 @@ export interface EmbeddingStats {
 
 /** 主接口 */
 export interface EmbeddingService {
-  /** 单条文本 embed */
-  embed(text: string): Promise<Vector>;
+  /**
+   * 单条文本 embed。
+   * @param opts.signal 可选取消信号（2026-09-15：超时/被新请求覆盖/profile 切换时由召回调度闸门注入；
+   *                    不传则行为与既有完全一致）
+   */
+  embed(text: string, opts?: { signal?: AbortSignal }): Promise<Vector>;
   /** 批量 embed（自动分批，每批 ≤ batchSize） */
   embedBatch(texts: string[]): Promise<Vector[]>;
   /** 返回向量维度 */
@@ -107,7 +111,28 @@ async function createRemoteEmbeddingService(config: EmbeddingConfig): Promise<Em
   const callTimestamps: number[] = [];
   const qpmLimit = config.qpmLimit ?? 60;
 
-  async function waitForQpmSlot(): Promise<void> {
+  /**
+   * 可取消的 sleep：被 abort 时立即拒绝（而非白等一整段 QPM 间隔）。
+   * 用于限流等待——否则取消信号无法缩短「排队 sleep」，闸门只能靠 maxHoldMs 兜底。
+   */
+  function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+    if (!signal) return new Promise((r) => setTimeout(r, ms));
+    if (signal.aborted) return Promise.reject(new Error("embedding 已取消"));
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new Error("embedding 已取消"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  async function waitForQpmSlot(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new Error("embedding 已取消");
     const now = Date.now();
     // 清理 1 分钟前的时间戳
     while (callTimestamps.length > 0 && callTimestamps[0] <= now - 60_000) {
@@ -116,7 +141,7 @@ async function createRemoteEmbeddingService(config: EmbeddingConfig): Promise<Em
     if (callTimestamps.length >= qpmLimit) {
       const waitMs = callTimestamps[0] + 60_000 - now + 100; // +100ms 安全边际
       if (waitMs > 0) {
-        await new Promise((r) => setTimeout(r, waitMs));
+        await abortableSleep(waitMs, signal);
       }
     }
     callTimestamps.push(Date.now());
@@ -125,16 +150,17 @@ async function createRemoteEmbeddingService(config: EmbeddingConfig): Promise<Em
   /**
    * 单条 embed（带缓存 + 限流 + 重试）
    */
-  async function embedSingle(text: string): Promise<Vector> {
-    // 1. LRU 缓存命中
+  async function embedSingle(text: string, signal?: AbortSignal): Promise<Vector> {
+    // 1. LRU 缓存命中（取消也走缓存？不——取消表示调用方已不需要，直接退出）
+    if (signal?.aborted) throw new Error("embedding 已取消");
     const cached = cache.get(text);
     if (cached) return cached;
 
     // 2. 限流等待
-    await waitForQpmSlot();
+    await waitForQpmSlot(signal);
 
     // 3. 调千问 API（带重试）
-    const vec = await callDashScopeApi(config, text, modelId, dimensions);
+    const vec = await callDashScopeApi(config, text, modelId, dimensions, signal);
 
     // 4. 存缓存
     cache.set(text, vec);
@@ -147,10 +173,10 @@ async function createRemoteEmbeddingService(config: EmbeddingConfig): Promise<Em
   let totalLatencyMs = 0;
 
   const service: EmbeddingService = {
-    async embed(text: string): Promise<Vector> {
+    async embed(text: string, opts?: { signal?: AbortSignal }): Promise<Vector> {
       totalCalls++;
       const start = Date.now();
-      const vec = await embedSingle(text);
+      const vec = await embedSingle(text, opts?.signal);
       totalLatencyMs += Date.now() - start;
       return vec;
     },
@@ -208,9 +234,18 @@ async function callDashScopeApi(
   config: EmbeddingConfig,
   text: string,
   modelId: string,
-  dimensions: number
+  dimensions: number,
+  signal?: AbortSignal
 ): Promise<Vector> {
   const url = config.url.replace(/\/$/, "") + "/embeddings";
+
+  // 自带 30s 上界 + 外部取消信号（Node ≥20.3 支持 AbortSignal.any）；
+  // 外部信号用于「超时/被新请求覆盖/profile 切换」时尽快释放连接。
+  const timeoutSignal = AbortSignal.timeout(30_000); // 30s 超时
+  const combined =
+    signal && typeof AbortSignal.any === "function"
+      ? AbortSignal.any([timeoutSignal, signal])
+      : timeoutSignal;
 
   const response = await fetch(url, {
     method: "POST",
@@ -224,7 +259,7 @@ async function callDashScopeApi(
       dimensions,
       encoding_format: "float",
     }),
-    signal: AbortSignal.timeout(30_000), // 30s 超时
+    signal: combined,
   });
 
   if (!response.ok) {
@@ -235,10 +270,11 @@ async function callDashScopeApi(
       throw new Error(`DashScope API 客户端错误 (${response.status}): ${errorText}`);
     }
 
-    // 429 / 5xx 可重试
+    // 429 / 5xx 可重试（透传 signal：取消后不再重试）
     if (response.status === 429 || response.status >= 500) {
+      if (signal?.aborted) throw new Error("embedding 已取消");
       await new Promise((r) => setTimeout(r, 1000));
-      return callDashScopeApi(config, text, modelId, dimensions); // 单次重试
+      return callDashScopeApi(config, text, modelId, dimensions, signal); // 单次重试
     }
 
     throw new Error(`DashScope API 错误 (${response.status}): ${errorText}`);
