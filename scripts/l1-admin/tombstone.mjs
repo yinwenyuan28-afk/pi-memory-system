@@ -4,7 +4,7 @@
 //      追加墓碑行无效 → 必须就地标记旧行（先例：08-20 治理 fix1 行）。
 // 用法：
 //   node tombstone.mjs <l1_id...>                     # dry-run，只打印将标记的行
-//   node tombstone.mjs <l1_id...> --apply             # 实写（自动备份到 memoryDB/.l1-admin-backup/）
+//   node tombstone.mjs <l1_id...> --apply             # 实写（自动备份到 memoryDB/backups/l1-admin/）
 //   node tombstone.mjs <l1_id...> --apply --profile <dir>
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';

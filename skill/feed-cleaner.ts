@@ -16,8 +16,8 @@
 //       日志压缩、时间戳/NUL/换行）+ tool_result 4000 字头尾截断
 //    ④ 过滤层：复用 shouldCaptureL0（空 / 纯[image] / 斜杠命令）
 //
-//  落盘：{profile}/memoryDB/skill-feed/<sessionKey>.jsonl（按 session 一文件，
-//  append-only）。游标独立于 L0（skill-feed-cursor.json，行号推进）。
+//  落盘：{profile}/memoryDB/skill/feed/<sessionKey>.jsonl（按 session 一文件，
+//  append-only）。游标独立于 L0（skill/cursor.json，行号推进）。
 // ══════════════════════════════════════════════════════════════
 
 import {

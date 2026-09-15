@@ -9,7 +9,7 @@
 //       被召回后，LLM 判定「无参考价值」、由 clear_invalid_l1_records 工具（已实现）从上下文移除时标记。
 //   - effective_hits：有效命中次数 = hits - invalid_hits（同事务维护，永不为负）
 //
-// 存储：{profile}/memoryDB/l1-hit-stats.sqlite
+// 存储：{profile}/memoryDB/l1/hit-stats.sqlite
 //   技术：node:sqlite 内置 DatabaseSync（零原生依赖，与 workflow/db.ts 同款）
 //         WAL + busy_timeout 应对多进程并发写（后台子代理 + 主代理）
 //   与 vector-store 的 l1-vectors.sqlite（better-sqlite3 + sqlite-vec）物理隔离，互不干扰。
@@ -100,7 +100,7 @@ export type HitSource = "inject" | "tool";
 /**
  * L1HitStatsDB — L1 命中统计库（node:sqlite）
  *
- * @param profilePath 活动 profile 根目录（l1-hit-stats.sqlite 存于其 memoryDB/ 下）
+ * @param profilePath 活动 profile 根目录（l1/hit-stats.sqlite 存于其 memoryDB/ 下）
  */
 export class L1HitStatsDB {
   private db: DatabaseSync;
@@ -148,7 +148,7 @@ export class L1HitStatsDB {
    *
    * 结构：`{ generatedAt, activeDays, stats }`。activeDays 是活跃会话日（YYYY-MM-DD），
    * 供前端按与 quality.ts 一致的「活跃日时钟」计算 decay——前端跑在 file:// 下列不了
-   * l0-conversations 目录，只能由后端喂。
+   * l0/conversations 目录，只能由后端喂。
    */
   private exportSidecar(): void {
     try {

@@ -6,13 +6,15 @@
   python fix-l1-method-types.py --mode=inline        # 原地改 type 字段（最小变更）
   python fix-l1-method-types.py --mode=append        # 旧记录标 deleted + 追加新记录（对齐 dedup 语义）
 
-前置：先备份 l1-records/ 目录。改完若启用向量化，需 /my-memory:l1:embedding:rebuild。
+前置：先备份 l1/records/ 目录。改完若启用向量化，需 /my-memory:l1:embedding:rebuild。
 """
 import argparse, json, os, re, shutil, sys, time, glob
 from collections import Counter
 
-RECORDS = r"C:/Users/leaf/.pi/agent/profiles/default/memoryDB/l1-records"
-BACKUP = r"C:/Users/leaf/.pi/agent/profiles/default/memoryDB/backup-l1-records-20260822"
+# 与 memory/paths.ts 同步（L1_RECORDS_DIR = memoryDB/l1/records；备份归 backups/）
+PROFILE = r"C:/Users/leaf/.pi/agent/profiles/default"
+RECORDS = os.path.join(PROFILE, "memoryDB", "l1", "records")
+BACKUP = os.path.join(PROFILE, "memoryDB", "backups", "l1-records-20260822")
 
 # 人工复核结果：record_id -> 修正后的 type（仅列出需要修正的）
 FIX = {

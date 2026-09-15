@@ -7,7 +7,7 @@ import { FAILURE_STATE_FILE, MEMORY_DB_DIR } from "./paths.ts";
 //
 //  原先 consecutiveFailures / cooledDown 是内存变量，进程重启即清零，
 //  导致确定性失败在重启后重新累计、最多空烧 3 次才再熔断。
-//  现落盘到 {profile}/memoryDB/failure-state.json，重启后仍能读到。
+//  现落盘到 {profile}/memoryDB/state/failure-state.json，重启后仍能读到。
 // ══════════════════════════════════════════════════════════════
 
 export interface LayerFailureState {

@@ -1,7 +1,7 @@
 /**
  * 活跃会话日 — 质量分的时间基准（memory/l1/active-days.ts）
  *
- * 活跃日 = 用户当天开过 pi 干过活。来源：L0 归档分片 `memoryDB/l0-conversations/YYYY-MM-DD.jsonl`
+ * 活跃日 = 用户当天开过 pi 干过活。来源：L0 归档分片 `memoryDB/l0/conversations/YYYY-MM-DD.jsonl`
  * 的文件名，零新增写入。
  *
  * 用途：L1 质量分的 decay 以「活跃会话日」而非日历天为基准——停工期间不增长，

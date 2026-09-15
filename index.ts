@@ -189,7 +189,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）。
-  // L2 由 commit 进程直接写入 pipeline-jobs.sqlite；此处回调只给 L3 计数。
+  // L2 由 commit 进程直接写入 pipeline/jobs.sqlite；此处回调只给 L3 计数。
   registerL1CommitTool(
     pi,
     () => manager?.getProfileManager().getActiveProfile()?.path,
@@ -270,7 +270,7 @@ export default function (pi: ExtensionAPI) {
 
     const getProfilePath = () => manager?.getProfileManager().getActiveProfile()?.path;
 
-    // 流水线 worker（单次注册）：串行消费 pipeline-jobs.sqlite
+    // 流水线 worker（单次注册）：串行消费 pipeline/jobs.sqlite
     if (!pipelineInitialized) {
       pipelineWorker = setupPipelineWorker(pi, getProfilePath, () => pipelineExecutors);
       pipelineInitialized = true;
@@ -353,7 +353,7 @@ export default function (pi: ExtensionAPI) {
     // {sessionId}/{runId}/run-0/session.jsonl）会被当主会话归档，导致 L0 分片污染
     // （子代理的 thinking / tool_call / l1_commit 响应都进入 conversations/），
     // 下轮 L1 提取读到上一轮 L1 自身执行痕迹（“框架噪音”）。
-    // 根因验证：2026-08-18 l0-cursor.json 含大量 /\run-0\session.jsonl/ entry，
+    // 根因验证：2026-08-18 l0/cursor.json 含大量 /\run-0\session.jsonl/ entry，
     // 对应子代理 session 文件（id 与主会话不同，modelId=mimo-v2.5）。
     if (process.env.PI_SUBAGENT_CHILD === "1") return;
     try {

@@ -44,7 +44,7 @@ export function setupSkillReviewer(
 		const paths = prepareReviewPaths(ctx);
 		if (!paths) return null;
 
-		// 枚举 skill-feed 文件（{memoryDB}/skill-feed/<sessionKey>.jsonl，按 session 一文件）
+		// 枚举 skill-feed 文件（{memoryDB}/skill/feed/<sessionKey>.jsonl，按 session 一文件）
 		// 勘误：按 session 过滤，仅含当前 session 的 feed 文件，不回溯跨 session 未落库分片（修复 c790680d）
 		const feedDir = join(paths.profilePath, MEMORY_DB_DIR, SKILL_FEED_DIR);
 		if (!existsSync(feedDir)) return null;

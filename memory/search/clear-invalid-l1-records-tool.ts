@@ -14,7 +14,7 @@
  * 避免对不存在的命中产生脏 invalid_hits（recordInvalid 对 hits=0 也会被钳制为 0，无副作用，
  * 但显式跳过更清晰、且工具结果能如实反映）。
  *
- * recordInvalid 内部会自动把 sidecar l1-hit-stats.json 重写，records-viewer.html 直接 fetch，
+ * recordInvalid 内部会自动把 sidecar l1/hit-stats.json 重写，records-viewer.html 直接 fetch，
  * 故标记后 viewer 的「质量分布」即时更新。
  */
 

@@ -22,7 +22,7 @@
  * 与废记忆同分；而事实上它从未获得过被重新验证的机会。
  *
  * 现改为统计 base 之后的【活跃会话日】数量，活跃日从 L0 归档分片
- * `memoryDB/l0-conversations/YYYY-MM-DD.jsonl` 的文件名推导（零新增写入）。
+ * `memoryDB/l0/conversations/YYYY-MM-DD.jsonl` 的文件名推导（零新增写入）。
  * 停工期间 days 不增长 → decay 冻结，复工后按实际工作节奏继续衰减。
  *
  * 已知局限：活跃日是全局的，不区分项目。个人开发者单线工作场景下成立；

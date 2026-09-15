@@ -9,7 +9,9 @@
 """
 import json, glob, os, re
 
-RECORDS = r"C:/Users/leaf/.pi/agent/profiles/default/memoryDB/l1-records"
+# 与 memory/paths.ts 同步（L1_RECORDS_DIR = memoryDB/l1/records）
+PROFILE = r"C:/Users/leaf/.pi/agent/profiles/default"
+RECORDS = os.path.join(PROFILE, "memoryDB", "l1", "records")
 NORM = re.compile(r"(应|必须|不应|禁止|不要|严禁|务必|切忌|优先|避免|宁可|宁)")
 NORM_STRONG = re.compile(r"(不应|禁止|不要|严禁|务必|切忌|应优先|必须|避免)")
 FACT_MARK = re.compile(r"(commit|已(完成|落地|实施|确认|修复|推送)|改为|改造|新增|修复|实现|触发|采用|回退|迁移|落地|完成)")
