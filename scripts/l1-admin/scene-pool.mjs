@@ -225,6 +225,20 @@ function cmdReport(profileDir) {
     console.log(`全局收敛度   : ${(((1 - byName.size / records.length) * 100)).toFixed(1)}%  （= 1 - distinct/记录数）`);
   }
 
+  console.log("-".repeat(72));
+  console.log("未归类率（`metadata.sceneFallback === true`，2026-09-15 L1_PROJECT_SIGNAL）");
+  const unclassified = records.filter((r) => r.obj.metadata?.sceneFallback === true);
+  const mainAgent = records.filter((r) => r.obj.metadata?.origin === "main-agent");
+  const unclassifiedMain = mainAgent.filter((r) => r.obj.metadata?.sceneFallback === true);
+  const pct = (n, d) => (d > 0 ? `${((n / d) * 100).toFixed(1)}%` : "—");
+  console.log(`全部记录   : ${records.length}，未归类 ${unclassified.length}（${pct(unclassified.length, records.length)}）`);
+  console.log(`主代理记录 : ${mainAgent.length}，未归类 ${unclassifiedMain.length}（${pct(unclassifiedMain.length, mainAgent.length)}）`);
+  console.log("  · 主代理未归类应在「记录前先调 list_l1_scenes」契约生效后下降；长期偏高说明契约没被执行，");
+  console.log("    届时应考虑把清单并入系统提示（代价：provider prefix cache 每轮失效），属另开计划的取舍");
+  if (records.some((r) => r.obj.metadata?.sceneFallback === true && r.obj.scene_id)) {
+    console.log("  WARN 存在「标了未归类却带 scene_id」的记录——口径异常，值得核查");
+  }
+
   // 批级派生指标：批边界 = 同一 commit 的记录共享同一 createdAt（commit-tool 用单个 nowStamp 落盘）
   const batches = new Map();
   for (const r of records) {

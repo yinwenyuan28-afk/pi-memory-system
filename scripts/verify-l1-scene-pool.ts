@@ -27,18 +27,20 @@ import {
 	buildScenePoolLines,
 	createSceneResolver,
 	emptyPool,
-	findMostRecentScene,
 	findSceneByNameOrAlias,
 	nextSceneId,
+	projectOf,
 	readScenePool,
 	resolveMergedTarget,
 	scenePoolPath,
+	selectScenePoolEntries,
 	SCENE_POOL_INJECT_LIMIT,
 	writeScenePool,
 	type ScenePool,
 } from "../memory/l1/scene-pool.ts";
-import { buildL1Task, detectBatchCwd } from "../memory/l1/config.ts";
+import { buildL1Task, detectBatchCwd, detectBatchProject } from "../memory/l1/config.ts";
 import { registerL1CommitTool, stampRecordTimes } from "../memory/l1/commit-tool.ts";
+import { registerListL1ScenesTool } from "../memory/l1/scene-tool.ts";
 
 let pass = 0;
 let fail = 0;
@@ -150,8 +152,9 @@ console.log("\n=== A. 池内核：四分支解析 ===");
 	const r4 = createSceneResolver(pool, NOW);
 	const fb = r4.resolve({ scene_id: "sc9999", cwd: A });
 	check("未知 id：降级 fallback", fb.kind === "fallback", fb.kind);
-	check("未知 id：归入同 cwd 最近场景", fb.scene_name === "alpha｜合同流程", fb.scene_name);
-	check("未知 id：给出 warn", typeof fb.warn === "string" && fb.warn.includes("sc9999"));
+	// 2026-09-15 L1_PROJECT_SIGNAL：降级**不再猜**"同 cwd 最近场景"，直接落未归类
+	check("未知 id：落未归类（不猜同 cwd 场景）", fb.scene_name === "未分类场景" && fb.scene_id === null, fb.scene_name);
+	check("未知 id：给出 warn 且提示挑 id/给新名", typeof fb.warn === "string" && fb.warn.includes("sc9999") && fb.warn.includes("未归类"), fb.warn);
 	check("未知 id：不抛错、stats.fallback=1", r4.stats().fallback === 1);
 
 	// 同批同 id 只累加一次
@@ -184,7 +187,7 @@ console.log("\n=== A2. mergedInto 链 + 注入排序/截断/窗口 ===");
 	check("自成环 → null", resolveMergedTarget(p, "sc0003") === null);
 	check("被合并 id 解析到目标名", createSceneResolver(p, NOW).resolve({ scene_id: "sc0001" }).scene_name === "乙");
 	check("别名命中（含合并跳转）", findSceneByNameOrAlias(p, "旧甲名")?.name === "乙");
-	const lines = buildScenePoolLines(p, A);
+	const lines = buildScenePoolLines(p, { batchCwd: A });
 	check("被合并条目不参与注入", lines.lines.every((l) => !l.includes("sc0001") && !l.includes("sc0003")), JSON.stringify(lines.lines));
 	check("注入行格式 id | name", lines.lines[0] === "- sc0002 | 乙", lines.lines[0]);
 
@@ -194,10 +197,10 @@ console.log("\n=== A2. mergedInto 链 + 注入排序/截断/窗口 ===");
 		{ id: "sc0002", name: "近B", cwds: [B], aliases: [], mergedInto: null, origin: "seed", createdAt: NOW, lastUsedAt: "2026-09-15T09:00:00.000Z", useCount: 1 },
 		{ id: "sc0003", name: "近A", cwds: [A], aliases: [], mergedInto: null, origin: "seed", createdAt: NOW, lastUsedAt: "2026-09-14T09:00:00.000Z", useCount: 1 },
 	);
-	check("窗口外条目被剔除", buildScenePoolLines(p2, B).lines.length === 2);
-	check("同 cwd 优先", buildScenePoolLines(p2, A).lines[0].includes("近A"));
-	check("cwd 未知 → 纯 lastUsedAt 倒序", buildScenePoolLines(p2, "").lines[0].includes("近B"));
-	check("findMostRecentScene 同 cwd 优先", findMostRecentScene(p2, A)?.name === "近A");
+	check("窗口外条目被剔除", buildScenePoolLines(p2, { batchCwd: B }).lines.length === 2);
+	check("同 cwd 优先", buildScenePoolLines(p2, { batchCwd: A }).lines[0].includes("近A"));
+	check("cwd 未知 → 纯 lastUsedAt 倒序", buildScenePoolLines(p2, {}).lines[0].includes("近B"));
+	check("selectScenePoolEntries 与 lines 同源", selectScenePoolEntries(p2, { batchCwd: A })[0].name === "近A");
 
 	const many: ScenePool = { ...emptyPool(), updatedAt: NOW, scenes: [] };
 	for (let i = 1; i <= 50; i++) {
@@ -213,9 +216,30 @@ console.log("\n=== A2. mergedInto 链 + 注入排序/截断/窗口 ===");
 			useCount: 1,
 		});
 	}
-	const lm = buildScenePoolLines(many, A);
+	const lm = buildScenePoolLines(many, { batchCwd: A });
 	check(`截断到上限 ${SCENE_POOL_INJECT_LIMIT}`, lm.shown === SCENE_POOL_INJECT_LIMIT && lm.eligible === 50, `${lm.shown}/${lm.eligible}`);
 	check("id 4 位递增", many.scenes[49].id === "sc0050", many.scenes[49].id);
+}
+
+console.log("\n=== A5. projectOf（项目前缀，取代 cwd 当项目）===");
+{
+	const mk = (name: string) => ({ id: "sc0001", name, cwds: [], aliases: [], mergedInto: null, origin: "seed" as const, createdAt: NOW, lastUsedAt: NOW, useCount: 1 });
+	check("标准标签取前缀", projectOf(mk("memory-system｜L1 场景池")) === "memory-system", projectOf(mk("memory-system｜L1 场景池")));
+	check("前缀去空白", projectOf(mk("memory - system ｜X")) === "memory-system", projectOf(mk("memory - system ｜X")));
+	check("前缀去尾部「扩展」", projectOf(mk("memory-system 扩展｜X")) === "memory-system", projectOf(mk("memory-system 扩展｜X")));
+	check("无 ｜ → 空串", projectOf(mk("团队在围绕某议题推进")) === "");
+	check("｜ 在首位 → 空串", projectOf(mk("｜没有项目")) === "");
+
+	// 排序：项目命中优先于同 cwd
+	const pp: ScenePool = { ...emptyPool(), updatedAt: NOW, scenes: [] };
+	pp.scenes.push(
+		{ id: "sc0001", name: "alpha｜X", cwds: [A], aliases: [], mergedInto: null, origin: "seed", createdAt: NOW, lastUsedAt: "2026-09-15T09:00:00.000Z", useCount: 1 },
+		{ id: "sc0002", name: "beta｜Y", cwds: [A], aliases: [], mergedInto: null, origin: "seed", createdAt: NOW, lastUsedAt: "2026-09-14T09:00:00.000Z", useCount: 1 },
+	);
+	const onlyRecent = buildScenePoolLines(pp, { batchCwd: A });
+	check("无 batchProject 时最近的在前", onlyRecent.lines[0].includes("sc0001"), onlyRecent.lines[0]);
+	const byProject = buildScenePoolLines(pp, { batchCwd: A, batchProject: "beta" });
+	check("batchProject 命中项排最前（压过同 cwd）", byProject.lines[0].includes("sc0002"), byProject.lines[0]);
 }
 
 console.log("\n=== A3. 坏池降级 ===");
@@ -351,7 +375,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	const rec2 = readRecords(p).filter((r) => r.content === "决策乙");
 	check("D2 scene_name 被池覆写（非子代理所填）", rec2[0].scene_name === "alpha｜合同流程", String(rec2[0].scene_name));
 
-	// D3 未知 id + 无名 → 降级不阻断
+	// D3 未知 id + 无名 → 未归类（**不再猜"同 cwd 最近场景"**，2026-09-15 L1_PROJECT_SIGNAL）
 	const r3 = await commit({
 		cursor: "2026-09-15T09:50:00.000Z",
 		records: [{ content: "决策丙", type: "work_fact", priority: 60, scene_id: "sc9999", cwd: A }],
@@ -360,7 +384,9 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	check("D3 有 warn", Array.isArray(r3.sceneWarns) && (r3.sceneWarns as string[]).length === 1, JSON.stringify(r3.sceneWarns));
 	check("D3 fallback=1", (r3.sceneStats as { fallback: number })?.fallback === 1);
 	const rec3 = readRecords(p).filter((r) => r.content === "决策丙");
-	check("D3 归入同 cwd 最近场景", rec3[0].scene_name === "alpha｜合同流程", String(rec3[0].scene_name));
+	check("D3 落未归类（不采用池内同 cwd 条目）", rec3[0].scene_name === "未分类场景", String(rec3[0].scene_name));
+	check("D3 不带 scene_id", !rec3[0].scene_id);
+	check("D3 metadata.sceneFallback 已落盘", (rec3[0].metadata as Record<string, unknown> | undefined)?.sceneFallback === true, JSON.stringify(rec3[0].metadata));
 
 	// D4 deleted 标记行不碰池
 	const poolBefore = JSON.stringify(readScenePool(p));
@@ -387,34 +413,102 @@ console.log("\n=== E. l1_commit 端到端（main-agent 路径）===");
 	const p = makePoolProfile();
 	const commit = captureCommitTool(p);
 
-	// E1 未给名字 → 按 cwd 取池内最近条目
+	// E1 **反例：不再猜场景**——池里有同 cwd 条目，但本记录没给任何场景标识 → 必须未归类
 	const r1 = await commit({ source: "main-agent", records: [{ content: "主代理记录甲", type: "work_fact", cwd: A }] });
 	check("E1 success", r1.success === true, JSON.stringify(r1).slice(0, 120));
-	const rec1 = readRecords(p).filter((r) => r.content === "主代理记录甲");
-	check("E1 场景取自池（同 cwd）", rec1[0].scene_name === "alpha｜X", String(rec1[0].scene_name));
-	check("E1 带 scene_id", rec1[0].scene_id === "sc0001");
-	check("E1 未标 fallback", r1.sceneNameFallback === false);
+	const rec1 = readRecords(p).filter((r) => r.content === "主代理记录甲")[0];
+	check("E1 落占位而非池内同 cwd 条目", rec1.scene_name === "main-agent-live", String(rec1.scene_name));
+	check("E1 不带 scene_id", !rec1.scene_id);
+	check("E1 metadata.sceneFallback 已落盘", (rec1.metadata as Record<string, unknown> | undefined)?.sceneFallback === true);
+	check("E1 返回体标 sceneNameFallback", r1.sceneNameFallback === true);
+	check("E1 返回体含 sceneHint 引导先查清单", typeof r1.sceneHint === "string" && (r1.sceneHint as string).includes("list_l1_scenes"), String(r1.sceneHint));
 
-	// E2 显式名字命中池 → 用 canonical
-	const r2 = await commit({ source: "main-agent", records: [{ content: "主代理记录乙", type: "work_fact", scene_name: "alpha｜X", cwd: A }] });
-	check("E2 显式名字命中 → canonical + id", readRecords(p).filter((r) => r.content === "主代理记录乙")[0].scene_id === "sc0001");
+	// E2 给 scene_id（先查清单得到）→ 用池 canonical，且不落 fallback 标记
+	const r2 = await commit({ source: "main-agent", records: [{ content: "主代理记录乙", type: "work_fact", scene_id: "sc0001", cwd: A }] });
+	const rec2 = readRecords(p).filter((r) => r.content === "主代理记录乙")[0];
+	check("E2 scene_id → 池 canonical 名", rec2.scene_name === "alpha｜X", String(rec2.scene_name));
+	check("E2 带 scene_id", rec2.scene_id === "sc0001");
+	check("E2 不标 fallback", r2.sceneNameFallback === false && !(rec2.metadata as Record<string, unknown>)?.sceneFallback);
 
-	// E3 显式名字未命中 → 原样保留、不入池
-	const poolBefore = readScenePool(p).scenes.length;
-	await commit({ source: "main-agent", records: [{ content: "主代理记录丙", type: "work_fact", scene_name: "主代理自创的场景", cwd: A }] });
+	// E3 显式名字命中池 → 用 canonical + id
+	await commit({ source: "main-agent", records: [{ content: "主代理记录丙", type: "work_fact", scene_name: "alpha｜X", cwd: A }] });
 	const rec3 = readRecords(p).filter((r) => r.content === "主代理记录丙")[0];
-	check("E3 未命中名字原样保留", rec3.scene_name === "主代理自创的场景", String(rec3.scene_name));
-	check("E3 未命中不登记进池", readScenePool(p).scenes.length === poolBefore, `${poolBefore} → ${readScenePool(p).scenes.length}`);
-	check("E3 未命中不带 scene_id", !("scene_id" in rec3) || !rec3.scene_id);
+	check("E3 显式名字命中 → canonical + id", rec3.scene_name === "alpha｜X" && rec3.scene_id === "sc0001");
 
-	// E4 池空 + 未给名字 → 占位 + fallback 标记
+	// E4 显式名字未命中 → 原样保留、不入池
+	const poolBefore = readScenePool(p).scenes.length;
+	const r4 = await commit({ source: "main-agent", records: [{ content: "主代理记录丁", type: "work_fact", scene_name: "主代理自创的场景", cwd: A }] });
+	const rec4 = readRecords(p).filter((r) => r.content === "主代理记录丁")[0];
+	check("E4 未命中名字原样保留", rec4.scene_name === "主代理自创的场景", String(rec4.scene_name));
+	check("E4 未命中不登记进池", readScenePool(p).scenes.length === poolBefore, `${poolBefore} → ${readScenePool(p).scenes.length}`);
+	check("E4 未命中不带 scene_id", !rec4.scene_id);
+	check("E4 未命中不算未归类（有名字）", r4.sceneFallback === undefined || r4.sceneHint === undefined);
+
+	// E5 池空 + 未给 → 占位 + 标记；且 main-agent 不推进游标
 	const pEmpty = makeProfile({ pool: emptyPool() });
 	const commitEmpty = captureCommitTool(pEmpty);
-	const r4 = await commitEmpty({ source: "main-agent", records: [{ content: "孤立记录", type: "work_fact", cwd: "C:/nowhere" }] });
-	check("E4 提交成功", r4.success === true, JSON.stringify(r4).slice(0, 120));
-	check("E4 占位 main-agent-live", readRecords(pEmpty)[0]?.scene_name === "main-agent-live", String(readRecords(pEmpty)[0]?.scene_name));
-	check("E4 标记 sceneNameFallback", r4.sceneNameFallback === true);
-	check("E4 不推进游标（无 cursor 文件）", !existsSync(join(pEmpty, "memoryDB", "l1", "cursor.json")));
+	const r5 = await commitEmpty({ source: "main-agent", records: [{ content: "孤立记录", type: "work_fact", cwd: "C:/nowhere" }] });
+	check("E5 提交成功", r5.success === true, JSON.stringify(r5).slice(0, 120));
+	check("E5 占位 main-agent-live", readRecords(pEmpty)[0]?.scene_name === "main-agent-live", String(readRecords(pEmpty)[0]?.scene_name));
+	check("E5 标记 sceneNameFallback", r5.sceneNameFallback === true);
+	check("E5 不推进游标（无 cursor 文件）", !existsSync(join(pEmpty, "memoryDB", "l1", "cursor.json")));
+}
+
+console.log("\n=== F. list_l1_scenes 工具 ===");
+{
+	const p = makePoolProfile();
+	let def: { execute: (...args: unknown[]) => Promise<unknown> } | null = null;
+	registerListL1ScenesTool({ registerTool: (d: unknown) => (def = d as never) } as never, () => p);
+	check("工具已注册", !!def);
+	const before = readFileSync(scenePoolPath(p), "utf-8");
+	const res = (await def!.execute()) as { content: { text: string }[] };
+	const body = JSON.parse(res.content[0].text) as { scenes: Record<string, unknown>[]; returned: number; note: string };
+	check("返回 1 条", body.returned === 1 && body.scenes.length === 1, String(body.returned));
+	check("字段为 {id,name,cwd,lastUsedAt,useCount}", JSON.stringify(Object.keys(body.scenes[0]).sort()) === JSON.stringify(["cwd", "id", "lastUsedAt", "name", "useCount"]), Object.keys(body.scenes[0]).join(","));
+	check("id/name 正确", body.scenes[0].id === "sc0001" && body.scenes[0].name === "alpha｜X");
+	check("只读（池文件逐字节不变）", readFileSync(scenePoolPath(p), "utf-8") === before);
+
+	// 空池：空数组 + 提示
+	const pEmpty = makeProfile({ pool: emptyPool() });
+	let defEmpty: { execute: (...args: unknown[]) => Promise<unknown> } | null = null;
+	registerListL1ScenesTool({ registerTool: (d: unknown) => (defEmpty = d as never) } as never, () => pEmpty);
+	const emptyRes = (await defEmpty!.execute()) as { content: { text: string }[] };
+	const emptyBody = JSON.parse(emptyRes.content[0].text) as { scenes: unknown[]; hint?: string };
+	check("空池 → 空数组 + hint", emptyBody.scenes.length === 0 && typeof emptyBody.hint === "string", String(emptyBody.hint));
+}
+
+console.log("\n=== G. detectBatchProject ===");
+{
+	const mk = (content: string, cwd = A) => l0Row({ content, cwd });
+	const P = ["C:\\", "C:\\temp", "C:\\Users\\leaf", "C:\\Users\\leaf\\.pi", "C:\\dev\\code\\xianhua"];
+
+	// 众数
+	const p1 = makeProfile({ l0: { "2026-09-15.jsonl": [
+		mk("改 ~/.pi 的扩展"), mk("看 C:\\Users\\leaf\\.pi\\agent\\extensions"), mk("C:/Users/leaf/.pi/x.md"),
+		mk("顺便看 C:\\dev\\code\\xianhua\\a.vue"),
+	] } });
+	const f1 = join(p1, "memoryDB", "l0", "conversations", "2026-09-15.jsonl");
+	check("斜杠方向不敏感 + 取众数", detectBatchProject([f1], P) === "C:\\Users\\leaf\\.pi", detectBatchProject([f1], P));
+
+	// 过宽项不参与（C:\ 是任何路径的前缀；C:\Users\leaf 是父目录）
+	check("C:\\ 被滤（否则恒等于它）", detectBatchProject([f1], ["C:\\"]) === "");
+	check("家目录 C:\\Users\\leaf 被滤", detectBatchProject([f1], ["C:\\Users\\leaf"]) === "");
+	check("C:\\temp 被滤", detectBatchProject([f1], ["C:\\temp"]) === "");
+
+	// 命中数为 0 → 空串（不猜）
+	const p2 = makeProfile({ l0: { "2026-09-15.jsonl": [mk("聊了点别的"), mk("没有路径")] } });
+	check("无命中 → 空串", detectBatchProject([join(p2, "memoryDB", "l0", "conversations", "2026-09-15.jsonl")], P) === "");
+
+	// 并列 → 取路径最长（按字符串长度：`C:\dev\code\xianhua` 19 字 > `C:\Users\leaf\.pi` 17 字）
+	const p3 = makeProfile({ l0: { "2026-09-15.jsonl": [
+		mk("C:\\dev\\code\\xianhua\\a"), mk("C:\\Users\\leaf\\.pi\\b"), mk("C:\\dev\\code\\xianhua\\c"), mk("C:\\Users\\leaf\\.pi\\d"),
+	] } });
+	const f3 = join(p3, "memoryDB", "l0", "conversations", "2026-09-15.jsonl");
+	check("并列取最长路径", detectBatchProject([f3], P) === "C:\\dev\\code\\xianhua", detectBatchProject([f3], P));
+
+	// 相对路径 / ~ 不参与
+	const p4 = makeProfile({ l0: { "2026-09-15.jsonl": [mk("看 agent/extensions/memory-system 和 ~/.pi/agent")] } });
+	check("相对路径与 ~ 不参与匹配", detectBatchProject([join(p4, "memoryDB", "l0", "conversations", "2026-09-15.jsonl")], P) === "");
 }
 
 // ══════════════════════════════════════════════════════════════
