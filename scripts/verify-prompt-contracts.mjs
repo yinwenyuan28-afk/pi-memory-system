@@ -139,12 +139,14 @@ console.log("── 1b) l1-contract 端到端等价（{{mode}} + __PI_RULES__ �
 	else fail(`l1-contract 端到端不一致：\n--- expected(tail) ---\n${JSON.stringify(legacyChain.slice(-120))}\n--- actual(tail) ---\n${JSON.stringify(newChain.slice(-120))}`);
 }
 
-// ══ 1c) backends/tool-reminder 迁移回归（白名单：Protected Files 两行按已拍板改写） ══
+// ══ 1c) backends/tool-reminder 回归（白名单：Protected Files 两行归一化） ══
 console.log("── 1c) backends/tool-reminder 回归（Protected Files 白名单归一化）");
 {
-	// 迁移前 loadMemoryPrompts().toolReminder 的等值内容（内嵌——旧 loader 已删除，不能 import）。
-	// 由 memory/prompts/tool-reminder.md 原文「去 H1 + trim」得到，末两行为旧 Protected Files。
-	const LEGACY_BACKEND = [
+	// 该节语义（2026-09-15 起）：**锁定当前文案**，防误改。
+	// 它初版是「与迁移前 loadMemoryPrompts().toolReminder 逐字节一致」的迁移断言；迁移早已完成，
+	// 且 L1_RECALL_ASYNC 有意改写了 [Memory Recall] 段（原文案断言「每轮已注入」，异步/就绪注入下不成立）。
+	// 故不变量改为：渲染输出 == 下面这份已审定的文本（末两行 Protected Files 归一化后比对）。
+	const LOCKED_BACKEND = [
 		"[Memory → L1] 你的持久记忆写入通道是 **`l1_commit`（`source: \"main-agent\"`）**；旧的 `memory` 工具已退役，不要再调它。",
 		"RECORD when: 用户偏好/纠正/风格指令、根因结论（含\"因为…所以…\"因果结构）、非显然的约束或事实、用户拍板的决策（含理由与被否项）、踩坑经验、未定事项。",
 		"DO NOT record: 任务进度 / 临时 TODO、无根因的一次性修复、版本与发布日志、可直接从代码/文档查到的事实、纯抱怨式负面断言。",
@@ -152,16 +154,17 @@ console.log("── 1c) backends/tool-reminder 回归（Protected Files 白名�
 		"调用形态：`l1_commit({ source: \"main-agent\", records: [ { content, type, priority? } ] })` —— 只需 `content` + `type`；`id`/时间/会话/cwd 由服务端补齐，**不要自己编 `id`**。",
 		"完整规则（类型判据 / priority 分档 / 边界）→ 调 `load_memory_rules`。",
 		"",
-		"[Memory Recall] Each turn auto-injects up to 3 L1 atomic memories in the <l1-records> block above (recalled by similarity to your current task).",
-		"RECALL when: the injected memories are not enough, or you suspect earlier sessions hold relevant details (past decisions, project conventions, preferences, previously fixed issues).",
+		// 2026-09-15（L1_RECALL_ASYNC）改写：就绪式注入下「块可能本轮首跳缺席」
+		"[Memory Recall] Up to 3 L1 atomic memories may be auto-injected as a <l1-records> block (recalled by similarity to your current task). It is inserted as soon as it is ready, so it can be absent on a turn's first call — do NOT read its absence as \"no such memory exists\".",
+		"RECALL when: the <l1-records> block is missing or not enough, or you suspect earlier sessions hold relevant details (past decisions, project conventions, preferences, previously fixed issues).",
 		"How: call recall_l1_records with your own queryText (returns top-5, broader than auto-inject). If a recalled record proves useless for the current task, call clear_invalid_l1_records with its recordId so its weight can be lowered.",
 		"Limit: max 3 recall calls per turn. If 3 attempts return nothing relevant, the information is not in memory — answer from existing context and do not keep searching.",
 		"",
-		// 旧 Protected Files 两行（已按拍板改写为新路径 → 比对时归一化）
-		"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (l1-extractor, l2-scene-organizer, l3-persona-generator, skill-reviewer) are protected. ONLY use edit, NEVER write on these files.",
-		"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\extensions\\memory-system\\memory\\prompts\\*.md (keyword-extraction, filter, filter-relevance, save-guidelines, tool-reminder) are protected. ONLY use edit, NEVER write on these files.",
+		// Protected Files 两行（比对时按 norm 归一化，故此处内容不参与逐字节断言 —— 但必须是两行，
+		// 否则 norm 的正则（要求连续两行）匹配不上，会误报不一致）
+		"[Protected Files] <placeholder-l1>",
+		"[Protected Files] <placeholder-l2>",
 	].join("\n");
-	// 已拍板的新 Protected Files 两行（必须逐字节出现在渲染产物末尾）
 	const NEW_PROTECTED = [
 		"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (l1-extractor, l2-scene-organizer, l3-persona-generator, skill-reviewer) are protected. ONLY use edit, NEVER write on these files.",
 		"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\extensions\\memory-system\\prompts\\ (all *.md templates, incl. subdirs shared/injection/tasks/tools/backends/retired) are protected. ONLY use edit, NEVER write on these files.",
@@ -176,8 +179,8 @@ console.log("── 1c) backends/tool-reminder 回归（Protected Files 白名�
 		out = null;
 	}
 	if (out !== null) {
-		if (norm(out) === norm(LEGACY_BACKEND)) console.log(`  ok  backends/tool-reminder（除 Protected Files 外与迁移前一致，${out.length} chars）`);
-		else fail(`backends/tool-reminder: 除 Protected Files 外的内容与迁移前不一致\n--- expected ---\n${JSON.stringify(norm(LEGACY_BACKEND))}\n--- actual ---\n${JSON.stringify(norm(out))}`);
+		if (norm(out) === norm(LOCKED_BACKEND)) console.log(`  ok  backends/tool-reminder（除 Protected Files 外与已审定文案一致，${out.length} chars）`);
+		else fail(`backends/tool-reminder: 除 Protected Files 外的内容与已审定文案不一致\n--- expected ---\n${JSON.stringify(norm(LOCKED_BACKEND))}\n--- actual ---\n${JSON.stringify(norm(out))}`);
 		if (out.endsWith(NEW_PROTECTED)) console.log("  ok  Protected Files 两行为已拍板新文本");
 		else fail(`Protected Files 两行与已拍板文本不符\n--- expected(tail) ---\n${JSON.stringify(NEW_PROTECTED)}\n--- actual(tail) ---\n${JSON.stringify(out.slice(-NEW_PROTECTED.length - 20))}`);
 		if (/\{\{[a-zA-Z>]/.test(out)) fail("backends/tool-reminder: 渲染产物含未展开占位符");

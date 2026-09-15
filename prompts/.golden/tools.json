@@ -37,7 +37,7 @@
   },
   "recall_l1_records": {
     "file": "memory/search/recall-l1-records-tool.ts",
-    "value": "Search your L1 atomic memories (durable facts, work methods, tasks, and artifacts extracted from past sessions) by semantic similarity. Use when: (a) the auto-injected <l1-records> block at the top does not cover what you need; (b) the user references something from earlier sessions — past decisions, project conventions, preferences, or previously fixed issues; (c) you need more candidates than the injected top-3. Returns top-K records as {recordId, score, content, type, priority, scene_name, createdAt}. Call limit: max 3 times per turn total. If 3 attempts return nothing relevant, the memory is not stored — answer from existing context. Independent of the legacy memory system (jieba inverted index / sub-memories)."
+    "value": "Search your L1 atomic memories (durable facts, work methods, tasks, and artifacts extracted from past sessions) by semantic similarity. Use when: (a) no <l1-records> block is present this turn (it is inserted only once recall is ready; a turn that finishes in a single LLM call never gets it), or the block does not cover what you need; (b) the user references something from earlier sessions — past decisions, project conventions, preferences, or previously fixed issues; (c) you need more candidates than the injected top-3. Returns top-K records as {recordId, score, content, type, priority, scene_name, createdAt}. Call limit: max 3 times per turn total. If 3 attempts return nothing relevant, the memory is not stored — answer from existing context. Independent of the legacy memory system (jieba inverted index / sub-memories)."
   },
   "clear_invalid_l1_records": {
     "file": "memory/search/clear-invalid-l1-records-tool.ts",

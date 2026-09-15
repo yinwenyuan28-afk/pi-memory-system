@@ -5,8 +5,8 @@ DO NOT record: 任务进度 / 临时 TODO、无根因的一次性修复、版本
 调用形态：`l1_commit({ source: "main-agent", records: [ { content, type, priority? } ] })` —— 只需 `content` + `type`；`id`/时间/会话/cwd 由服务端补齐，**不要自己编 `id`**。
 完整规则（类型判据 / priority 分档 / 边界）→ 调 `load_memory_rules`。
 
-[Memory Recall] Each turn auto-injects up to 3 L1 atomic memories in the <l1-records> block above (recalled by similarity to your current task).
-RECALL when: the injected memories are not enough, or you suspect earlier sessions hold relevant details (past decisions, project conventions, preferences, previously fixed issues).
+[Memory Recall] Up to 3 L1 atomic memories may be auto-injected as a <l1-records> block (recalled by similarity to your current task). It is inserted as soon as it is ready, so it can be absent on a turn's first call — do NOT read its absence as "no such memory exists".
+RECALL when: the <l1-records> block is missing or not enough, or you suspect earlier sessions hold relevant details (past decisions, project conventions, preferences, previously fixed issues).
 How: call recall_l1_records with your own queryText (returns top-5, broader than auto-inject). If a recalled record proves useless for the current task, call clear_invalid_l1_records with its recordId so its weight can be lowered.
 Limit: max 3 recall calls per turn. If 3 attempts return nothing relevant, the information is not in memory — answer from existing context and do not keep searching.
 
