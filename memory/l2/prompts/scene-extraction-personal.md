@@ -160,7 +160,7 @@
 
 先用 `read_l1_increment` 工具拉新 records（`truncated=true` 时用 `nextCursor` 循环，直到 `truncated=false`）。调用规约见上文「🔌 如何读取 L1 增量」节。
 
-这是**唯一"必读"输入**——没有 records 就没有任何归组判断依据。**不要用 `read` 直接读 `l1-records/` 下的 jsonl 分片。**
+这是**唯一"必读"输入**——没有 records 就没有任何归组判断依据。**不要用 `read` 直接读 `l1/records/` 下的 jsonl 分片。**
 
 **为什么拉取放在最前**：归组决策必须先有 records；而场景数量预警只需读 `IndexPath`（scene_index.json）即可判断，放在下一步。先拿全量增量、再一次性判场景数，避免交错决策。
 

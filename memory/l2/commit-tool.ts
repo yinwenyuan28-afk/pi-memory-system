@@ -415,7 +415,7 @@ export interface SceneIndexEntry {
 }
 
 /**
- * 读取成员清单 sidecar（`{memoryDB}/.metadata/scene_members.json`）。
+ * 读取成员清单 sidecar（`{memoryDB}/l2/index/scene_members.json`）。
  * 结构：`{ [filename]: string[] }`。不存在/损坏 → 空表。
  */
 export function loadSceneMembers(profilePath: string): Record<string, string[]> {

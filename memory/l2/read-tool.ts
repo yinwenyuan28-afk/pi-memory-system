@@ -9,7 +9,7 @@ import { render as renderPrompt } from "../../prompts/registry.ts";
 //
 //  背景（2026-08-20 实测）：L2 子代理之前依赖主进程预生成的 .l2-staging/
 //  input-XXX.jsonl，但该 staging 文件在 runTask 的 finally 块被立即清理，子代
-//  理真正开始读取时已 ENOENT，必须自救去 scan l1-records/ 目录（多 read 调
+//  理真正开始读取时已 ENOENT，必须自救去 scan l1/records/ 目录（多 read 调
 //  用、且没有 L2 cursor 字段做精确过滤）。
 //
 //  解法（镜像 read_l0_increment 模式）：扩展工具一次调用返回游标后的全部增量
@@ -76,7 +76,7 @@ function recordEpochMs(id: string): number {
 /**
  * 从 L1 records 目录读游标后的增量 records。
  *
- * @param l1Dir    L1 records 目录（{profile}/memoryDB/l1-records）
+ * @param l1Dir    L1 records 目录（{profile}/memoryDB/l1/records）
  * @param cursor   L2 cursor 的 lastRecordId（空串=从最早开始）
  * @param maxRecords 本次返回上限（默认 50，硬上限 200）
  * @returns { records, nextCursor, totalNew, returned, truncated }
@@ -141,7 +141,7 @@ function readL1Increment(
  * 子代理调用参数：
  *  - l1Dir: L1 records 目录绝对路径（buildL2Task 的 RecordsDir 行原样传入）
  *  - cursor: L2 cursor 的 lastRecordId（空串=从最早开始；通常子代理不传，
- *            工具内部从 l2-cursor.json 读默认）
+ *            工具内部从 l2/cursor.json 读默认）
  *  - maxRecords: 本次返回上限（可选，默认 50，硬上限 200）
  *
  * 返回：JSON 序列化的 { records, nextCursor, totalNew, returned, truncated }
@@ -186,7 +186,7 @@ export function registerReadL1IncrementTool(
 				const cursor = typeof params?.cursor === "string" ? params.cursor : "";
 				const maxRecords = typeof params?.maxRecords === "number" ? params.maxRecords : MAX_INCREMENT;
 
-				// cursor 为空时，从 l2-cursor.json 读默认
+				// cursor 为空时，从 l2/cursor.json 读默认
 				let effectiveCursor = cursor;
 				if (!effectiveCursor) {
 					const profilePath = getProfilePath();

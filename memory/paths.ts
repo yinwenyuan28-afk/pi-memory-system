@@ -94,6 +94,8 @@ export const FAILURE_STATE_FILE = join("state", "failure-state.json");
 export const VIEWER_DIR = "viewers";
 /** 备份目录（{memoryDB}/backups：l1-admin/ 与 user-backups/）。 */
 export const BACKUP_DIR = "backups";
+/** 用户画像备份目录（{memoryDB}/backups/user-backups：L3 写 USER.md 前的 `user-backup-*.md` 快照）。 */
+export const USER_BACKUPS_DIR = join("backups", "user-backups");
 
 // ── profile 级运行态（**不经 MEMORY_DB_DIR**）────────────────────
 /**

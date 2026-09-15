@@ -7,7 +7,7 @@ import type { PipelineJobResult, PipelineWorker } from "../pipeline/worker.ts";
 
 /**
  * 注册 L2 组织调度。
- * 不再 watchFile l1-cursor；自动 L2 只由 l1_commit 入队，手动走 /l2-trigger 入队。
+ * 不再 watchFile l1/cursor.json；自动 L2 只由 l1_commit 入队，手动走 /l2-trigger 入队。
  */
 export function setupL2Organizer(
 	pi: ExtensionAPI,

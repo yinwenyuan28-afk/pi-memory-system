@@ -9,7 +9,7 @@ import {
 	loadL3Cursor,
 	type L3Cursor,
 } from "./config.ts";
-import { L2_INDEX_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { MEMORY_DB_DIR, USER_BACKUPS_DIR } from "../paths.ts";
 import { escapeXmlTags } from "./sanitize.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
@@ -120,14 +120,14 @@ export function registerL3CommitTool(
 				}
 
 			// 写 USER.md：冷启动整体创建；增量 upsert（替换已有 L3 段落，不盲目追加）
-			// 对齐腾讯步骤 7：write 前先备份原文件到 memoryDB/.metadata/user-backup-*.md（防 LLM/工程误改）
+			// 对齐腾讯步骤 7：write 前先备份原文件到 memoryDB/backups/user-backups/user-backup-*.md（防 LLM/工程误改）
 			if (existsSync(userMdPath)) {
 				const existing = readFileSync(userMdPath, "utf-8");
 				// 腾讯步骤 7：备份原 USER.md（防被 LLM 误改/磁盘错误）
 				try {
-					const metaDir = join(profilePath, MEMORY_DB_DIR, L2_INDEX_DIR);
-					if (!existsSync(metaDir)) mkdirSync(metaDir, { recursive: true });
-					const backupPath = join(metaDir, `user-backup-${Date.now()}.md`);
+					const userBackupDir = join(profilePath, MEMORY_DB_DIR, USER_BACKUPS_DIR);
+					if (!existsSync(userBackupDir)) mkdirSync(userBackupDir, { recursive: true });
+					const backupPath = join(userBackupDir, `user-backup-${Date.now()}.md`);
 					writeFileSync(backupPath, existing, "utf-8");
 				} catch {
 					// non-fatal

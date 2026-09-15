@@ -30,9 +30,9 @@ export const MAX_SCENES_DEFAULT = 15;
 export const L2_CURSOR_FILE = PATHS_L2_CURSOR;
 /** 场景文件目录名（{memoryDB}/scene_blocks）。 */
 export const SCENE_DIR_NAME = L2_SCENE_DIR;
-/** 场景索引路径（{memoryDB}/.metadata/scene_index.json）。 */
+/** 场景索引路径（{memoryDB}/l2/index/scene_index.json）。 */
 export const SCENE_INDEX_PATH = L2_SCENE_INDEX_PATH;
-/** 场景成员清单 sidecar 路径（{memoryDB}/.metadata/scene_members.json）。 */
+/** 场景成员清单 sidecar 路径（{memoryDB}/l2/index/scene_members.json）。 */
 export const SCENE_MEMBERS_PATH = L2_SCENE_MEMBERS_PATH;
 
 /** 规则文件目录（本模块同目录下的 prompts/）。 */
@@ -127,7 +127,7 @@ export function saveL2Cursor(profilePath: string, lastProcessedAt: number, lastR
  * 任务消息现在只保留 SceneDir / IndexPath / CursorPath / PromptDir 四个定位点。
  *
  * @param incremental  保留参数（外部调用方仍按习惯传 true/false），目前不写进任务消息
- *                    （增量行为由子代理通过 read_l1_increment 工具 + l2-cursor.json 自然保证）
+ *                    （增量行为由子代理通过 read_l1_increment 工具 + l2/cursor.json 自然保证）
  */
 export function buildL2Task(profilePath: string, _recordsFilesOverride?: string[], _incremental = false): string {
 	return renderPrompt("tasks/l2-task", {
