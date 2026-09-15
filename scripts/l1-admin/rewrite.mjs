@@ -47,6 +47,7 @@ const newObj = {
   type: oldObj.type,
   priority: newPriority ?? oldObj.priority,
   scene_name: oldObj.scene_name,
+  scene_id: oldObj.scene_id, // 2026-09-15：场景池链路——漏拷会让改写后的记录脱离池（静默断链）
   source_message_ids: oldObj.source_message_ids,
   timestamps: oldObj.timestamps,
   createdAt: NOW,
