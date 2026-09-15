@@ -14,6 +14,7 @@ import { archiveSessionIncrement } from "./memory/l0/index.ts";
 import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.ts";
 import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.ts";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
+import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
 import { registerReadL0IncrementTool } from "./memory/l1/read-tool.ts";
 import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
@@ -251,6 +252,10 @@ export default function (pi: ExtensionAPI) {
       l3Controls?.onL1Committed(written);
     },
   );
+
+  // list_l1_scenes 工具：主代理按需查场景池——记录前挑 scene_id，替代"猜场景"
+  //（清单不进系统提示是出于 prefix cache；按需工具不吃这个代价，见 scene-tool.ts 头注释）。
+  registerListL1ScenesTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
   // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接；personaSignal → L3 P1
   registerL2CommitTool(
     pi,

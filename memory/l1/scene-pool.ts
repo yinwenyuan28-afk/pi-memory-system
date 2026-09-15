@@ -262,24 +262,56 @@ export function findMostRecentScene(pool: ScenePool, cwd: string): SceneEntry | 
 	}
 	return [...alive].sort(byRecent)[0];
 }
+/**
+ * 稳定标签里的项目分隔符（`{项目}｜{议题}`）。
+ *
+ * 2026-09-15（L1_PROJECT_SIGNAL）：**项目标识从标签前缀派生，池不新增字段**。cwd 是"会话工作台"
+ * 而不是项目（实测 memory-system 的记录 cwd 全是 pi fork 目录、34 条线程挤在同一个 cwd 下），
+ * 所以排序不能用 cwd 当项目——用这个前缀。
+ */
+export const PROJECT_SEP = "｜";
+
+/** 项目前缀的归一化：去全部空白 + 去尾部「扩展/项目/仓库」（不合同义合并，那是合并工具的活）。 */
+export function normalizeProject(raw: string): string {
+	return raw.replace(/\s+/g, "").replace(/(扩展|项目|仓库)$/, "");
+}
+
+/** 取条目的项目标识（`name` 的 `｜` 前缀）；缺 `｜` 时返回空串（不参与项目优先，只按 cwd/最近排）。 */
+export function projectOf(entry: SceneEntry): string {
+	const i = entry.name.indexOf(PROJECT_SEP);
+	if (i <= 0) return "";
+	return normalizeProject(entry.name.slice(0, i));
+}
 
 // ══════════════════════════════════════════════════════════════
 //  注入行构造
 // ══════════════════════════════════════════════════════════════
 
+export interface ScenePoolLineOptions {
+	/** 本批 L0 消息的众数 cwd（`detectBatchCwd`）；空串 → 不做 cwd 优先。 */
+	batchCwd?: string;
+	/** 本批疑似项目（`detectBatchProject`，取自标签前缀口径）；空串 → 不做项目优先。 */
+	batchProject?: string;
+}
+
 /**
  * 构造注入子代理任务消息的池清单。
  *
- * 排序：**同 cwd 优先** → `lastUsedAt` 倒序；截断至 `SCENE_POOL_INJECT_LIMIT`。
- * `batchCwd` 为空（老 L0 分片可能缺 `cwd` 字段）时退化为纯 `lastUsedAt` 排序，不做项目优先。
- * 行格式刻意不含 `cwd=`：同项目优先已由排序体现，逐行再带一遍是冗余（实测 30 行会多出近一倍字符）。
+ * 排序：**同项目（标签前缀）优先 → 同 cwd 优先 → `lastUsedAt` 倒序**；截断至 `SCENE_POOL_INJECT_LIMIT`。
+ *
+ * 为什么项目优先用标签前缀而不是 cwd：cwd 是**会话工作台**，不是项目——实测同一 cwd 下混着 34 条
+ * 不同项目的线程，而记录 cwd 与"实际在动的代码仓库"常常不一致（memory-system 的记录 cwd 是 pi fork）。
+ * `batchProject` / `batchCwd` 都取不到时退化为纯 `lastUsedAt` 倒序（与旧行为一致）。
+ *
+ * 行格式刻意不含 `cwd=`：同项目优先已由排序体现，逐行再带一遍是冗余。
  */
 export function buildScenePoolLines(
 	pool: ScenePool,
-	batchCwd: string,
+	opts: ScenePoolLineOptions = {},
 	limit = SCENE_POOL_INJECT_LIMIT,
 	windowDays = SCENE_POOL_WINDOW_DAYS,
 ): ScenePoolLines {
+	const { batchCwd = "", batchProject = "" } = opts;
 	const cutoffMs = Date.now() - windowDays * 86_400_000;
 	const eligible = pool.scenes.filter((e) => {
 		if (e.mergedInto) return false;
@@ -288,18 +320,31 @@ export function buildScenePoolLines(
 		return Number.isNaN(t) ? true : t >= cutoffMs;
 	});
 	const byRecent = (a: SceneEntry, b: SceneEntry) => (a.lastUsedAt < b.lastUsedAt ? 1 : a.lastUsedAt > b.lastUsedAt ? -1 : 0);
-	const sorted = batchCwd
-		? [
-				...eligible.filter((e) => e.cwds.includes(batchCwd)).sort(byRecent),
-				...eligible.filter((e) => !e.cwds.includes(batchCwd)).sort(byRecent),
-			]
-		: [...eligible].sort(byRecent);
+	const rankProject = (e: SceneEntry) => (batchProject && projectOf(e) === batchProject ? 0 : 1);
+	const rankCwd = (e: SceneEntry) => (batchCwd && e.cwds.includes(batchCwd) ? 0 : 1);
+	const sorted = [...eligible].sort((a, b) => rankProject(a) - rankProject(b) || rankCwd(a) - rankCwd(b) || byRecent(a, b));
 	const shown = sorted.slice(0, limit);
 	return {
 		lines: shown.map((e) => `- ${e.id} | ${e.name}`),
 		eligible: eligible.length,
 		shown: shown.length,
 	};
+}
+
+/**
+ * 取注入/展示用的条目数组（结构化，供 `list_l1_scenes` 工具用）。
+ *
+ * 与 `buildScenePoolLines` **同窗口、同排序、同上限**——保证"主代理看到的"与"子代理看到的"是同一份东西。
+ */
+export function selectScenePoolEntries(
+	pool: ScenePool,
+	opts: ScenePoolLineOptions = {},
+	limit = SCENE_POOL_INJECT_LIMIT,
+	windowDays = SCENE_POOL_WINDOW_DAYS,
+): SceneEntry[] {
+	const lines = buildScenePoolLines(pool, opts, limit, windowDays);
+	const byId = new Map(pool.scenes.map((e) => [e.id, e]));
+	return lines.lines.map((l) => byId.get(l.slice(2, l.indexOf(" | ")))).filter((e): e is SceneEntry => !!e);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -399,21 +444,11 @@ export function createSceneResolver(pool: ScenePool, nowIso: string): SceneResol
 				return { scene_name: entry.name, scene_id: entry.id, kind: "created" };
 			}
 
-			// ④ 降级
+			// ④ 降级：**不猜场景**（2026-09-15 L1_PROJECT_SIGNAL）——没给标识就标未归类。
+			//    旧实现在这里取「同 cwd 最近条目」，等于拿"同一工作台最近聊过的话题"当归属；
+			//    实测 cwd 是会话工作台而不是项目（34 条线程挤一个 cwd），猜错的代价（污染 L2 分组）
+			//    高于未归类（只产生一个明确的占位场景）。调用方若自填了名字则沿用（无 id，不可复用）。
 			stats.fallback += 1;
-			const near = findMostRecentScene(pool, cwd);
-			if (near) {
-				touch(near);
-				return {
-					scene_name: near.name,
-					scene_id: near.id,
-					kind: "fallback",
-					warn: rawId
-						? `scene_id "${rawId}" 不在池中且未给 new_scene_name，已归入同 cwd 最近场景 "${near.name}"`
-						: `既未给 scene_id 也未给 new_scene_name，已归入同 cwd 最近场景 "${near.name}"`,
-				};
-			}
-			// 池空且无候选：保留调用方（或子代理）自填的名字，再不济用固定占位
 			const carried = typeof (input as { scene_name?: unknown }).scene_name === "string"
 				? normalizeSceneName((input as { scene_name?: string }).scene_name ?? "")
 				: "";
@@ -421,9 +456,9 @@ export function createSceneResolver(pool: ScenePool, nowIso: string): SceneResol
 				scene_name: carried || SCENE_FALLBACK_NAME,
 				scene_id: null,
 				kind: "fallback",
-				warn: carried
-					? "池中无候选，沿用记录自填的 scene_name"
-					: `池中无候选且记录未填 scene_name，已置为 "${SCENE_FALLBACK_NAME}"`,
+				warn: rawId
+					? `scene_id "${rawId}" 不在池中且未给 new_scene_name → 未归类（请从 ScenePool 清单挑 id，或给 new_scene_name）`
+					: "既未给 scene_id 也未给 new_scene_name → 未归类（同上）",
 			};
 		},
 		isDirty: () => dirty,

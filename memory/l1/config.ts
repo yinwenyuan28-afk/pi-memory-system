@@ -152,6 +152,80 @@ export function detectBatchCwd(
 	return "";
 }
 
+/**
+ * 判断一个 `KnownProjects` 项是否**过宽**、不该用来做项目匹配。
+ *
+ * 实测该列表里有 `C:\`、`C:\temp`、`C:\Users\leaf` 这类项——**`C:\` 是所有 Windows 路径的开头**，
+ * 不滤掉的话任何正文都会命中它，"本批疑似项目"变成恒等于 `C:\`。滤除规则（都可断言）：
+ *   ① 盘根（`C:`）；② 只有盘符一级；③ `C:\<常见宽目录>`（temp/tmp/users/home/...）；
+ *   ④ 家目录本身（`C:\Users\leaf`——它是父目录而不是项目）。
+ * 更具体的项（`C:\Users\leaf\.pi`、`C:\dev\code\xianhua`）一律保留。
+ */
+function isBroadProjectPath(p: string): boolean {
+	const t = p.replace(/[\\/]+$/, "").toLowerCase();
+	if (/^[a-z]:$/.test(t)) return true;
+	const segs = t.split(/[\\/]/).filter(Boolean); // ['c:','users','leaf']
+	if (segs.length <= 1) return true;
+	const last = segs[segs.length - 1];
+	if (segs.length === 2 && ["temp", "tmp", "users", "home", "windows", "program files", "documents"].includes(last)) return true;
+	if (segs.length === 3 && (segs[1] === "users" || segs[1] === "home")) return true;
+	return false;
+}
+
+/**
+ * 探测**本批 L0 增量所属的项目**——只用于池清单的「同项目优先」排序与给子代理的一句提示。
+ *
+ * 与 `detectBatchCwd` 的区别：cwd 是**会话工作台**（pi 从哪启动），本函数则从正文里出现的
+ * **绝对路径**去匹配 `KnownProjects`，更接近"这批对话实际在动哪个仓库"。实测两者经常不一致：
+ * memory-system 的记录 cwd 全是 pi fork 目录，而扩展本体在 `~/.pi`。
+ *
+ * 做法：从最新分片向前回溯最多 `maxFiles` 个，取尾部 `tailLines` 行，逐条消息 `content` 做
+ * **子串包含**匹配（两侧统一小写、`/`→`\`；`~` 不展开、相对路径不参与）。按命中消息数取众数；
+ * 并列时取**路径最长**者（更具体），再并列取字典序最小（结果稳定可复现）。
+ *
+ * 取不到（含全部被 `isBroadProjectPath` 滤掉）返回空串 → 调用方退化为按 cwd / 最近排序。
+ */
+export function detectBatchProject(
+	l0Files: string[],
+	knownProjects: string[],
+	tailLines = SCENE_BATCH_CWD_TAIL_LINES,
+	maxFiles = SCENE_BATCH_CWD_MAX_FILES,
+): string {
+	const projects = knownProjects
+		.map((p) => p.replace(/[\\/]+$/, ""))
+		.filter((p) => p.length > 0 && !isBroadProjectPath(p));
+	if (projects.length === 0) return "";
+	const needles = projects.map((p) => ({ raw: p, needle: p.toLowerCase().replace(/\//g, "\\") }));
+	const start = Math.max(0, l0Files.length - maxFiles);
+	for (let i = l0Files.length - 1; i >= start; i--) {
+		let lines: string[];
+		try {
+			lines = readFileSync(l0Files[i], "utf-8").split(/\r?\n/).filter(Boolean).slice(-tailLines);
+		} catch {
+			continue;
+		}
+		const counts = new Map<string, number>();
+		for (const line of lines) {
+			let content = "";
+			try {
+				const o = JSON.parse(line) as { content?: unknown };
+				content = typeof o.content === "string" ? o.content : "";
+			} catch {
+				continue;
+			}
+			if (!content) continue;
+			const hay = content.toLowerCase().replace(/\//g, "\\");
+			for (const { raw, needle } of needles) {
+				if (hay.includes(needle)) counts.set(raw, (counts.get(raw) ?? 0) + 1);
+			}
+		}
+		if (counts.size > 0) {
+			return [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length || (a[0] < b[0] ? -1 : 1))[0][0];
+		}
+	}
+	return "";
+}
+
 /** 构造 l1-extractor 子代理任务消息（供 setupL1Extractor 与手动触发共用）。
  *  模板：prompts/tasks/l1-task.md（registry 单源；`scenePoolLines` 为场景池清单的预拼行，
  *  属数据整形逻辑，留在代码侧——模板只管骨架与字段契约）。 */
@@ -160,13 +234,17 @@ export function buildL1Task(profilePath: string): string | null {
 	const l0Files = listL0Files(profilePath, cursor);
 	if (l0Files.length === 0) return null;
 	const mode = loadL1Config(profilePath).mode;
-	// 场景池清单：**只读**；写入侧在 l1_commit（写锁内）。本批 cwd 仅用于「同项目优先」排序。
+	// 场景池清单：**只读**；写入侧在 l1_commit（写锁内）。
+	// 排序 key：本批疑似项目（来自正文路径）优先于 cwd——后者是"会话工作台"而不是项目。
+	const knownProjects = listKnownProjects();
 	const pool = readScenePool(profilePath);
-	const poolLines = buildScenePoolLines(pool, detectBatchCwd(l0Files));
+	const batchCwd = detectBatchCwd(l0Files);
+	const batchProject = detectBatchProject(l0Files, knownProjects);
+	const poolLines = buildScenePoolLines(pool, { batchCwd, batchProject });
 	const scenePoolLines =
 		poolLines.lines.length > 0
 			? [
-					`ScenePool (id | name; same-project first, recent first; max ${SCENE_POOL_INJECT_LIMIT}):`,
+					`ScenePool (id | name; ${batchProject ? `batchProject=${batchProject}; ` : ""}same-project first, recent first; max ${SCENE_POOL_INJECT_LIMIT}):`,
 					...poolLines.lines,
 				].join("\n")
 			: "ScenePool: (无)";
@@ -176,7 +254,7 @@ export function buildL1Task(profilePath: string): string | null {
 		recordsDir: join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME),
 		promptDir: PROMPT_DIR,
 		mode,
-		knownProjects: listKnownProjects().join(","),
+		knownProjects: knownProjects.join(","),
 		scenePoolLines,
 	});
 }

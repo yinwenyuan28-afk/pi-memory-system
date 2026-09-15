@@ -5,9 +5,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.ts";
 import {
 	createSceneResolver,
-	findMostRecentScene,
 	findSceneByNameOrAlias,
 	readScenePool,
+	resolveMergedTarget,
 	writeScenePool,
 	type SceneStats,
 } from "./scene-pool.ts";
@@ -65,14 +65,17 @@ function contentHash(content: string): string {
 }
 
 /**
- * main-agent 路径的 `scene_name` 解析（2026-09-15 由锚点改为场景池）。
+ * main-agent 路径匹配不到场景时的占位名（2026-09-15 L1_PROJECT_SIGNAL 收紧了语义）。
  *
- * 契约（主代理看不到池清单——`MEMORY_TOOL_REMINDER` 拼在系统提示里，须保持常量以命中
- * provider prefix cache，《架构说明》§5.3，故动态候选只能在写入时由服务端取）：
- *   - 主代理**显式给了** `scene_name`：按名字（canonical 或别名）在池中匹配——
- *     命中 → 用池的 canonical 名与 id；未命中 → **原样保留，且不登记进池**
- *     （主代理是自由文本、看不到池，若允许它登记会持续污染候选集；`origin` 也失去意义）。
- *   - **未给**：按 cwd 取池内最近条目 → 无则固定占位 `main-agent-live`（并标 `sceneNameFallback`）。
+ * 契约（主代理的**系统提示里没有**池清单——`MEMORY_TOOL_REMINDER` 须保持常量以命中 provider
+ * prefix cache；但主代理可以**按需**调只读工具 `list_l1_scenes`，那条路不碰系统提示）：
+ *   - 给了 `scene_id` → 池内存在且未被合并则用它（canonical 名 + id）；
+ *   - 给了 `scene_name` → 按名字/别名在池中匹配，命中用 canonical，未命中**原样保留且不登记进池**
+ *     （主代理看不到清单时容易起自由文本，不该污染候选集）；
+ *   - 都没给 → 落本占位 + `metadata.sceneFallback=true` + 返回体 `sceneHint` 提示先查清单。
+ *
+ * **刻意不再"猜"**：旧实现取「同 cwd 最近条目」（→ 全局最近 → 本占位），而 cwd 是会话工作台而不是
+ * 项目（实测 34 条线程挤在一个 cwd），猜错会把记录贴进不相干的场景、污染 L2 分组。
  */
 const MAIN_AGENT_SCENE_FALLBACK = "main-agent-live";
 
@@ -220,6 +223,7 @@ export function registerL1CommitTool(
 				const sceneResolver = isMainAgent ? null : createSceneResolver(scenePool, new Date().toISOString());
 				const sceneWarns: string[] = [];
 				let sceneNameFallback = false;
+				let mainAgentUnclassified = 0;
 				for (const r of records as Record<string, unknown>[]) {
 					// `deleted:true` 标记行不参与池解析（不登记、不计数、不累积 cwds）
 					if (r.deleted === true) continue;
@@ -237,13 +241,31 @@ export function registerL1CommitTool(
 						r.scene_name = res.scene_name;
 						if (res.scene_id) r.scene_id = res.scene_id;
 						else delete r.scene_id;
+						// 未归类落进 metadata（与 main-agent 路径同口径），供度量"未归类率"
+						if (res.kind === "fallback") {
+							r.metadata = { ...((r.metadata as Record<string, unknown> | undefined) ?? {}), sceneFallback: true };
+						}
 						// 子代理填的中间字段不落盘
 						delete r.new_scene_name;
 						delete r.new_scene_reason;
 						continue;
 					}
 
-					// main-agent 路径（契约见 main-agent-场景解析注释）
+					// main-agent 路径：`scene_id`（先查清单得到）→ 显式 `scene_name`（名字/别名匹配）→ 未归类。
+					// **刻意不猜**（2026-09-15 L1_PROJECT_SIGNAL）：cwd 是会话工作台而不是项目
+					// （实测 memory-system 的记录 cwd 全是 pi fork 目录、34 条线程挤在一个 cwd），
+					// 旧实现「取同 cwd 最近条目」会把记录贴到不相干的场景上；贴错会污染 L2 分组，
+					// 而未归类只产生一个明确的占位场景。主代理可用只读工具 `list_l1_scenes` 先拿到清单。
+					const rawSceneId = typeof r.scene_id === "string" ? r.scene_id.trim() : "";
+					if (rawSceneId) {
+						const direct = scenePool.scenes.find((e) => e.id === rawSceneId);
+						const target = direct ? (direct.mergedInto ? resolveMergedTarget(scenePool, rawSceneId) : direct) : null;
+						if (target) {
+							r.scene_name = target.name;
+							r.scene_id = target.id;
+							continue;
+						}
+					}
 					const explicit = typeof r.scene_name === "string" ? r.scene_name.trim() : "";
 					if (explicit) {
 						const hit = findSceneByNameOrAlias(scenePool, explicit);
@@ -255,15 +277,11 @@ export function registerL1CommitTool(
 						}
 						continue;
 					}
-					const near = findMostRecentScene(scenePool, recCwd);
-					if (near) {
-						r.scene_name = near.name;
-						r.scene_id = near.id;
-					} else {
-						r.scene_name = MAIN_AGENT_SCENE_FALLBACK;
-						delete r.scene_id;
-						sceneNameFallback = true;
-					}
+					r.scene_name = MAIN_AGENT_SCENE_FALLBACK;
+					delete r.scene_id;
+					sceneNameFallback = true;
+					mainAgentUnclassified++;
+					r.metadata = { ...(r.metadata as Record<string, unknown> | undefined ?? {}), sceneFallback: true };
 				}
 
 			// 0. 去重：扫描现有 records 建 id 集合 + 内容哈希集合（仅非 deleted）
@@ -479,7 +497,7 @@ export function registerL1CommitTool(
 
 
 				return {
-					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats, markedInPlace: markByFile.size, sceneStats, sceneWarns, poolWriteFailed, sceneNameFallback }) }],
+					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats, markedInPlace: markByFile.size, sceneStats, sceneWarns, poolWriteFailed, sceneNameFallback, ...(mainAgentUnclassified > 0 ? { sceneHint: `${mainAgentUnclassified} 条未归类：记录前请先调 list_l1_scenes 从清单里挑 scene_id（或给稳定的 scene_name），否则只能落占位 ${MAIN_AGENT_SCENE_FALLBACK}。` } : {}) }) }],
 					details: {},
 				};
 			} catch (err) {
