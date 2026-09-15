@@ -1,5 +1,5 @@
 ---
-vars: l0Files, cursorPath, recordsDir, promptDir, mode, knownProjects, anchorLines
+vars: l0Files, cursorPath, recordsDir, promptDir, mode, knownProjects, scenePoolLines
 ---
 L1 extraction task
 L0Files: {{l0Files}}
@@ -8,4 +8,4 @@ RecordsDir: {{recordsDir}}
 PromptDir: {{promptDir}}
 Mode: {{mode}}
 KnownProjects: {{knownProjects}}
-{{anchorLines}}
+{{scenePoolLines}}

@@ -55,7 +55,7 @@ l1_commit({ "source": "main-agent", "records": [ { "content": "…", "type": "wo
 - **只需给 `content` + `type`（`priority` 可选，默认 70）**
 - 服务端自动补齐：`id` / `timestamps` / `sessionKey` / `sessionId` / `cwd` / `version` / `metadata.origin="main-agent"`
 - **不要自己编 `id`**
-- `scene_name` 可省略——服务端按当前情境（同 cwd 最近记录）自动补齐；**确知在延续某个情境时**才显式给
+- `scene_name` 可省略——服务端按**场景池**归属：取池内同 cwd 最近使用过的场景；池中无候选则置 `main-agent-live`。**确知在延续某个情境时才显式给**：给了会按名字（含别名）在池中匹配，命中则用池的 canonical 名，未命中则原样保留、**不登记进池**（主代理看不到池清单，其自由文本不应污染候选集）
 
 ## 四、priority（0–100）
 

@@ -26,8 +26,8 @@ View the content of a skill's SKILL.md or support files. Use this to inspect a s
 ## l1_commit
 
 Commit L1 memory records. Two modes via 'source':
-  - 'subagent' (default): the l1-extractor subagent after extraction/dedup; requires 'records' + 'cursor' (advances the L1 cursor = L0 incremental watermark).
-  - 'main-agent': the main agent proactively records a durable fact mid-session; requires only 'records' (each item needs just {content, type, priority?}). id / timestamps / sessionKey / sessionId / cwd are filled server-side; the L1 cursor is NOT advanced and L2 is NOT enqueued.
+  - 'subagent' (default): the l1-extractor subagent after extraction/dedup; requires 'records' + 'cursor' (advances the L1 cursor = L0 incremental watermark). Scene attribution goes through the scene pool: put `scene_id` (picked from the ScenePool block in the task message) on records that continue an existing scene, or `new_scene_name` + `new_scene_reason` on records that start a new one. Server-side replaces `scene_name` with the pool's canonical name, registers new scenes, and strips the two intermediate fields before writing.
+  - 'main-agent': the main agent proactively records a durable fact mid-session; requires only 'records' (each item needs just {content, type, priority?}). id / timestamps / sessionKey / sessionId / cwd are filled server-side; the L1 cursor is NOT advanced and L2 is NOT enqueued. `scene_name` is optional: if omitted, the record is attributed to the most recent scene of the same cwd (fallback `main-agent-live`); if given, it is matched against the pool by name/alias but never registered as a new scene.
 
 ## l1_fix
 

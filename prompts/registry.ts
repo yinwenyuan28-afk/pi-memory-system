@@ -91,7 +91,7 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 
 	// ── tasks：子代理任务消息骨架（动态字段经 vars 传入） ──
 	"tasks/l1-task": {
-		vars: ["l0Files", "cursorPath", "recordsDir", "promptDir", "mode", "knownProjects", "anchorLines"],
+		vars: ["l0Files", "cursorPath", "recordsDir", "promptDir", "mode", "knownProjects", "scenePoolLines"],
 		template:
 			"L1 extraction task\n" +
 			"L0Files: {{l0Files}}\n" +
@@ -100,7 +100,7 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 			"PromptDir: {{promptDir}}\n" +
 			"Mode: {{mode}}\n" +
 			"KnownProjects: {{knownProjects}}\n" +
-			"{{anchorLines}}",
+			"{{scenePoolLines}}",
 	},
 	"tasks/l2-task": {
 		vars: ["recordsDir", "sceneDir", "indexPath", "cursorPath", "promptDir", "mode", "maxScenes"],

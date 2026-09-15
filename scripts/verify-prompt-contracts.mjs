@@ -41,7 +41,7 @@ const FX = {
 		promptDir: "C:/ext/memory-system/memory/l1/prompts",
 		mode: "code",
 		knownProjects: "C:/dev/alpha,C:/dev/beta",
-		anchorLines: "PreviousScene: 围绕 alpha 推进注入改造 | cwd=C:/dev/alpha\nRecentScenes (latest first, same-cwd first):\n- 围绕 alpha 推进注入改造 | cwd=C:/dev/alpha\n- 围绕 beta 排查超时 | cwd=C:/dev/beta",
+		scenePoolLines: "ScenePool (id | name; same-project first, recent first; max 40):\n- sc0001 | alpha｜注入改造\n- sc0002 | beta｜超时排查",
 	},
 	"tasks/l2-task": {
 		recordsDir: "C:/p/memoryDB/l1/records",
@@ -81,7 +81,7 @@ const FX = {
 // ── 迁移前内联代码的逐字复刻（golden 基线） ────────────────────────────────
 const LEGACY = {
 	"tasks/l1-task": (v) =>
-		["L1 extraction task", `L0Files: ${v.l0Files}`, `CursorPath: ${v.cursorPath}`, `RecordsDir: ${v.recordsDir}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `KnownProjects: ${v.knownProjects}`, v.anchorLines].join("\n"),
+		["L1 extraction task", `L0Files: ${v.l0Files}`, `CursorPath: ${v.cursorPath}`, `RecordsDir: ${v.recordsDir}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `KnownProjects: ${v.knownProjects}`, v.scenePoolLines].join("\n"),
 	"tasks/l2-task": (v) =>
 		["L2 organization task", `RecordsDir: ${v.recordsDir}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `CursorPath: ${v.cursorPath}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `MaxScenes: ${v.maxScenes}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）`].join("\n"),
 	"tasks/l3-task": (v) =>
