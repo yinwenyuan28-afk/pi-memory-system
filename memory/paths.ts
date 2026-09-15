@@ -11,7 +11,7 @@
  *   memoryDB/
  *   ├── config/                              （统一配置中心，见 config/app-config）
  *   ├── l0/{conversations/, cursor.json}
- *   ├── l1/{records/, cursor.json, anchor-log.jsonl, hit-stats.sqlite, hit-stats.json}
+ *   ├── l1/{records/, cursor.json, scenes.json, anchor-log.jsonl, hit-stats.sqlite, hit-stats.json}
  *   ├── l2/{scene-blocks/, cursor.json, index/{scene_index.json, scene_members.json}}
  *   ├── l3/{cursor.json}
  *   ├── skill/{feed/, cursor.json}
@@ -46,8 +46,21 @@ export const L0_CURSOR_FILE = join("l0", "cursor.json");
 export const L1_RECORDS_DIR = join("l1", "records");
 /** L1 游标文件（{memoryDB}/l1/cursor.json）。 */
 export const L1_CURSOR_FILE = join("l1", "cursor.json");
-/** L1 情境锚点注入日志（{memoryDB}/l1/anchor-log.jsonl）。 */
+/**
+ * 【已退役 2026-09-15】L1 情境锚点注入日志（{memoryDB}/l1/anchor-log.jsonl）。
+ *
+ * 场景池上线后不再写入（度量改为按 `scene_id` 从记录派生，不需要这份分母）。常量保留是因为
+ * **文件仍在磁盘上**（5 条历史注入记录 = 旧复用率基线的证据）；不要在代码里再引用它。
+ */
 export const L1_ANCHOR_LOG_FILE = join("l1", "anchor-log.jsonl");
+/**
+ * L1 工作场景池（{memoryDB}/l1/scenes.json）。
+ *
+ * **场景归属的唯一真源**——记录里的 `scene_name` 只是落盘当时的历史快照。条目含稳定 id、
+ * canonical 名字（`{项目}｜{议题}` 稳定标签）、cwd 集合、别名与合并指针。
+ * 写入者只有 `l1_commit`（写锁内），`buildL1Task` 只读注入。
+ */
+export const L1_SCENES_FILE = join("l1", "scenes.json");
 /** L1 命中统计 sqlite（{memoryDB}/l1/hit-stats.sqlite）。 */
 export const L1_HIT_STATS_SQLITE = join("l1", "hit-stats.sqlite");
 /** L1 命中统计 JSON 侧车（{memoryDB}/l1/hit-stats.json，供 records-viewer.html fetch）。 */

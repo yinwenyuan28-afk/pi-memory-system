@@ -1,9 +1,10 @@
-import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { decodeCwdFromSessionPath } from "../l0/index.ts";
-import { L1_ANCHOR_LOG_FILE, L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { buildScenePoolLines, readScenePool, SCENE_POOL_INJECT_LIMIT } from "./scene-pool.ts";
 import { loadAppProps, saveAppSection } from "../../config/app-config.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
@@ -27,14 +28,10 @@ export const L1_INTERVAL = 10;
 export const SUBAGENT_TIMEOUT_MS = 600_000;
 /** 连续失败多少次后熔断（暂停自动提取并通知用户）。 */
 export const L1_FAILURE_THRESHOLD = 3;
-/** 注入子代理任务消息的近期情境候选上限（跨批次复用 scene_name 用）。 */
-export const RECENT_SCENE_LIMIT = 15;
-/** 情境锚点扫描窗口（天）：与 loadAllL1Records 的窗口一致，避免无界同步读。 */
-export const SCENE_LOOKBACK_DAYS = 30;
-/** 锚点注入日志文件名——复用率度量的**分母口径**（每次提取提供了哪些候选）。 */
-export const ANCHOR_LOG_FILE = L1_ANCHOR_LOG_FILE; // 单一来源见 paths.ts（2026-09-14 收束）
-/** 锚点日志体积上限（超出则保留最后 500 条重写，避免无界增长）。 */
-export const ANCHOR_LOG_MAX_BYTES = 1024 * 1024;
+/** 本批 cwd 探测：从最新的 L0 分片尾部取多少行做众数。 */
+export const SCENE_BATCH_CWD_TAIL_LINES = 50;
+/** 本批 cwd 探测最多回溯几个分片（最新的分片整片缺 `cwd` 时向前找）。 */
+export const SCENE_BATCH_CWD_MAX_FILES = 3;
 
 /** 配置文件名（mode 持久化）。 */
 export const CONFIG_FILE = "l1-config.json"; // [DEPRECATED 2026-09-14] 旧独立配置文件已迁入 config/application-propertis.json；本常量仅作 loadL1Config 的迁移期兜底（文件实际已不存在）
@@ -118,145 +115,61 @@ export function listL0Files(profilePath: string, lastRecordedAt: string): string
 	return files.filter((f) => f.slice(0, 10) >= cursorDate).map((f) => join(l0Dir, f));
 }
 
-/** 情境锚点：上一批情境名 + 近期候选（各带 cwd）。 */
-export interface SceneAnchor {
-	/** 最后一条存活记录（全局追加序最大）的情境名与 cwd；无候选时为 null。 */
-	previous: { name: string; cwd: string } | null;
-	/** 近期情境候选（按追加序倒序去重、同 cwd 优先，≤limit 条）。 */
-	recent: { name: string; cwd: string }[];
-}
-
 /**
- * 读取 L1 情境锚点——供子代理跨批次复用同一 `scene_name`（原设计靠提示词头部的
- * `{previous_scene_name}` 占位符，但主进程从未填充，自迁移起一直是死模板）。
+ * 探测本批 L0 增量所属的项目 cwd——**只用于池清单的「同项目优先」排序**。
  *
- * **排序依据是「全局追加序」，不是 `createdAt`/`updatedAt`**：后两者由子代理自填，
- * 粒度参差、同批大面积并列、个别缺失（实测 277 行中 57% 毫秒恰为 `.000`），
- * 无法作为次序依据。追加序 = 分片文件名升序 + 行序——两者都由代码生成。
+ * 从最新分片向上回溯最多 `SCENE_BATCH_CWD_MAX_FILES` 个，取尾部 `SCENE_BATCH_CWD_TAIL_LINES`
+ * 行里非空 `cwd` 的众数。取不到（老分片缺 `cwd` 字段，实测 2026-08-17 分片仅 83.6% 行有值）
+ * 返回空串，调用方退化为「不按项目过滤，全池按 lastUsedAt 排序」。
  *
- * **存活判定用「同 id 最后一次写入」（last-write-wins），不读 `deleted` 字段**：
- * update/merge 的标记行与普通记录一样落在「提交当日」分片（见 `l1/commit-tool.ts`），
- * 只看单行的 `deleted` 会把「已被取代」的旧行当成存活记录（实测 7 个 id 存在双行）。
- *
- * 任何异常都降级为「无候选」，不抛错、不阻塞提取。
+ * **不能用 `process.cwd()`**：那是主进程 cwd，而本批要提取的可能是另一个项目——这正是旧锚点
+ * 机制失效的结构性原因之一（候选按错误的 cwd 排序，最相关的场景常常进不了名单）。
  */
-export function readRecentSceneContext(
-	profilePath: string,
-	limit = RECENT_SCENE_LIMIT,
-	currentCwd = process.cwd(),
-): SceneAnchor {
-	const empty: SceneAnchor = { previous: null, recent: [] };
-	const recordsDir = join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME);
-	if (!existsSync(recordsDir)) return empty;
-
-	let files: string[];
-	try {
-		// 白名单：只要 YYYY-MM-DD.jsonl，排除 backup-*.zip 之类无关文件
-		files = readdirSync(recordsDir)
-			.filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
-			.sort();
-	} catch {
-		return empty;
-	}
-	// 扫描窗口：文件名前缀即本地日期，直接做字符串比较
-	const cutoff = new Date(Date.now() - SCENE_LOOKBACK_DAYS * 86_400_000);
-	const cutoffDate = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
-	files = files.filter((f) => f.slice(0, 10) >= cutoffDate);
-
-	// 按文件升序 + 行序逐行递增全局追加序；同 id 后写覆盖前写
-	const byId = new Map<string, { seq: number; deleted: boolean; name: string; cwd: string }>();
-	let seq = 0;
-	for (const f of files) {
-		let text: string;
+export function detectBatchCwd(
+	l0Files: string[],
+	tailLines = SCENE_BATCH_CWD_TAIL_LINES,
+	maxFiles = SCENE_BATCH_CWD_MAX_FILES,
+): string {
+	const start = Math.max(0, l0Files.length - maxFiles);
+	for (let i = l0Files.length - 1; i >= start; i--) {
+		let lines: string[];
 		try {
-			text = readFileSync(join(recordsDir, f), "utf-8");
+			lines = readFileSync(l0Files[i], "utf-8").split(/\r?\n/).filter(Boolean).slice(-tailLines);
 		} catch {
 			continue;
 		}
-		for (const line of text.split(/\r?\n/)) {
-			const t = line.trim();
-			if (!t) continue;
-			let o: { id?: unknown; deleted?: unknown; scene_name?: unknown; cwd?: unknown };
+		const counts = new Map<string, number>();
+		for (const line of lines) {
 			try {
-				o = JSON.parse(t) as typeof o;
+				const o = JSON.parse(line) as { cwd?: unknown };
+				if (typeof o.cwd === "string" && o.cwd) counts.set(o.cwd, (counts.get(o.cwd) ?? 0) + 1);
 			} catch {
-				continue;
+				// 坏行跳过
 			}
-			if (typeof o.id !== "string") continue;
-			byId.set(o.id, {
-				seq: seq++,
-				deleted: o.deleted === true,
-				// 场景名折叠换行，避免破坏任务消息的一行一候选格式
-				name: typeof o.scene_name === "string" ? o.scene_name.replace(/\s+/g, " ").trim() : "",
-				cwd: typeof o.cwd === "string" ? o.cwd : "",
-			});
 		}
+		if (counts.size > 0) return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
 	}
-
-	const alive = [...byId.values()].filter((r) => !r.deleted && r.name).sort((a, b) => a.seq - b.seq);
-	if (alive.length === 0) return empty;
-
-	// 倒序取 distinct 名字（近者优先），再稳定地把同 cwd 的排到前面
-	const seen = new Set<string>();
-	const picked: { name: string; cwd: string }[] = [];
-	for (let i = alive.length - 1; i >= 0 && picked.length < limit; i--) {
-		const r = alive[i];
-		if (seen.has(r.name)) continue;
-		seen.add(r.name);
-		picked.push({ name: r.name, cwd: r.cwd });
-	}
-	const last = alive[alive.length - 1];
-	return {
-		previous: { name: last.name, cwd: last.cwd },
-		recent: currentCwd
-			? [...picked.filter((p) => p.cwd === currentCwd), ...picked.filter((p) => p.cwd !== currentCwd)]
-			: picked,
-	};
-}
-
-/**
- * 追加一条锚点注入日志（`memoryDB/l1/anchor-log.jsonl`）。
- *
- * 存在的唯一理由：**复用率指标需要分母**——新记录是否复用了情境名，判定基准是
- * 「本次提取实际提供了哪些候选」，而这只能记录在注入时刻。没有它，指标只能靠估算。
- * 日志写入失败一律吞掉，绝不阻塞提取。
- */
-export function appendAnchorLog(profilePath: string, anchor: SceneAnchor): void {
-	try {
-		const file = join(profilePath, MEMORY_DB_DIR, ANCHOR_LOG_FILE);
-		const entry = JSON.stringify({ at: new Date().toISOString(), previous: anchor.previous, recent: anchor.recent });
-		if (existsSync(file) && statSync(file).size > ANCHOR_LOG_MAX_BYTES) {
-			const kept = readFileSync(file, "utf-8").split(/\r?\n/).filter(Boolean).slice(-500);
-			writeFileSync(file, `${kept.join("\n")}\n${entry}\n`, "utf-8");
-			return;
-		}
-		appendFileSync(file, `${entry}\n`, "utf-8");
-	} catch {
-		// 日志失败不影响提取
-	}
+	return "";
 }
 
 /** 构造 l1-extractor 子代理任务消息（供 setupL1Extractor 与手动触发共用）。
- *  模板：prompts/tasks/l1-task.md（registry 单源；anchorLines 为情境锚点块的预拼行，
+ *  模板：prompts/tasks/l1-task.md（registry 单源；`scenePoolLines` 为场景池清单的预拼行，
  *  属数据整形逻辑，留在代码侧——模板只管骨架与字段契约）。 */
 export function buildL1Task(profilePath: string): string | null {
 	const cursor = loadL1Cursor(profilePath);
 	const l0Files = listL0Files(profilePath, cursor);
 	if (l0Files.length === 0) return null;
 	const mode = loadL1Config(profilePath).mode;
-	const anchor = readRecentSceneContext(profilePath);
-	appendAnchorLog(profilePath, anchor);
-	const anchorLines = (anchor.previous
-		? [
-				`PreviousScene: ${anchor.previous.name} | cwd=${anchor.previous.cwd}`,
-				...(anchor.recent.length > 0
-					? [
-							"RecentScenes (latest first, same-cwd first):",
-							...anchor.recent.map((r) => `- ${r.name} | cwd=${r.cwd}`),
-						]
-					: ["RecentScenes: (无)"]),
-			]
-		: ["PreviousScene: (无)", "RecentScenes: (无)"]).join("\n");
+	// 场景池清单：**只读**；写入侧在 l1_commit（写锁内）。本批 cwd 仅用于「同项目优先」排序。
+	const pool = readScenePool(profilePath);
+	const poolLines = buildScenePoolLines(pool, detectBatchCwd(l0Files));
+	const scenePoolLines =
+		poolLines.lines.length > 0
+			? [
+					`ScenePool (id | name; same-project first, recent first; max ${SCENE_POOL_INJECT_LIMIT}):`,
+					...poolLines.lines,
+				].join("\n")
+			: "ScenePool: (无)";
 	return renderPrompt("tasks/l1-task", {
 		l0Files: l0Files.join(","),
 		cursorPath: join(profilePath, MEMORY_DB_DIR, CURSOR_FILE),
@@ -264,7 +177,7 @@ export function buildL1Task(profilePath: string): string | null {
 		promptDir: PROMPT_DIR,
 		mode,
 		knownProjects: listKnownProjects().join(","),
-		anchorLines,
+		scenePoolLines,
 	});
 }
 

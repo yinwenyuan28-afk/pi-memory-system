@@ -2,7 +2,15 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CURSOR_FILE, RECORDS_DIR_NAME, readRecentSceneContext, RECENT_SCENE_LIMIT } from "./config.ts";
+import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.ts";
+import {
+	createSceneResolver,
+	findMostRecentScene,
+	findSceneByNameOrAlias,
+	readScenePool,
+	writeScenePool,
+	type SceneStats,
+} from "./scene-pool.ts";
 import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
 import { MEMORY_DB_DIR } from "../paths.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
@@ -57,26 +65,16 @@ function contentHash(content: string): string {
 }
 
 /**
- * main-agent 模式的 `scene_name` 缺省值（计划 C4）：优先「同 cwd 的最近存活记录」的情境名，
- * 无则全局最近一条，再无则固定占位 `main-agent-live`。
+ * main-agent 路径的 `scene_name` 解析（2026-09-15 由锚点改为场景池）。
  *
- * 刻意**不注入提醒词**：`MEMORY_TOOL_REMINDER` 拼在系统提示里，须保持常量以命中 provider
- * prefix cache（架构说明 §5.3）；动态候选会破坏前缀缓存，故在写入时服务端取值。
+ * 契约（主代理看不到池清单——`MEMORY_TOOL_REMINDER` 拼在系统提示里，须保持常量以命中
+ * provider prefix cache，《架构说明》§5.3，故动态候选只能在写入时由服务端取）：
+ *   - 主代理**显式给了** `scene_name`：按名字（canonical 或别名）在池中匹配——
+ *     命中 → 用池的 canonical 名与 id；未命中 → **原样保留，且不登记进池**
+ *     （主代理是自由文本、看不到池，若允许它登记会持续污染候选集；`origin` 也失去意义）。
+ *   - **未给**：按 cwd 取池内最近条目 → 无则固定占位 `main-agent-live`（并标 `sceneNameFallback`）。
  */
-function resolveMainAgentSceneName(profilePath: string, currentCwd: string): string {
-	try {
-		const anchor = readRecentSceneContext(profilePath, RECENT_SCENE_LIMIT, currentCwd || process.cwd());
-		if (currentCwd) {
-			const sameCwd = anchor.recent.find((r) => r.cwd === currentCwd);
-			if (sameCwd) return sameCwd.name;
-		}
-		if (anchor.previous?.name) return anchor.previous.name;
-		if (anchor.recent.length > 0) return anchor.recent[0].name;
-	} catch {
-		// 降级为固定占位
-	}
-	return "main-agent-live";
-}
+const MAIN_AGENT_SCENE_FALLBACK = "main-agent-live";
 
 /** 原子写 l1/cursor.json（tmp + rename）。 */
 function saveCursor(profilePath: string, lastRecordedAt: string): void {
@@ -200,9 +198,8 @@ export function registerL1CommitTool(
 						if (typeof r.sessionKey !== "string" || !r.sessionKey) r.sessionKey = sessionKey;
 						if (r.sessionId === undefined) r.sessionId = sessionId;
 						if (typeof r.cwd !== "string") r.cwd = cwd;
-						if (typeof r.scene_name !== "string" || !r.scene_name.trim()) {
-							r.scene_name = resolveMainAgentSceneName(profilePath, cwd);
-						}
+						// scene_name / scene_id 统一在写锁内的「场景解析」段处理（2026-09-15），
+						// 这里刻意不填——池是唯一真源，且解析必须在锁内做
 						if (!Array.isArray(r.source_message_ids)) r.source_message_ids = [];
 						const md = typeof r.metadata === "object" && r.metadata !== null ? (r.metadata as Record<string, unknown>) : {};
 						r.metadata = { ...md, origin: "main-agent" };
@@ -214,6 +211,59 @@ export function registerL1CommitTool(
 				const writeLock = acquireWriteLock(profilePath);
 				if (!writeLock) {
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "L1 库被其他写者占用（写锁超时 10s），请稍后重试" }) }], details: {} };
+				}
+
+				// ── 场景解析（2026-09-15）：**必须在写锁内**。池是场景归属的唯一真源，
+				//    canonical 名字由池给出（覆写子代理自填值），新建条目当场登记。
+				//    顺序：先解析内存态 →（下面第 1 步）记录落盘 →（第 2.5 步）写回池。
+				const scenePool = readScenePool(profilePath);
+				const sceneResolver = isMainAgent ? null : createSceneResolver(scenePool, new Date().toISOString());
+				const sceneWarns: string[] = [];
+				let sceneNameFallback = false;
+				for (const r of records as Record<string, unknown>[]) {
+					// `deleted:true` 标记行不参与池解析（不登记、不计数、不累积 cwds）
+					if (r.deleted === true) continue;
+					const recCwd = typeof r.cwd === "string" ? r.cwd : "";
+
+					if (sceneResolver) {
+						const res = sceneResolver.resolve({
+							scene_id: r.scene_id,
+							new_scene_name: r.new_scene_name,
+							new_scene_reason: r.new_scene_reason,
+							scene_name: r.scene_name,
+							cwd: recCwd,
+						});
+						if (res.warn) sceneWarns.push(res.warn);
+						r.scene_name = res.scene_name;
+						if (res.scene_id) r.scene_id = res.scene_id;
+						else delete r.scene_id;
+						// 子代理填的中间字段不落盘
+						delete r.new_scene_name;
+						delete r.new_scene_reason;
+						continue;
+					}
+
+					// main-agent 路径（契约见 main-agent-场景解析注释）
+					const explicit = typeof r.scene_name === "string" ? r.scene_name.trim() : "";
+					if (explicit) {
+						const hit = findSceneByNameOrAlias(scenePool, explicit);
+						if (hit) {
+							r.scene_name = hit.name;
+							r.scene_id = hit.id;
+						} else {
+							delete r.scene_id; // 未命中：原样保留名字，不登记进池
+						}
+						continue;
+					}
+					const near = findMostRecentScene(scenePool, recCwd);
+					if (near) {
+						r.scene_name = near.name;
+						r.scene_id = near.id;
+					} else {
+						r.scene_name = MAIN_AGENT_SCENE_FALLBACK;
+						delete r.scene_id;
+						sceneNameFallback = true;
+					}
 				}
 
 			// 0. 去重：扫描现有 records 建 id 集合 + 内容哈希集合（仅非 deleted）
@@ -360,8 +410,20 @@ export function registerL1CommitTool(
 				ctx.ui.notify(`L1 commit 成功，但向量化写入失败: ${msg}`, "error");
 			}
 
+				// 2.5 场景池写回（2026-09-15）——**刻意放在所有记录落盘之后**：池写失败时记录
+				//     仍带正确名字；池缺条目下批会重建同名条目（幂等）。池读写均在本锁内。
+				let poolWriteFailed = false;
+				if (sceneResolver?.isDirty()) {
+					scenePool.updatedAt = new Date().toISOString();
+					poolWriteFailed = !writeScenePool(profilePath, scenePool);
+					if (poolWriteFailed) {
+						console.warn("[l1_commit] 场景池写入失败（记录已落盘；池条目缺失将在下批重建）");
+					}
+				}
+				const sceneStats: SceneStats | null = sceneResolver ? sceneResolver.stats() : null;
+
 				// 3. 回写游标 —— 仅子代理路径。cursor 是 L0 增量水位，主代理推进会让
-				//    l1-extractor 跳过对应 L0 消息（C1）。
+					//    l1-extractor 跳过对应 L0 消息（C1）。
 				if (!isMainAgent) saveCursor(profilePath, cursor);
 
 				// 4. 流水线 —— 仅子代理路径。main-agent 跳过两者（C2/C8）：
@@ -417,7 +479,7 @@ export function registerL1CommitTool(
 
 
 				return {
-					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats, markedInPlace: markByFile.size }) }],
+					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats, markedInPlace: markByFile.size, sceneStats, sceneWarns, poolWriteFailed, sceneNameFallback }) }],
 					details: {},
 				};
 			} catch (err) {
