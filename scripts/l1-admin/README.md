@@ -11,6 +11,7 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 | `verify.mjs` | 库体检：行数/存活/坏行/同 id/畸形/错误串白名单 | 只读 |
 | `health.mjs` | 健康指标：超长/test 残留/孤儿 stats/自造 id/畸形/错误串 | 只读 |
 | `rollback.mjs` | 从备份目录恢复 L1 records | `--dry-run` 默认；实恢复前自动备份当前库 |
+| `scene-pool.mjs` | **工作场景池**运维：`report`（池状态 + 批级指标）/ `cluster`（历史场景名聚类）/ `seed`（按映射提案播种）/ `merge-report`（合并候选） | 除 `seed --apply` 外全部只读；`seed` 默认 dry-run，实写前自动备份 `scenes.json` |
 
 公共参数：`--profile <dir>`（默认 `C:/Users/leaf/.pi/agent/profiles/default`）、`--dry-run` / `--apply`。
 
@@ -23,15 +24,42 @@ node scripts/l1-admin/rewrite.mjs l1_xxx --content "新内容" --apply
 node scripts/l1-admin/verify.mjs
 node scripts/l1-admin/health.mjs
 node scripts/l1-admin/rollback.mjs C:/temp/pi/backup/l1-cleanup-20260911 --apply
+
+node scripts/l1-admin/scene-pool.mjs report                # 池状态（只读）
+node scripts/l1-admin/scene-pool.mjs cluster --out /tmp/聚类.json   # 聚类（只读）
+node scripts/l1-admin/scene-pool.mjs seed --file 映射.json  # 播种预览
+node scripts/l1-admin/scene-pool.mjs seed --file 映射.json --apply   # 播种实写
+node scripts/l1-admin/scene-pool.mjs merge-report          # 合并候选（只读）
 ```
+
+## 工作场景池（scene pool）
+
+`{profile}/memoryDB/l1/scenes.json` —— **L1 场景归属的唯一真源**（记录里的 `scene_name` 只是落盘当时的历史快照）。
+由扩展的 `l1_commit` 在**写锁内**维护；本目录的 `scene-pool.mjs` 只做运维侧的事。
+
+- 条目结构：`{ id 稳定且不复用, name 稳定标签 {项目}｜{议题}, cwds[], aliases[], mergedInto, origin, createdAt, lastUsedAt, useCount, newSceneReason? }`
+- 注入：`buildL1Task` 取「未合并 + `lastUsedAt` 在 60 天窗口内」的条目，**同 cwd 优先 → 近期优先**，上限 40 条（实测单个项目最多 34 条线程）。
+- `aliases` / `mergedInto` **只在读取期解析**，不改历史记录。
+- **本轮不含自动合并**：`merge-report` 只出候选，写操作（`mergedInto` + `aliases`）待确认后另行处理。
 
 ## 核心语义（两个实战踩坑，务必理解）
 
-### 坑 1：loader 没有 LWW —— 追加墓碑行无效
+### 坑 1：loader 的存活语义 = LWW（2026-09-11 起；此前是逐行过滤）
 
-`record-loader.ts`（loadAllL1Records / loadL1RecordById）与 `hybrid-recall.ts`、`backfill.ts` 都是**按行过滤 `!deleted`**，**不做同 id 最后一次写入合并**（LWW 只存在于 `l1/config.ts` 的场景锚点读者）。
+> **本节 2026-09-15 更正**。原文写「loader 按行过滤 `!deleted`，不做同 id 合并」——**已不成立**：
+> `memory/search/embedding/record-loader.ts` 的 `loadL1RecordById` / `loadAllL1Records` 自 2026-09-11
+> 起均为 **LWW**（同 id 取追加序最后一行：分片名升序 + 行序），`deleted` 判定 strict `=== true`；
+> 消费方 `hybrid-recall.ts:126` 走的就是这两个函数。旧口径只存在于 2026-09-11 之前的历史档案统计里。
 
-因此「追加一条 `deleted:true` 的同 id 行」**不能**让旧行消失——旧行（`deleted:false`）仍会被加载、被召回、被回填。**必须就地标记**旧行本身：找到旧行 → 同一行内 `deleted:true` + `updatedAt` 更新（保留 `content` 原样供溯源，`createdAt` 保留原值）。
+**当前事实**：
+
+- 判某 id 是否存活 = **看它追加序最后一行**，不是看有没有某一行带 `deleted:true`。
+- **就地标记依然是本目录与 `l1_commit` 的既定做法**，理由不再是"追加墓碑无效"，而是：
+  1. `l1_commit` 的去重逻辑会**跳过已存在的 id**，所以经 `l1_commit` 根本追加不了同 id 的墓碑行；
+  2. 就地标记天然幂等，且不会在分片里堆积"一 id 多行"的档案；
+  3. 历史统计脚本（`verify.mjs` / `health.mjs`）仍同时给逐行口径与 LWW 口径，两种读法都要能读懂。
+- 因此：**作废必须就地改旧行本身**（`deleted:true` + 更新 `updatedAt`，保留 `content` 供溯源）。
+- ⚠ 若将来新增按行过滤的消费方，旧墓碑模式会复发 —— 新增读 L1 records 的代码请**用 `record-loader.ts`**，不要自己 split 行。
 
 历史先例：2026-08-20 治理批量就是就地标记（`l1_1787190820001_staging` 旧行至今带 `deleted:true`）。本工具遵循同一模式。
 

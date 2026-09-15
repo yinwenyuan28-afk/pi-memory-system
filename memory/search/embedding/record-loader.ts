@@ -90,7 +90,7 @@ export async function loadL1RecordById(
 /**
  * 加载全部存活的 L1 records（最近 days 天，LWW 语义）
  *
- * LWW（2026-09-11 改造，与 config.ts readRecentSceneContext 同口径）：
+ * LWW（2026-09-11 改造，与 `l1-admin/lib.mjs` 的 scanRecords、场景池读取同口径）：
  * 同 id 按「追加序最后一行」（分片日期升序 + 行序）判定存活：
  *   last.deleted === true → 该 id 不输出；否则输出最后一行。
  * 背景：旧实现逐行 `!deleted` 过滤，导致「追加墓碑删不掉旧行」且同 id 多行重复输出；
