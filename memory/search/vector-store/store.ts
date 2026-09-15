@@ -44,12 +44,23 @@ export interface VectorStore {
 
 /** 全局单例 */
 let storeInstance: VectorStore | null = null;
+/** 进行中的初始化 promise（并发去重，见 getVectorStore 注释） */
+let storeInitPromise: Promise<VectorStore> | null = null;
 
 /**
  * 获取 VectorStore 实例（懒加载）
+ *
+ * ⚠️ 并发保护（2026-09-15 修复）：只判 `if (storeInstance)` 不够 —— 首参
+ * `await createSqliteVecStore()` 是异步的，期间并发调用会全部穿过检查、各自
+ * 初始化一遍。实测 l1-extractor 同一 assistant turn 内并发 3 个
+ * `embed_and_search`，「初始化完成」打印 3 次，其中 2 次以
+ * `Cannot access 'storeInstance' before initialization` 失败（去重静默降级为
+ * 手动扫分片，单次提取多空转约 200s）。
+ * 改为缓存进行中的 promise：并发调用共享同一次初始化，失败时清空以便重试。
  */
 export async function getVectorStore(profilePath?: string): Promise<VectorStore> {
   if (storeInstance) return storeInstance;
+  if (storeInitPromise) return storeInitPromise;
 
   const baseProfilePath = profilePath ?? process.env.PI_PROFILE_PATH ?? "";
   const vectorsDir = join(baseProfilePath, MEMORY_DB_DIR, VECTORS_DIR);
@@ -58,14 +69,21 @@ export async function getVectorStore(profilePath?: string): Promise<VectorStore>
     mkdirSync(vectorsDir, { recursive: true });
   }
 
-  storeInstance = await createSqliteVecStore(vectorsDir);
-  return storeInstance;
+  storeInitPromise = createSqliteVecStore(vectorsDir, baseProfilePath);
+  try {
+    storeInstance = await storeInitPromise;
+    return storeInstance;
+  } catch (e) {
+    // 初始化失败：清空 in-flight 缓存，允许后续调用重试（不缓存失败态）
+    storeInitPromise = null;
+    throw e;
+  }
 }
 
 /**
  * 创建 sqlite-vec vector store
  */
-async function createSqliteVecStore(vectorsDir: string): Promise<VectorStore> {
+async function createSqliteVecStore(vectorsDir: string, profilePath: string): Promise<VectorStore> {
   const Database = (await import("better-sqlite3")).default;
   const sqliteVec = await import("sqlite-vec");
 
@@ -75,11 +93,13 @@ async function createSqliteVecStore(vectorsDir: string): Promise<VectorStore> {
   db.pragma("journal_mode = WAL");
   sqliteVec.load(db);
 
-  // 从 embedding 配置读取维度（与 embedding service 输出一致）
-  // vectorsDir = {profilePath}/memoryDB/vectors → profilePath = join(vectorsDir, "..", "..")
+  // 从 embedding 配置读取维度（与 embedding service 输出一致）。
+  // 注意：**直接用 profilePath**，不要从 vectorsDir 反推层级 ——
+  // 旧实现假设 vectorsDir = {profile}/memoryDB/.vectors，故取 "..",".." 得 profile 根；
+  // 2026-09-14 布局改为 {profile}/memoryDB/search/vectors 后多了一层，反推只会得到 memoryDB/。
   const dimensions = (() => {
     try {
-      const cfg = loadEmbeddingConfig(join(vectorsDir, "..", ".."));
+      const cfg = loadEmbeddingConfig(profilePath);
       return cfg?.dimensions ?? 1024;
     } catch {}
     return 1024; // 默认值
@@ -300,6 +320,7 @@ async function createSqliteVecStore(vectorsDir: string): Promise<VectorStore> {
     close() {
       db.close();
       storeInstance = null;
+      storeInitPromise = null;
     },
   };
 

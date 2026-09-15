@@ -48,6 +48,8 @@ function l2Normalize(vec: Vector): Vector {
 
 /** 全局单例（进程级） */
 let serviceInstance: EmbeddingService | null = null;
+/** 进行中的初始化 promise（并发去重，理由同 vector-store/store.ts） */
+let serviceInitPromise: Promise<EmbeddingService> | null = null;
 
 /**
  * 获取 EmbeddingService 实例（懒加载）
@@ -56,10 +58,15 @@ let serviceInstance: EmbeddingService | null = null;
  * 子代理进程：进程启动后首次 embed 调用时初始化
  * 主代理进程：before_agent_start 首次调用时初始化
  *
+ * ⚠️ 并发保护（2026-09-15 修复）：只判 `if (serviceInstance)` 不够，原因同
+ * vector-store/store.ts —— 首参初始化是异步的，并发调用会重复初始化。
+ * 改缓存进行中的 promise；失败时清空以便重试。
+ *
  * @param profilePath profile 根目录（子代理进程从环境变量或参数传入）
  */
 export async function getEmbeddingService(profilePath?: string): Promise<EmbeddingService> {
   if (serviceInstance) return serviceInstance;
+  if (serviceInitPromise) return serviceInitPromise;
 
   const config = loadEmbeddingConfig(profilePath ?? process.env.PI_PROFILE_PATH ?? "");
   if (!config) {
@@ -70,8 +77,14 @@ export async function getEmbeddingService(profilePath?: string): Promise<Embeddi
     );
   }
 
-  serviceInstance = await createRemoteEmbeddingService(config);
-  return serviceInstance;
+  serviceInitPromise = createRemoteEmbeddingService(config);
+  try {
+    serviceInstance = await serviceInitPromise;
+    return serviceInstance;
+  } catch (e) {
+    serviceInitPromise = null;
+    throw e;
+  }
 }
 
 /**

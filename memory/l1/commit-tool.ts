@@ -6,6 +6,7 @@ import { CURSOR_FILE, RECORDS_DIR_NAME, readRecentSceneContext, RECENT_SCENE_LIM
 import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
 import { MEMORY_DB_DIR } from "../paths.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
+import { loadFailureState, saveFailureState } from "../failure-state.ts";
 import { acquireWriteLock } from "./write-lock.ts";
 import { loadEmbeddingConfig } from "../search/embedding/config.ts";
 import { isVectorizationReady } from "../search/embedding/vectorization-config.ts";
@@ -77,7 +78,7 @@ function resolveMainAgentSceneName(profilePath: string, currentCwd: string): str
 	return "main-agent-live";
 }
 
-/** 原子写 l1-cursor.json（tmp + rename）。 */
+/** 原子写 l1/cursor.json（tmp + rename）。 */
 function saveCursor(profilePath: string, lastRecordedAt: string): void {
 	const filePath = join(profilePath, MEMORY_DB_DIR, CURSOR_FILE);
 	const tmpPath = join(profilePath, MEMORY_DB_DIR, `.tmp_l1_cursor_${Date.now()}`);
@@ -371,7 +372,26 @@ export function registerL1CommitTool(
 				try {
 					if (!isMainAgent) {
 						const jobs = getPipelineJobsDB(profilePath);
-						jobs.completeRunningL1();
+						const doneNow = jobs.completeRunningL1();
+						// 2026-09-15：认领「超时误判」——子代理耗时可能远超 180s 超时，
+						// 主进程标 failed 后子代理仍会提交。此处把该 failed 纠正为 done，
+						// 并重置 L1 失败计数，否则计数只增不减、累计 3 次即熔断。
+						const reclaimed = jobs.reclaimTimedOutL1();
+						if (doneNow + reclaimed > 0) {
+							try {
+								const fs = loadFailureState(profilePath);
+								if (fs.l1.consecutiveFailures > 0 || fs.l1.cooledDown) {
+									fs.l1.consecutiveFailures = 0;
+									fs.l1.cooledDown = false;
+									saveFailureState(profilePath, fs);
+									console.warn(
+										`[l1_commit] 纠正超时误判：job done=${doneNow} reclaimed=${reclaimed}，L1 失败计数已重置`,
+									);
+								}
+							} catch (e) {
+								console.warn(`[l1_commit] 重置失败计数出错: ${e instanceof Error ? e.message : String(e)}`);
+							}
+						}
 						if (countNewRecords(profilePath, loadL2Cursor(profilePath).lastProcessedAt) > 0) {
 							jobs.enqueue("l2", "l1_commit");
 						}

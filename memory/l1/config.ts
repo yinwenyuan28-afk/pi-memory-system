@@ -13,8 +13,18 @@ import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /** 触发间隔：每 N 轮用户消息启动一次 L1 提取。 */
 export const L1_INTERVAL = 10;
-/** 子代理超时（L1 每轮只提取 ≤10 条，3 分钟足够；原 10 分钟过长，hung 子代理会长期占锁）。 */
-export const SUBAGENT_TIMEOUT_MS = 180_000;
+/**
+ * 子代理超时。
+ *
+ * 2026-09-15 由 180s 调整为 600s。原判断「每轮只提取 ≤10 条，3 分钟足够」与实测不符：
+ * 一次真实提取实测耗时 **561s**（session 记录），主要消耗在
+ *   ① 3 个并发 embed_and_search 失败后的空转（约 200s，并发单例缺陷，已修）
+ *   ② 去重降级为手动扫描最近 30 天分片（约 224s）
+ * 而 180s 上限会导致**必然误判**：job 被标 failed，但子进程并未被 abort 终止，
+ * 随后仍正常提交 —— 计数虚增、3 次即熔断。
+ * 600s 高于实测上界留出余量；仍保留 reclaimTimedOutL1 兜底，以应对更慢的批。
+ */
+export const SUBAGENT_TIMEOUT_MS = 600_000;
 /** 连续失败多少次后熔断（暂停自动提取并通知用户）。 */
 export const L1_FAILURE_THRESHOLD = 3;
 /** 注入子代理任务消息的近期情境候选上限（跨批次复用 scene_name 用）。 */
@@ -30,9 +40,9 @@ export const ANCHOR_LOG_MAX_BYTES = 1024 * 1024;
 export const CONFIG_FILE = "l1-config.json"; // [DEPRECATED 2026-09-14] 旧独立配置文件已迁入 config/application-propertis.json；本常量仅作 loadL1Config 的迁移期兜底（文件实际已不存在）
 /** 游标文件名（全局 lastRecordedAt，子代理回写）。 */
 export const CURSOR_FILE = L1_CURSOR_FILE; // 单一来源见 paths.ts（2026-09-14 收束）
-/** L0 分片目录名（{profilePath}/memoryDB/l0-conversations，单一来源见 paths.ts）。 */
+/** L0 分片目录名（{profilePath}/memoryDB/l0/conversations，单一来源见 paths.ts）。 */
 export const L0_DIR_NAME = L0_CONVERSATIONS_DIR;
-/** L1 记忆输出目录名（{profilePath}/memoryDB/l1-records，单一来源见 paths.ts）。 */
+/** L1 记忆输出目录名（{profilePath}/memoryDB/l1/records，单一来源见 paths.ts）。 */
 export const RECORDS_DIR_NAME = L1_RECORDS_DIR;
 
 /** 规则文件目录（本模块同目录下的 prompts/）。 */
@@ -205,7 +215,7 @@ export function readRecentSceneContext(
 }
 
 /**
- * 追加一条锚点注入日志（`memoryDB/l1-anchor-log.jsonl`）。
+ * 追加一条锚点注入日志（`memoryDB/l1/anchor-log.jsonl`）。
  *
  * 存在的唯一理由：**复用率指标需要分母**——新记录是否复用了情境名，判定基准是
  * 「本次提取实际提供了哪些候选」，而这只能记录在注入时刻。没有它，指标只能靠估算。

@@ -136,6 +136,36 @@ export class PipelineJobsDB {
 		return Number(info.changes);
 	}
 
+	/**
+	 * l1_commit：认领「超时误判」的 l1 job —— 把最近被标 failed 的超时 job 纠正为 done。
+	 *
+	 * 背景（2026-09-15 实测）：子代理实际耗时可达 561s，曾远超 SUBAGENT_TIMEOUT_MS（当时 180s，现已调为 600s）。
+	 * executeJob 等满超时后把 job 标 failed，但**不杀子进程**（abort 只 reject 主进程的
+	 * wait promise）；子代理随后仍正常调用 l1_commit。此时：
+	 *   - completeRunningL1() 的 `status='running'` 匹配不到（job 已 failed）→ 空操作；
+	 *   - l1/index.ts 的计数重置分支（`after.status==='done'`）在此场景永远进不去
+	 *     → consecutiveFailures 只增不减，累计 3 次即熔断，自动提取停摆。
+	 *
+	 * 本方法给晚到的提交一个纠正机会：只认领**最近 N 分钟内**、error 恰为超时文案的
+	 * failed l1 job，避免把真正的失败（如 recovered / 其他错误）洗成成功。
+	 *
+	 * @param withinMs 只认领 finished_at 在此时长内的 failed job（默认 15 分钟）
+	 * @returns 被纠正的 job 数
+	 */
+	reclaimTimedOutL1(withinMs = 15 * 60_000): number {
+		const now = new Date();
+		const cutoff = new Date(now.getTime() - withinMs).toISOString();
+		const info = this.db
+			.prepare(
+				`UPDATE jobs SET status = 'done', finished_at = ?, error = NULL
+				 WHERE type = 'l1' AND status = 'failed'
+				   AND error = 'timeout without l1_commit'
+				   AND finished_at IS NOT NULL AND finished_at >= ?`,
+			)
+			.run(now.toISOString(), cutoff);
+		return Number(info.changes);
+	}
+
 	/** 进程重启：只回收「足够旧」的 running，避免 L1 子进程 session_start 误杀刚 spawn 的 job。 */
 	recoverStuckRunning(minAgeMs = PIPELINE_RECOVER_MIN_AGE_MS): number {
 		const cutoff = Date.now() - minAgeMs;

@@ -84,7 +84,9 @@ export function setupL1Extractor(
 		const db = getPipelineJobsDB(profilePath);
 		ctx.ui.setStatus("memory", job.source === "manual" ? "Memory ⚙L1 (manual)..." : "Memory ⚙L1...");
 		const abortCtl = new AbortController();
-		const waitP = waitWhileRunning(() => db.getJob(job.id), SUBAGENT_TIMEOUT_MS);
+		// waitWhileRunning 比子代理超时多给 30s 宽限：子代理在最后时刻调 l1_commit 时，
+		// 落盘 + 写游标 + 入队 L2 仍需时间，同值会在这条尾巴上误判超时（2026-09-15）。
+		const waitP = waitWhileRunning(() => db.getJob(job.id), SUBAGENT_TIMEOUT_MS + 30_000);
 		try {
 			const spawnP = runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS, abortCtl.signal);
 			void spawnP.catch((err) => {
