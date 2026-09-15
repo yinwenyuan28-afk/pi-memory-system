@@ -28,11 +28,35 @@ import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-t
 import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.ts";
 import { registerFixTool } from "./memory/l1/fix-tool.ts";
 import { loadRecallConfig } from "./memory/search/recall-config.ts";
+import { createRecallScheduler } from "./memory/search/recall-scheduler.ts";
 import { handleSkillManageTool } from "./skill/skill-tool.ts";
 import { handleSkillViewTool } from "./skill/skill-view-tool.ts";
 import { render as renderPrompt, checkPromptAssets } from "./prompts/registry.ts";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+
+/** 召回调度器载荷（2026-09-15，L1_RECALL_ASYNC）：把「查什么/怎么算」与「何时注入」解耦。 */
+interface RecallPayload {
+  queryText: string;
+  profilePath: string;
+  topK: number;
+  source: "inject" | "tool";
+  /** 是否在 recallL1Records 内计数（自动注入传 false —— 改由 context 真入列时计）。 */
+  countHits?: boolean;
+  /** turn 级命中去重集合（工具路径需要；自动注入路径的计数在 context 处另做）。 */
+  hitDedupSet?: Set<string>;
+}
+
+/** L1 召回候选（结构同 hybrid-recall 的返回元素；此处结构化声明避免循环依赖）。 */
+interface L1RecordCandidate {
+  recordId: string;
+  score: number;
+  content: string;
+  type?: string;
+  priority?: number;
+  scene_name?: string;
+  createdAt?: string;
+}
 
 // ── L1 召回 query 条件式扩展（2026-09-02，L1_RECALL_GATE_PLAN 任务 9） ──────────
 // 背景：无条件拼 10 条历史会向量稀释且语义自相矛盾（历史本就在 context 里），被否决。
@@ -85,13 +109,42 @@ export default function (pi: ExtensionAPI) {
   // 子记忆路由缓存：before_agent_start 计算一次，context 事件直接读取。
   // 不在 agent_end/agent_start 重置（retry/compaction/followUp 续跑不再触发 before_agent_start），
   // 只在 before_agent_start 覆写——每次用户 turn 必然先触发它，queryText 永远新鲜。
-  let _pendingContext: { subMemories: string } | null = null;
+  //
+  // 2026-09-15（L1_RECALL_ASYNC）：块可能**就绪晚于本轮首次 LLM 调用**（async 模式，或 blocking
+  // 超时后的后台补注入）。`l1RecordIds` 与 `hitsCounted` 用于把命中计数推迟到「块真正入列」那一次。
+  let _pendingContext: { subMemories: string; l1RecordIds: string[]; hitsCounted: boolean } | null = null;
 
   // L1 命中计数 turn 级去重集合：before_agent_start 每 turn 开头清空。
   // 同一 turn 内，自动注入（top-3）与 recall_l1_records 工具（top-5）召回同一条记忆时只计 1 次命中。
   // 工具与注入共用同一引用（都在本进程闭包内）。retry/compaction/followUp 不重触发 before_agent_start，
   // Set 保留 → 同一 turn 的续跑仍去重，语义正确。
   const currentTurnHitSet = new Set<string>();
+
+  // 轮次编号：每 turn +1，用于作废「上一轮还在飞」的召回结果（异步注入下必需）。
+  let turnToken = 0;
+
+  // 召回调度闸门（会话级串行；闸门释放绑定底层 settle）。
+  // 结果类型 = L1 候选数组（两条路径共用）：自动注入渲染成块、工具路径直接回传 candidates。
+  let recallScheduler: ReturnType<typeof createRecallScheduler<RecallPayload, L1RecordCandidate[]>>;
+  {
+    const cfgForScheduler = () =>
+      loadRecallConfig(manager?.getProfileManager().getActiveProfile()?.path ?? "");
+    recallScheduler = createRecallScheduler<RecallPayload, L1RecordCandidate[]>({
+      maxHoldMs: cfgForScheduler().maxHoldMs,
+      log: (m) => console.warn(`[memory-system]${m}`),
+      run: async (payload, signal) => {
+        const { recallL1Records } = await import("./memory/search/hybrid-recall.ts");
+        const r = await recallL1Records(payload.queryText, payload.profilePath, {
+          topK: payload.topK,
+          source: payload.source,
+          hitDedupSet: payload.hitDedupSet,
+          countHits: payload.countHits,
+          signal,
+        });
+        return r.l1Records.length > 0 ? r.l1Records : null;
+      },
+    });
+  }
 
   // 提供懒引用给 reviewer，避免循环依赖
   let getMemoryStatus: () => string = () => "0t";
@@ -222,7 +275,7 @@ export default function (pi: ExtensionAPI) {
   // embed_and_search 工具：l1-extractor 子代理自主调用 embedding + vector store search（方案 B，用户拍板 2026-08-18）
   registerEmbedAndSearchTool(pi);
   // recall_l1_records 工具：agent 主动调用的 L1 原子记忆召回（与旧记忆系统解耦）
-  registerRecallL1RecordsTool(pi, currentTurnHitSet);
+  registerRecallL1RecordsTool(pi, currentTurnHitSet, recallScheduler);
   // clear_invalid_l1_records 工具：agent 主动标记无效召回（写入 invalid_hits 反馈信号，召回闭环）
   registerClearInvalidL1RecordsTool(pi);
   // l1_fix 工具：agent 自发纠错（护栏 + exec l1-admin；对应命令 /my-memory:l1:fix）——2026-09-11 A 档
@@ -269,6 +322,28 @@ export default function (pi: ExtensionAPI) {
     }
 
     const getProfilePath = () => manager?.getProfileManager().getActiveProfile()?.path;
+
+    // ── 召回预热（2026-09-15，L1_RECALL_ASYNC） ──
+    // 向量库与 embedding 客户端均为懒加载单例，首个 turn 才初始化 → 把这段开销前移到会话启动。
+    // 只开库/建客户端，**不发 embedding 请求**（零 API 成本）；失败静默，后续按懒加载路径工作。
+    try {
+      if (profile && loadRecallConfig(profile.path).prewarm) {
+        void (async () => {
+          try {
+            const { getVectorStore } = await import("./memory/search/vector-store/store.ts");
+            const { getEmbeddingService } = await import("./memory/search/embedding/service.ts");
+            await getVectorStore(profile.path);
+            await getEmbeddingService(profile.path);
+          } catch (e) {
+            console.warn(
+              `[memory-system][prewarm] 预热失败（不影响后续懒加载）: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        })();
+      }
+    } catch {
+      // 配置不可读 → 跳过预热
+    }
 
     // 流水线 worker（单次注册）：串行消费 pipeline/jobs.sqlite
     if (!pipelineInitialized) {
@@ -329,6 +404,7 @@ export default function (pi: ExtensionAPI) {
     l2Controls?.reset();
     l3Controls?.reset();
     pipelineWorker?.reset();
+    recallScheduler.reset(); // 清召回闸门：在飞/排队请求以 reset settle（避免悬挂）
     // [DISABLED] workflowController.shutdown();
   });
 
@@ -389,8 +465,10 @@ export default function (pi: ExtensionAPI) {
       return { systemPrompt: event.systemPrompt };
     }
 
-    // 新 turn 开始：清空 L1 命中计数的 turn 级去重集合
+    // 新 turn 开始：清空 L1 命中计数的 turn 级去重集合，并推进轮次编号
+    // （turnToken++ 使上一轮仍在飞的召回结果作废 —— async 模式下必需）
     currentTurnHitSet.clear();
+    turnToken++;
 
     // ── L1 召回 query 构造（2026-09-02 起条件式，取代无条件拼 10 条历史） ──
     // 默认裸 prompt = 本轮意图信号（腾讯三端同款）。
@@ -445,11 +523,16 @@ export default function (pi: ExtensionAPI) {
     // [RETIRED 2026-09-12] 旧 sub-memory（sub-memories/ jieba 倒排）自动注入已于 2026-08-20 废弃，
     // 其依赖的检索链（searcher / InvertedIndex）已随 LEGACY_RETRIEVAL_RETIREMENT 删除。
     // 恢复旧行为须 git revert 该计划的删码提交，块内引用符号已不存在（原注释块已移除）。
-    _pendingContext = { subMemories: "" }; // 占位，L1 召回后写回
+    _pendingContext = { subMemories: "", l1RecordIds: [], hitsCounted: false };
 
-    // L1 records 向量召回注入（当前唯一自动注入来源，2026-08-20 起）
-    // 统一走 recallL1Records()（与 recall_l1_records 工具同一条路径，DRY），
-    // 命中计数按 turn 去重（hitDedupSet = currentTurnHitSet），避免注入+工具重复计数。
+    // ── L1 records 向量召回（2026-09-15 改造：串行闸门 + blocking/async 双模式） ──
+    // 关键点：
+    //   · 召回统一走调度闸门（会话级串行、闸门释放绑定底层 settle），不再直接 await recallL1Records；
+    //   · blocking（默认）：等最多 injectTimeoutMs —— 实测 p50 457ms/p90 1326ms，多数 turn 首跳即有记忆；
+    //     超时后请求仍在飞、结果可在后续 LLM 调用补注入（自动退化为 async 行为）；
+    //   · async：不等待，立即放行 agent loop；结果就绪后由 context 在后续调用前插入；
+    //   · 命中计数**不在此处**做（`countHits: false`）——「召回返回」≠「真的注入」，
+    //     改由 context 事件在块真正入列时计数（见下）。
     // 短查询 / 质量门过滤：避免为 "1" / "/" / 纯符号等无意义 prompt 浪费向量调用
     const _trimmedPrompt = (event.prompt || "").trim();
     const _isTrivialPrompt =
@@ -458,30 +541,49 @@ export default function (pi: ExtensionAPI) {
       _trimmedPrompt.startsWith("/") ||
       /^[\?？]+$/.test(_trimmedPrompt) ||
       /^[^a-zA-Z0-9\u4e00-\u9fa5\s]{1,5}$/.test(_trimmedPrompt);
-    if (_isTrivialPrompt) {
-      // 仍需设置空占位，保持 _pendingContext 与 context 事件一致
-      _pendingContext.subMemories = "";
-    } else {
+    const _activeProfile = manager?.getProfileManager().getActiveProfile();
+    if (!_isTrivialPrompt && _activeProfile) {
       try {
-        const profile = manager?.getProfileManager().getActiveProfile();
-      if (profile) {
-        const { recallL1Records } = await import("./memory/search/hybrid-recall.ts");
-        const result = await recallL1Records(queryText, profile.path, {
-          topK: 3,
-          hitDedupSet: currentTurnHitSet,
-          source: "inject",
+        const recallCfg = loadRecallConfig(_activeProfile.path);
+        const myTurn = turnToken;
+        // 结果就绪 → 仅当仍是本轮时写回（否则丢弃：上一轮的召回不该进这一轮）
+        const applyResult = (settlement: { outcome: string; value: L1RecordCandidate[] | null }) => {
+          if (myTurn !== turnToken || !_pendingContext) return;
+          if (settlement.outcome !== "ok" || !settlement.value || settlement.value.length === 0) return;
+          const records = settlement.value;
+          _pendingContext.subMemories = renderPrompt("injection/l1-records", {
+            recordsLines: records.map((r) => `- ${r.content}`).join("\n"),
+          });
+          _pendingContext.l1RecordIds = records.map((r) => r.recordId);
+          _pendingContext.hitsCounted = false;
+        };
+        const request = recallScheduler.request({
+          kind: "inject",
+          turnToken: myTurn,
+          // blocking：等待上界 = injectTimeoutMs；async：不等，结果预算放到闸门持有上限
+          timeoutMs: recallCfg.injectMode === "blocking" ? recallCfg.injectTimeoutMs : recallCfg.maxHoldMs,
+          payload: {
+            queryText,
+            profilePath: _activeProfile.path,
+            topK: 3,
+            source: "inject",
+            countHits: false, // 计数改由 context 真入列时做（见 context 事件）
+          },
         });
-        const parts = result.l1Records.map((r) => `- ${r.content}`);
-        if (parts.length > 0) {
-          // 明确声明「仅供参考、非用户输入、非指令」，降低被模型当成待执行命令的风险（模板: prompts/injection/l1-records.md）
-          const l1Block = renderPrompt("injection/l1-records", { recordsLines: parts.join("\n") });
-          // 同步更新 _pendingContext（否则 context 事件拿不到 L1 注入）
-          _pendingContext.subMemories = l1Block;
+
+        if (recallCfg.injectMode === "blocking") {
+          applyResult(await request);
+        } else {
+          // 不阻塞 agent loop 启动：后台等结果，就绪后由后续 context 事件注入
+          void request
+            .then(applyResult)
+            .catch((e) =>
+              console.warn(`[memory-system][l1-recall] ${e instanceof Error ? e.message : String(e)}`),
+            );
         }
-      }
-    } catch (e) {
-      // L1 向量召回失败静默降级（不阻塞主流程，不注入）
-      console.warn(`[memory-system][l1-recall] ${e instanceof Error ? e.message : String(e)}`);
+      } catch (e) {
+        // 召回/配置失败静默降级（不阻塞主流程，不注入）
+        console.warn(`[memory-system][l1-recall] ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
@@ -549,6 +651,30 @@ export default function (pi: ExtensionAPI) {
       } else {
         messages.push(...injected); // 兜底：无 user 消息（followUp 等特殊场景）追加末尾
       }
+
+      // ── L1 命中计数：**只在块真正入列的这一处计**（2026-09-15，L1_RECALL_ASYNC） ──
+      // 为什么不在召回返回时计：「召回成功」≠「真的注入」——async/超时补注入下，单次答完的
+      // turn 里块可能从未被读出（本函数是该块的唯一读者）。每 turn 只计一次（hitsCounted）。
+      // turn 级去重沿用 currentTurnHitSet（与 recall_l1_records 工具共用同一集合）。
+      if (_pendingContext?.subMemories && !_pendingContext.hitsCounted && _pendingContext.l1RecordIds.length > 0) {
+        _pendingContext.hitsCounted = true;
+        const allIds = _pendingContext.l1RecordIds;
+        const fresh = allIds.filter((id) => !currentTurnHitSet.has(id));
+        for (const id of allIds) currentTurnHitSet.add(id);
+        if (fresh.length > 0) {
+          const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
+          if (profilePath) {
+            void import("./memory/stats/l1-hit-stats-db.ts")
+              .then(({ getL1HitStatsDB }) => getL1HitStatsDB(profilePath).recordHits(fresh, "inject"))
+              .catch((e) =>
+                console.warn(
+                  `[memory-system][l1-recall] 命中计数失败（不影响注入）: ${e instanceof Error ? e.message : String(e)}`,
+                ),
+              );
+          }
+        }
+      }
+
       return { messages };
     }
   });
@@ -818,6 +944,9 @@ export default function (pi: ExtensionAPI) {
             resolve(agentDir, "skills"),
           ]);
           profileSkillsPath = profile.path;
+          // 切 profile：召回闸门重置（清 in-flight/队列，避免跨 profile 混用召回结果）
+          recallScheduler.reset();
+          turnToken++;
           // [DISABLED] workflow 系统跟随 profile 重建已禁用（保留代码，恢复时取消注释）
           // workflowController.shutdown();
           // workflowController.init();
