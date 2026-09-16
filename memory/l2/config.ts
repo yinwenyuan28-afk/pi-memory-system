@@ -60,6 +60,54 @@ export function loadL2Config(profilePath: string): L2Config {
 	return { maxScenes: MAX_SCENES_DEFAULT };
 }
 
+/** 场景数量预警级别（与两个规则文件的红/橙/黄分级一致）。 */
+export type SceneCountLevel = "red" | "orange" | "yellow" | "none";
+
+/**
+ * 分级口径（与规则文件「阶段 0：强制检查场景总数」逐条对齐）：
+ * 红 = 已满（`count >= maxScenes`）、橙 = 差一个（`count === maxScenes - 1`）、
+ * 黄 = 接近（`count >= ceil(maxScenes * 0.8)`）。空库恒为 `none`（0 个块谈不上"接近上限"）。
+ */
+export function gradeSceneCount(count: number, maxScenes: number): SceneCountLevel {
+	if (count <= 0) return "none";
+	if (count >= maxScenes) return "red";
+	if (count === maxScenes - 1) return "orange";
+	if (count >= Math.ceil(maxScenes * 0.8)) return "yellow";
+	return "none";
+}
+
+/** 数场景块文件（与 `l2_commit` 的上限预检同源：数目录里的 `*.md`，不读索引）。 */
+export function countSceneBlocks(profilePath: string): number {
+	const sceneDir = join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME);
+	if (!existsSync(sceneDir)) return 0;
+	try {
+		return readdirSync(sceneDir).filter((f) => f.endsWith(".md")).length;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * 任务消息里的场景数预警行（2026-09-16 新增）。
+ *
+ * 抽取动因与 `MaxScenes` 同类：规则文件早已写好红/橙/黄三级各自的动作，但**输入从未被注入** ——
+ * `sceneCountWarning` 在 TS 代码里零出现，规则文件却让子代理去"查看 Existing Scene Blocks Summary
+ * 顶部标注的当前场景总数"，而那个摘要段在真实任务消息（`tasks/l2-task`）里并不存在。结果是分级
+ * 预警实际靠子代理自己数目录，多绕一步且不确定。现在由代码算好级别并注入，规则文件只管照做。
+ */
+export function sceneCountWarningLine(count: number, maxScenes: number): string {
+	switch (gradeSceneCount(count, maxScenes)) {
+		case "red":
+			return `红色（${count}/${maxScenes}，已满）——禁止 CREATE：先做合并评估腾出空位；若确实没有可合并的块，该内容并入最相关的现有块（update）`;
+		case "orange":
+			return `橙色（${count}/${maxScenes}，差 1 个）——进入合并评估：有可合并的块则合并（腾出空位后仍可 CREATE），没有则只 UPDATE`;
+		case "yellow":
+			return `黄色（${count}/${maxScenes}，接近上限）——优先 UPDATE，或主动 MERGE 相似场景`;
+		case "none":
+			return `无色（${count}/${maxScenes}）——无额外限制；CREATE 仍受「每批最多 1 个」与「先 read ≥2 个最相似场景」约束`;
+	}
+}
+
 /** 从 record id（格式 l1_{timestamp}_{random}）解析 epoch 毫秒；解析失败返回 0。 */
 export function recordEpochMs(id: string): number {
 	const parts = String(id).split("_");
@@ -130,6 +178,7 @@ export function saveL2Cursor(profilePath: string, lastProcessedAt: number, lastR
  *                    （增量行为由子代理通过 read_l1_increment 工具 + l2/cursor.json 自然保证）
  */
 export function buildL2Task(profilePath: string, _recordsFilesOverride?: string[], _incremental = false): string {
+	const maxScenes = loadL2Config(profilePath).maxScenes;
 	return renderPrompt("tasks/l2-task", {
 		recordsDir: join(profilePath, MEMORY_DB_DIR, L1_RECORDS_DIR),
 		sceneDir: join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME),
@@ -137,7 +186,8 @@ export function buildL2Task(profilePath: string, _recordsFilesOverride?: string[
 		cursorPath: join(profilePath, MEMORY_DB_DIR, L2_CURSOR_FILE),
 		promptDir: PROMPT_DIR,
 		mode: loadL1Config(profilePath).mode,
-		maxScenes: String(loadL2Config(profilePath).maxScenes),
+		maxScenes: String(maxScenes),
+		sceneCountWarning: sceneCountWarningLine(countSceneBlocks(profilePath), maxScenes),
 	});
 }
 

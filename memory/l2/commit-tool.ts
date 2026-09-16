@@ -56,42 +56,10 @@ export interface SceneWrite {
 	members?: string[];
 }
 
-/** 低置信合并候选（不自动合，落建议文件待人确认）。 */
-export interface MergeProposal {
-	/** 建议的合并组名（目标块名）。 */
-	group: string;
-	/** 组成员块文件名。 */
-	members: string[];
-	/** 为什么判为同一工作线。 */
-	reason: string;
-	/** 阻塞自动合并的原因（未满足的判据，如「存在互斥结论」）。 */
-	blockers?: string;
-}
-
-/** 合并建议文件名（相对 {profile}/memoryDB/）。 */
-export const MERGE_PROPOSALS_FILE = "l2-merge-proposals.md";
-
-/** 渲染合并建议文件内容（纯函数，可单测）。无建议时返回 null（调用方据此不写文件）。 */
-export function renderMergeProposals(proposals: MergeProposal[], at: string): string | null {
-	if (proposals.length === 0) return null;
-	const lines = [
-		"# L2 合并建议（低置信候选）",
-		"",
-		`> 由 l2-scene-organizer 于 ${at} 提交。**本文件每次评估整体覆盖**，不是累积日志。`,
-		"> 以下候选未自动合并——未同时满足四条高置信判据（同项目 / 同主线 / 无互斥结论 / 成员无交集）。",
-		"> 确认后可在下次 L2 运行时让子代理按建议合并，或手动执行。",
-		"",
-	];
-	proposals.forEach((p, i) => {
-		lines.push(`## ${i + 1}. ${p.group}`);
-		lines.push("");
-		lines.push(`- 成员：${p.members.join("、")}`);
-		lines.push(`- 理由：${p.reason}`);
-		lines.push(`- 阻塞项：${p.blockers || "（未说明）"}`);
-		lines.push("");
-	});
-	return lines.join("\n");
-}
+// 低置信合并候选**故意没有**机器可读出口（2026-09-16 删除了 MergeProposal / MERGE_PROPOSALS_FILE /
+// renderMergeProposals：三者定义并导出后从未被任何调用方使用）。子代理按规则文件把候选写进块的
+// 「待确认问题」段，等人工确认。若将来确实需要机器可读通道，应作为独立特性显式接线
+// （子代理把候选传给 l2_commit，宿主落盘），而不是留一个看起来接好了的孤立渲染函数。
 
 /** consolidate 在返回里的回报（可观测：用于验证完整性校验与自动备份确实生效）。 */
 export interface ConsolidationReport {
@@ -114,6 +82,8 @@ export interface L2CommitResult {
 	error?: string;
 	/** 本批中带了写入但未上报 `members` 的目标文件名（可观测用；不阻断）。 */
 	membersMissing?: string[];
+	/** 上限不变量被破坏的信号（落盘后场景数 > `maxScenes`；正常不出现）。 */
+	warning?: string;
 	/** 本批执行的 consolidate 动作回报。 */
 	consolidations?: ConsolidationReport[];
 }
@@ -149,6 +119,10 @@ export interface SceneLimitCheck {
  * 现行措辞一致（2026-09-10 已把规则里"必须严格小于 {maxScenes}"统一为"不得超过"）。
  * 判定取比规则**不更宽松**的口径：规则禁止的状态，代码也拒绝——否则"硬上限"只是提示词守则。
  *
+ * **计增长的唯一口径 = 落盘效果**（2026-09-16 更正）：只要目标文件名当前不在集合里就算 +1，
+ * 不按 `action` 名区分。旧口径只把 `create` 算作增长、并假设"update / merge 的目标必然已存在"，
+ * 而写入循环对三者一视同仁地落盘 —— 该假设没有校验兜住，形成"预检不增、实际增一个块"的绕过路径。
+ *
  * **刻意不做"入口即拒绝"的预检**（2026-09-10 修正）：若在入口就把已达上限的批次整体拒掉，
  * 那么 `delete` / `merge` 这类**收缩**批次也会被挡——而收缩正是脱离上限的唯一途径，会形成
  * 死锁（L2 永远无法通过合并自愈）。因此只在写入推进过程中判定：**净增长越过上限才拒，
@@ -183,8 +157,11 @@ export function checkSceneLimit(existing: Iterable<string>, writes: SceneWrite[]
 			}
 			continue;
 		}
-		// update / merge：目标文件必然已存在（或由 create 建），不改变总数；create 才 +1
-		if (w.action === "create" && !set.has(w.filename)) {
+		// create / update / merge：一律按**落盘效果**计增长 —— 写入循环对这三个动作同等对待（都 atomicWrite），
+		// 所以只要目标文件名当前不在集合里，本批就会多出一个块，与调用方填的动作名无关。
+		// 2026-09-16 更正：旧口径只认 action==="create"，于是"update / merge + 新文件名"能绕过上限
+		// （预检说没长、实际长了：实测 cap=3 且目录已满时，merge / update 带新名落盘后目录变 4 块、返回仍 success=true）。
+		if (!set.has(w.filename)) {
 			set.add(w.filename);
 			count++;
 		}
@@ -195,10 +172,19 @@ export function checkSceneLimit(existing: Iterable<string>, writes: SceneWrite[]
 	return { ok: true, count };
 }
 
+/**
+ * 上限拒绝的指引文案。**只准指 `consolidate`**，不得提"merge 目标块 + 另发 delete"的两步式：
+ * 那正是两个规则文件与 `agent/agents/l2-scene-organizer.md` 明令禁止的路径（两步之间无任何校验，
+ * 历史上由此静默丢过内容），而它在代码层恰好是能过闸的 —— 写成指引等于把子代理推向它。
+ * （2026-09-16 更正：旧文案写的正是这个两步式。）
+ */
 function limitReachedError(maxScenes: number, count: number): string {
 	return (
 		`场景块数量已达硬上限 ${maxScenes}（本批写入后会到 ${count}）。` +
-		"请先执行合并评估：找出主题同源、结论不冲突的块合并（merge 目标块 + 删除源块），腾出空间后重试 create。"
+		"请先执行合并评估：用 action=consolidate 把满足四条高置信判据（同项目 / 同主线 / 无互斥结论 / 成员无交集）的块合并 —— " +
+		'{"action":"consolidate", "filename":"<目标块.md>", "sources":["<源1.md>","<源2.md>"], "content":"<合并后的完整正文>", "meta":{"summary":"…"}}，' +
+		"主进程会原子完成（备份源块 → 完整性校验 → 写目标块 → 删源块），一次提交即可。腾出空位后重试。 " +
+		"若确实没有满足判据、不该合并的块，就把内容并入最相关的现有块（update），不要新建。"
 	);
 }
 
@@ -838,6 +824,14 @@ export function registerL2CommitTool(
 			// 同步场景索引（全量重建）
 			const entries = syncSceneIndex(profilePath);
 
+			// 不变量观测（2026-09-16）：预检已按落盘效果计增长，正常到不了这里。若仍超限，说明存在
+			// 未被预检覆盖的增长路径，或两次提交交错（工具自身无锁，串行靠 pipeline 的 hasActive("l2")）。
+			// 留痕而不是静默超限——这个信号一出现就说明硬上限的假设被打破了。
+			const overLimitWarning =
+				entries.length > limit
+					? `场景块数量 ${entries.length} 超过硬上限 ${limit}：本批增长未被上限预检覆盖，请复核本批写入，并在下次运行用 consolidate 收缩。`
+					: undefined;
+
 			// L2 游标推进：以子代理上报的 cursor 为真源（fc78374 已移除主进程 runTask 的
 			// 预推进——fire-and-forget 下 runTask 在子代理真实加工前 resolve，预推进会把
 			// 本批记录从 read_l1_increment 增量中滤掉造成空转）。
@@ -862,6 +856,8 @@ export function registerL2CommitTool(
 								cursor,
 								// 未上报 members 的目标文件（可观测：便于判断子代理是否如实填写）
 								...(memberUpdate.missing.length > 0 ? { membersMissing: memberUpdate.missing } : {}),
+								// 上限不变量被破坏的信号（正常不出现）
+								...(overLimitWarning ? { warning: overLimitWarning } : {}),
 								// consolidate 回报：备份路径 + 行数比 + 警告，供子代理自查"是否丢了条目"
 								...(consolidations.length > 0
 									? {

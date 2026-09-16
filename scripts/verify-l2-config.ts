@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildL2Task, loadL2Config, MAX_SCENES_DEFAULT } from "../memory/l2/config.ts";
+import { buildL2Task, countSceneBlocks, gradeSceneCount, loadL2Config, MAX_SCENES_DEFAULT, sceneCountWarningLine } from "../memory/l2/config.ts";
 import {
 	backupSceneBlocks,
 	checkConsolidation,
@@ -76,6 +76,62 @@ console.log("\n=== 2. buildL2Task 注入 MaxScenes 与 Mode ===");
 	rmSync(root, { recursive: true, force: true });
 }
 
+console.log("\n=== 2b. 场景数分级预警（SceneCountWarning；宿主注入，取代子代理自己数）===");
+{
+	// 分级口径与规则文件的红/橙/黄逐条对齐（maxScenes=15：红 ≥15、橙 =14、黄 ≥ ceil(15*0.8)=12）
+	check("空库 → none", gradeSceneCount(0, 15) === "none");
+	check("11/15 → none（未到警戒线）", gradeSceneCount(11, 15) === "none");
+	check("12/15 → yellow（刚好到 80% 警戒线）", gradeSceneCount(12, 15) === "yellow");
+	check("13/15 → yellow", gradeSceneCount(13, 15) === "yellow");
+	check("14/15 → orange（差 1 个）", gradeSceneCount(14, 15) === "orange");
+	check("15/15 → red（已满）", gradeSceneCount(15, 15) === "red");
+	check("16/15（已超限）→ red", gradeSceneCount(16, 15) === "red");
+	check("cap=1 空库 → none（0 个块不算接近上限）", gradeSceneCount(0, 1) === "none");
+	check("cap=1 已 1 块 → red", gradeSceneCount(1, 1) === "red");
+	check(
+		"橙色文案含级别与计数",
+		sceneCountWarningLine(14, 15).includes("橙色") && sceneCountWarningLine(14, 15).includes("14/15"),
+		sceneCountWarningLine(14, 15).slice(0, 40),
+	);
+	check(
+		"红色文案含禁 CREATE + 合并评估 + update 兜底",
+		["禁止 CREATE", "合并评估", "update"].every((k) => sceneCountWarningLine(15, 15).includes(k)),
+	);
+	check("无色文案含计数与「无额外限制」", sceneCountWarningLine(3, 15).includes("3/15") && sceneCountWarningLine(3, 15).includes("无额外限制"));
+}
+
+console.log("\n=== 2c. countSceneBlocks 与任务消息注入（与上限预检同源：数目录 *.md）===");
+{
+	const root = makeProfile('{"l2":{"maxScenes":15},"l1":{"mode":"code"}}');
+	check("场景目录不存在 → 0", countSceneBlocks(root) === 0);
+	check(
+		"无目录时任务消息仍含 SceneCountWarning 行（无色 0/15）",
+		buildL2Task(root)
+			.split("\n")
+			.some((l) => l.startsWith("SceneCountWarning:") && l.includes("0/15")),
+	);
+	const sceneDir = join(root, "memoryDB", "l2", "scene-blocks");
+	mkdirSync(sceneDir, { recursive: true });
+	for (let i = 0; i < 14; i++) writeFileSync(join(sceneDir, `s${i}.md`), "x", "utf-8");
+	check("14 个块 → 14", countSceneBlocks(root) === 14);
+	check(
+		"14/15 → 任务消息给出橙色",
+		buildL2Task(root)
+			.split("\n")
+			.some((l) => l.startsWith("SceneCountWarning:") && l.includes("橙色")),
+	);
+	writeFileSync(join(sceneDir, "s14.md"), "x", "utf-8");
+	check(
+		"15/15 → 任务消息给出红色（已满）",
+		buildL2Task(root)
+			.split("\n")
+			.some((l) => l.startsWith("SceneCountWarning:") && l.includes("红色")),
+	);
+	writeFileSync(join(sceneDir, "notes.txt"), "x", "utf-8");
+	check("非 .md 文件不计入块数（与预检同口径）", countSceneBlocks(root) === 15, `实际 ${countSceneBlocks(root)}`);
+	rmSync(root, { recursive: true, force: true });
+}
+
 console.log("\n=== 3. 生产 profile 实际取值（只读）===");
 {
 	const REAL = "C:/Users/leaf/.pi/agent/profiles/default";
@@ -83,6 +139,11 @@ console.log("\n=== 3. 生产 profile 实际取值（只读）===");
 	check("生产 maxScenes 为正整数", Number.isInteger(cfg.maxScenes) && cfg.maxScenes > 0, `实际 ${cfg.maxScenes}`);
 	const task = buildL2Task(REAL);
 	check("生产任务消息含 MaxScenes", task.split("\n").some((l) => l.startsWith("MaxScenes:")), task.split("\n").find((l) => l.startsWith("MaxScenes:")) ?? "");
+	check(
+		"生产任务消息含 SceneCountWarning（真实块数算出的级别）",
+		task.split("\n").some((l) => l.startsWith("SceneCountWarning:")),
+		task.split("\n").find((l) => l.startsWith("SceneCountWarning:")) ?? "",
+	);
 }
 
 console.log("\n=== 4. 硬上限预检 checkSceneLimit（语义：场景数【不得超过】maxScenes）===");
@@ -119,6 +180,29 @@ console.log("\n=== 4. 硬上限预检 checkSceneLimit（语义：场景数【不
 	check("一次 create 多个 → 逐个判定，第二个越线即拒", !two.ok, `count=${two.count}`);
 	check("空 base + cap1 + create → 通过（1 ≤ 1）", checkSceneLimit([], [W("create", "a.md")], 1).ok);
 	check("空 base + cap0 + create → 拒绝（1 > 0）", !checkSceneLimit([], [W("create", "a.md")], 0).ok);
+
+	// 2026-09-16：计增长改按**落盘效果**（防"update / merge + 新文件名"绕过上限）。
+	// 旧口径只认 action==="create"，实测 cap=3 且目录已满时 merge / update 带新名落盘后目录变 4 块、
+	// 返回仍是 success=true —— 预检说没长、实际长了。以下断言锁住新口径。
+	const updNew = checkSceneLimit(base, [W("update", "d.md")], 3);
+	check("已达上限 + update 新名 → 拒绝（按落盘效果计增长）", !updNew.ok, `count=${updNew.count}`);
+	const mrgNew = checkSceneLimit(base, [W("merge", "d.md")], 3);
+	check("已达上限 + merge 新名 → 拒绝", !mrgNew.ok, `count=${mrgNew.count}`);
+	check("限内 + update 新名 → 通过但计数 +1（3→4 ≤ 5）", checkSceneLimit(base, [W("update", "d.md")], 5).count === 4);
+	check("限内 + merge 新名 → 通过但计数 +1", checkSceneLimit(base, [W("merge", "d.md")], 5).count === 4);
+	check("cap=4 时 update 新名恰好 4 ≤ 4 → 通过（边界不误伤）", checkSceneLimit(base, [W("update", "d.md")], 4).ok);
+	check(
+		"同批先 create 后 update 同名 → 只 +1（不重复计数）",
+		checkSceneLimit(base, [W("create", "d.md"), W("update", "d.md")], 5).count === 4,
+	);
+	check("对已存在的块 update / merge 仍不计增长（合法路径不变）", checkSceneLimit(base, [W("update", "a.md"), W("merge", "b.md")], 3).ok);
+
+	// 拒绝指引（2026-09-16）：必须指 consolidate，不得再教"merge 目标块 + 删除源块"的两步式
+	check(
+		"拒绝指引指向 consolidate",
+		(over.error ?? "").includes("consolidate") && (over.error ?? "").includes("sources"),
+	);
+	check("拒绝指引不再提两步式 merge", !(over.error ?? "").includes("merge 目标块"));
 }
 
 console.log("\n=== 5. 成员清单 mergeSceneMembers（纯函数）===");

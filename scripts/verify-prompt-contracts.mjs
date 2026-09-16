@@ -51,6 +51,7 @@ const FX = {
 		promptDir: "C:/ext/memory-system/memory/l2/prompts",
 		mode: "code",
 		maxScenes: "15",
+		sceneCountWarning: "黄色（12/15，接近上限）——优先 UPDATE，或主动 MERGE 相似场景",
 	},
 	"tasks/l3-task": {
 		profilePath: "C:/p",
@@ -82,8 +83,9 @@ const FX = {
 const LEGACY = {
 	"tasks/l1-task": (v) =>
 		["L1 extraction task", `L0Files: ${v.l0Files}`, `CursorPath: ${v.cursorPath}`, `RecordsDir: ${v.recordsDir}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `KnownProjects: ${v.knownProjects}`, v.scenePoolLines].join("\n"),
+	// 2026-09-16：tasks/l2-task 增 SceneCountWarning 行（宿主按当前块数算好的分级预警），基线随之更新。
 	"tasks/l2-task": (v) =>
-		["L2 organization task", `RecordsDir: ${v.recordsDir}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `CursorPath: ${v.cursorPath}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `MaxScenes: ${v.maxScenes}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）`].join("\n"),
+		["L2 organization task", `RecordsDir: ${v.recordsDir}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `CursorPath: ${v.cursorPath}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `MaxScenes: ${v.maxScenes}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）`, `SceneCountWarning: ${v.sceneCountWarning}  （代码按当前块数算好的分级预警：红=已满禁 CREATE / 橙=差 1 个先进合并评估 / 黄=接近 / 无色=无额外限制）`].join("\n"),
 	"tasks/l3-task": (v) =>
 		["L3 persona generation task", `ProfilePath: ${v.profilePath}`, `UserMdPath: ${v.userMdPath}`, `CursorPath: ${v.cursorPath}`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `PromptDir: ${v.promptDir}`, `PromptFile: ${v.promptFile}`, `ChangedScenes: ${v.changedScenes}`, `TriggerReason: ${v.triggerReason}`, `Mode: ${v.mode}`].join("\n"),
 	"tasks/skill-review#main": (v) =>

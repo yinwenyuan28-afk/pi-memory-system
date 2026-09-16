@@ -7,7 +7,7 @@
   用户消息格式模板（子代理按此拼接输入）：
     **输出语言**：场景文件内容使用下方 New Memories List 中记忆的主导语言。
 
-    ⚠️ **场景数量警告**: {sceneCountWarning（可选，按当前场景数分级）}
+    ⚠️ **场景数量警告**: {任务消息 `SceneCountWarning` 行的内容——代码按场景目录实际块数算好的级别与计数（红/橙/黄/无色）}
 
     ### 1️⃣ New Memories List
     {待归组的新 L1 记忆 JSON 数组}
@@ -88,7 +88,7 @@
 
 拿到 records 后再按阶段 0 ~ 阶段 3 处理。
 
-**为什么要先阶段 0.5**：场景数量预警（红色/橙色/黄色）由"当前场景数 vs maxScenes"决定，需要在拿到所有新 records 之前先看 scene_index.json 判断。如果先拿 records 再看，会增加 LLM 决策复杂度。
+**为什么要先阶段 0.5**：场景数量预警（红色/橙色/黄色）由任务消息的 `SceneCountWarning` 行给出（宿主按场景目录实际块数算好），读任务消息即可，不必自己先翻索引数一遍。如果先拿 records 再看，会增加 LLM 决策复杂度。
 
 ## 输入环境 (Input Context)
 你将接收三个输入：
@@ -138,12 +138,12 @@
 
 **在处理任何记忆之前，你必须：**
 
-1. **统计当前场景总数**：查看 "Existing Scene Blocks Summary" 顶部标注的当前场景总数
+1. **读取当前块数与预警级别**：直接看任务消息的 `SceneCountWarning` 行 —— 它由宿主按场景目录实际块数算好（红=已满 / 橙=差 1 个 / 黄=接近 / 无色=无额外限制）。**不要**去找"Existing Scene Blocks Summary 顶部标注的当前场景总数"：那是上游模板的残留，真实任务消息里只有定位字段。该行缺失时才回退到数 `IndexPath` 的条目数。
 2. **最终目标**：处理完成后，目录中的场景文件数量 **不超过 {maxScenes}**（硬上限，超出会被 `l2_commit` 拒绝）
-3. **遵守分级预警**：
-   - 红色预警（= {maxScenes}，已满）：**不能再 CREATE**。若本批确有必须新建的内容，先进入下方「合并评估」腾出空位；合并后若仍无空位，则该内容改为并入最相关的现有块（UPDATE）
-   - 橙色预警（= {maxScenes-1}）：**进入合并评估模式**——不是简单禁止新建：先判定是否存在可合并的块，有则合并（腾出位置后仍可按规则 CREATE），没有则只能 UPDATE
-   - 黄色预警（接近 {maxScenes}）：**优先 UPDATE 或主动 MERGE 相似场景**
+3. **遵守分级预警**（级别已算好，照做即可）：
+   - 红色（已满，当前块数 ≥ {maxScenes}）：**不能再 CREATE**。若本批确有必须新建的内容，先进入下方「合并评估」腾出空位；合并后若仍无空位，则该内容改为并入最相关的现有块（UPDATE）
+   - 橙色（差 1 个，当前块数 = 上限 -1）：**进入合并评估模式**——不是简单禁止新建：先判定是否存在可合并的块，有则合并（腾出位置后仍可按规则 CREATE），没有则只能 UPDATE
+   - 黄色（接近上限）：**优先 UPDATE 或主动 MERGE 相似场景**
 
 **合并优先级**（当需要合并时，按以下顺序选择）：
 
@@ -351,7 +351,7 @@ reason: 具体原因描述
 
 # 场景组织 Prompt（code 模式）
 
-> **[DEPRECATED]** 本节（团队版 code 规则）**已不再被读取**：`l2-scene-organizer` 在 `Mode=code` 时读的是同目录 `scene-extraction-personal.md`（个人编码版）。保留本节仅作迁移回溯。**注意其中「橙色预警 → 只能 UPDATE 禁 CREATE」「按热度最低合并」等表述已过时**，现行规则以 `scene-extraction-personal.md` 为准。
+> **[DEPRECATED]** 本节（团队版 code 规则）**已不再被读取**：`l2-scene-organizer` 在 `Mode=code` 时读的是同目录 `scene-extraction-personal.md`（个人编码版）。保留本节仅作迁移回溯。**注意其中「橙色预警 → 只能 UPDATE 禁 CREATE」「按热度最低合并」「从摘要段顶部的"当前场景总数"读场景数」等表述已过时**，现行规则以 `scene-extraction-personal.md` 为准。
 
 # Team Work Method Memory Consolidation Architect
 

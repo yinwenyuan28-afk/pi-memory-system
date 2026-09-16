@@ -103,7 +103,7 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 			"{{scenePoolLines}}",
 	},
 	"tasks/l2-task": {
-		vars: ["recordsDir", "sceneDir", "indexPath", "cursorPath", "promptDir", "mode", "maxScenes"],
+		vars: ["recordsDir", "sceneDir", "indexPath", "cursorPath", "promptDir", "mode", "maxScenes", "sceneCountWarning"],
 		template:
 			"L2 organization task\n" +
 			"RecordsDir: {{recordsDir}}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）\n" +
@@ -112,7 +112,8 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 			"CursorPath: {{cursorPath}}\n" +
 			"PromptDir: {{promptDir}}\n" +
 			"Mode: {{mode}}\n" +
-			"MaxScenes: {{maxScenes}}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）",
+			"MaxScenes: {{maxScenes}}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）\n" +
+			"SceneCountWarning: {{sceneCountWarning}}  （代码按当前块数算好的分级预警：红=已满禁 CREATE / 橙=差 1 个先进合并评估 / 黄=接近 / 无色=无额外限制）",
 	},
 	"tasks/l3-task": {
 		vars: [
