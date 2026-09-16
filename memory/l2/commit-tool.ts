@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config } from "./config.ts";
 import { BACKUP_DIR, L2_INDEX_DIR, MEMORY_DB_DIR } from "../paths.ts";
+import { writePendingTrigger } from "../l3/signal.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
@@ -589,11 +590,15 @@ export function syncSceneIndex(profilePath: string): SceneIndexEntry[] {
  *  - cursor: 推进到的 lastRecordId
  *  - personaSignal: 可选，true 表示请求 L3 persona 更新（P1 触发）
  *  - personaReason: 可选，persona 更新原因
+ *
+ * 【2026-09-16】`personaSignal` 的投递方式从"回调"改为"落盘信号"。
+ * 回调在子代理进程里永远求值为 undefined（主进程的 l3Controls 没在这个进程初始化过），
+ * 实测 46/46 次 l2_commit 全在子代理进程 ⇒ 那条 P1 指令此前从未生效。
+ * 现在写 `l3/pending-trigger.json`，由主进程在 agent_settled 读取并消费（见 memory/l3/signal.ts）。
  */
 export function registerL2CommitTool(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
-	onCommitted?: (opts: { personaSignal?: boolean; personaReason?: string }) => void,
 ): void {
 	pi.registerTool({
 		name: "l2_commit",
@@ -838,13 +843,12 @@ export function registerL2CommitTool(
 			// 此处写回 lastRecordId + 反推 epoch，供下次增量过滤使用。
 			saveL2Cursor(profilePath, recordEpochMs(cursor), cursor);
 
+			// personaSignal → 落盘信号（主进程 agent_settled 消费）。见 registerL2CommitTool 头注释。
 			const personaSignal = params?.personaSignal === true;
-				const personaReason = typeof params?.personaReason === "string" ? params.personaReason : undefined;
-				try {
-					onCommitted?.({ personaSignal, personaReason });
-				} catch {
-					// non-fatal
-				}
+			const personaReason = typeof params?.personaReason === "string" ? params.personaReason : undefined;
+			if (personaSignal) {
+				writePendingTrigger(profilePath, { personaSignal: true, personaReason });
+			}
 
 				return {
 					content: [

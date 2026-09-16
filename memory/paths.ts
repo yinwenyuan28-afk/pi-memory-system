@@ -87,6 +87,16 @@ export const L2_SCENE_MEMBERS_PATH = join("l2", "index", "scene_members.json");
 // ── L3 画像 ────────────────────────────────────────────────
 /** L3 游标文件（{memoryDB}/l3/cursor.json）。 */
 export const L3_CURSOR_FILE = join("l3", "cursor.json");
+/**
+ * L3 待处理触发信号（{memoryDB}/l3/pending-trigger.json）。
+ *
+ * 存在理由：`l2_commit` 只在 **l2-scene-organizer 子代理进程**里执行（实测 46/46 次），
+ * 而那个进程里 `l3Controls` 恒为 undefined（`index.ts` 的 `PI_SUBAGENT_CHILD` 早退在
+ * `setupL3Persona` 之前）—— 于是 `onCommitted` 回调不是"通道"，是静默丢弃。
+ * 子代理把意图写成这个文件，主进程在 `agent_settled` 读取并消费（读后即删）。
+ * 与 `l2/cursor.json` 同款跨进程手法（子代理进程本来就直写游标文件）。
+ */
+export const L3_PENDING_TRIGGER_FILE = join("l3", "pending-trigger.json");
 
 // ── skill-feed ─────────────────────────────────────────────
 /** skill-feed 原料输出目录（{memoryDB}/skill/feed，按 session 一文件）。 */

@@ -127,6 +127,8 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 			"changedScenes",
 			"triggerReason",
 			"mode",
+			"charLimit",
+			"entryCharLimit",
 		],
 		template:
 			"L3 persona generation task\n" +
@@ -139,7 +141,9 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 			"PromptFile: {{promptFile}}\n" +
 			"ChangedScenes: {{changedScenes}}\n" +
 			"TriggerReason: {{triggerReason}}\n" +
-			"Mode: {{mode}}",
+			"Mode: {{mode}}\n" +
+			"CharLimit: {{charLimit}}  （USER.md 全篇字符上限，代码硬校验：超出会被 l3_edit 拒绝）\n" +
+			"EntryCharLimit: {{entryCharLimit}}  （单条规则字符上限，一次 l3_edit 只能写一条）",
 	},
 	"tasks/skill-review#main": {
 		vars: ["skillFeedFiles", "cursorPath", "reviewerCursor", "profilePath"],

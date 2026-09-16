@@ -64,6 +64,8 @@ const FX = {
 		changedScenes: "scene-a.md,scene-b.md",
 		triggerReason: "P4 threshold",
 		mode: "code",
+		charLimit: "2200",
+		entryCharLimit: "500",
 	},
 	"tasks/skill-review#main": {
 		skillFeedFiles: "C:/p/memoryDB/skill/feed/abc.jsonl",
@@ -86,8 +88,10 @@ const LEGACY = {
 	// 2026-09-16：tasks/l2-task 增 SceneCountWarning 行（宿主按当前块数算好的分级预警），基线随之更新。
 	"tasks/l2-task": (v) =>
 		["L2 organization task", `RecordsDir: ${v.recordsDir}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `CursorPath: ${v.cursorPath}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `MaxScenes: ${v.maxScenes}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）`, `SceneCountWarning: ${v.sceneCountWarning}  （代码按当前块数算好的分级预警：红=已满禁 CREATE / 橙=差 1 个先进合并评估 / 黄=接近 / 无色=无额外限制）`].join("\n"),
+	// 2026-09-16：tasks/l3-task 增 CharLimit / EntryCharLimit 两行（用户拍板：L3 条目级操作，
+	// 上限不再写死在提示词里，改由任务消息单源下发）。基线随之更新。
 	"tasks/l3-task": (v) =>
-		["L3 persona generation task", `ProfilePath: ${v.profilePath}`, `UserMdPath: ${v.userMdPath}`, `CursorPath: ${v.cursorPath}`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `PromptDir: ${v.promptDir}`, `PromptFile: ${v.promptFile}`, `ChangedScenes: ${v.changedScenes}`, `TriggerReason: ${v.triggerReason}`, `Mode: ${v.mode}`].join("\n"),
+		["L3 persona generation task", `ProfilePath: ${v.profilePath}`, `UserMdPath: ${v.userMdPath}`, `CursorPath: ${v.cursorPath}`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `PromptDir: ${v.promptDir}`, `PromptFile: ${v.promptFile}`, `ChangedScenes: ${v.changedScenes}`, `TriggerReason: ${v.triggerReason}`, `Mode: ${v.mode}`, `CharLimit: ${v.charLimit}  （USER.md 全篇字符上限，代码硬校验：超出会被 l3_edit 拒绝）`, `EntryCharLimit: ${v.entryCharLimit}  （单条规则字符上限，一次 l3_edit 只能写一条）`].join("\n"),
 	"tasks/skill-review#main": (v) =>
 		[`SkillFeedFiles: ${v.skillFeedFiles}`, `CursorPath: ${v.cursorPath}`, `ReviewerCursor: ${v.reviewerCursor}`, `ProfilePath: ${v.profilePath}`].join("\n"),
 	"tasks/skill-review#learn-fallback": (v) => `Review session: ${v.sessionPath}\nProfile: ${v.profilePath}${v.extra}`,

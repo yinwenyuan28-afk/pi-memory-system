@@ -49,9 +49,13 @@ Read L1 records newer than the L2 cursor in one call (replaces being pointed to 
 
 Commit scene block writes and advance the L2 cursor. Called by the l2-scene-organizer subagent. Params: sceneWrites (array of {action: create|update|merge|delete|consolidate, filename, sources, meta: {created,updated,summary,heat}, content, members}), cursor (lastRecordId string), personaSignal (optional boolean), personaReason (optional string). CONSOLIDATE is the preferred action for merging blocks: pass sources=[blockA.md,blockB.md,...] plus the merged content — the host backs up the sources, verifies no entry was dropped (rejects the batch when the target body is drastically shorter than the sources, or when an explicit members list misses source members), then writes the target and deletes the sources atomically. NOTE: the total scene-block count has a hard cap (config l2.maxScenes, passed as the MaxScenes line in the task message). If this batch would push the count above the cap, the whole batch is REJECTED and you must first consolidate same-project blocks to free slots, then retry.
 
+## l3_edit
+
+Change exactly ONE rule line in USER.md — the user profile block injected into every turn. One call = one entry: `add` a new rule, `update` an existing one, or `delete` one. The whole file is yours to manage, but NEVER rewrite it wholesale: `content` must be a single line, and the host rejects any text containing a newline, `§`, or an HTML comment. Make one call per rule you want to change, as many calls as needed. Params: action ('add'|'update'|'delete', required); content (for add/update: the single rule text); target (for update/delete: a distinctive fragment of the existing entry — the host resolves it against the file and REFUSES the call when 0 or more than 1 entry matches, returning the candidate list so you can pass a longer fragment). After every call the host re-checks the whole-file budget (the CharLimit line in the task message) and rejects a change that would push the file over it — free space by deleting or compressing other entries, then retry. Returns {success, action, position, entryCount, usage}.
+
 ## l3_commit
 
-Commit generated persona to USER.md and advance L3 cursor. Called by l3-persona-generator after generation. Params: content (final USER.md body), cursor (last scene updated ISO string).
+Finish an L3 persona update and advance the L3 cursor. Called by l3-persona-generator as the LAST action of every run — including runs where you decided nothing needed changing (the cursor must still advance, otherwise the same scenes are re-processed next turn). Params: cursor (the newest `updated` ISO timestamp among the scenes you processed). The persona text is NOT passed here: every rule change goes through l3_edit, one entry per call.
 
 ## recall_l1_records
 

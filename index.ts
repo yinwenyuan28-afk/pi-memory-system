@@ -24,6 +24,7 @@ import { getPipelineJobsDB } from "./memory/pipeline/jobs-db.ts";
 import { registerL2CommitTool } from "./memory/l2/commit-tool.ts";
 import { setupL3Persona } from "./memory/l3/index.ts";
 import { registerL3CommitTool } from "./memory/l3/commit-tool.ts";
+import { registerL3EditTool } from "./memory/l3/edit-tool.ts";
 import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.ts";
 import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.ts";
 import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.ts";
@@ -176,11 +177,10 @@ export default function (pi: ExtensionAPI) {
   let pipelineWorker: PipelineWorker | undefined;
   let pipelineExecutors: PipelineExecutors | undefined;
 
-  // L3 persona 调度器（单次注册）：L2 提交后评估触发
+  // L3 persona 调度器（单次注册）：**仅主进程**，由 agent_settled 台账式评估触发
   let l3Initialized = false;
   let l3Controls: {
     onL1Committed: (recordCount: number) => void;
-    onL2Committed: (opts?: { personaSignal?: boolean; personaReason?: string }) => void;
     triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
     reset: () => void;
   } | undefined;
@@ -256,18 +256,22 @@ export default function (pi: ExtensionAPI) {
   // list_l1_scenes 工具：主代理按需查场景池——记录前挑 scene_id，替代"猜场景"
   //（清单不进系统提示是出于 prefix cache；按需工具不吃这个代价，见 scene-tool.ts 头注释）。
   registerListL1ScenesTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
-  // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接；personaSignal → L3 P1
-  registerL2CommitTool(
-    pi,
-    () => manager?.getProfileManager().getActiveProfile()?.path,
-    (opts) => l3Controls?.onL2Committed(opts),
-  );
+  // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接。
+  // personaSignal 不再走回调 —— 回调只在子代理进程求值，那里 l3Controls 恒为 undefined。
+  // 改为工具内直接写 l3/pending-trigger.json，主进程 agent_settled 消费（见 memory/l3/signal.ts）。
+  registerL2CommitTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
   // read_l1_increment 工具：l2-scene-organizer 子代理按游标取 L1 增量
   // 【2026-09-11 紧急修复】注册必须在这里（模块顶层、session_start 之前）：
   // 原注册点 setupL2Organizer 在 session_start 回调内、位于 PI_SUBAGENT_CHILD return 之后，
   // 子代理进程加载扩展时永远执行不到 → 工具从未在子代理注册（L2 管线死线，实测触发）。
   registerReadL1IncrementTool(pi, () => manager?.getProfileManager()?.getActiveProfile()?.path);
-  // l3_commit 工具：l3-persona-generator 子代理的 USER.md 写盘桥接
+  // l3_edit 工具：l3-persona-generator 子代理的**条目级**写入（用户裁定：一次调用只动一条记忆）
+  registerL3EditTool(
+    pi,
+    () => manager?.getProfileManager().getActiveProfile()?.path,
+    () => manager?.refreshUserSnapshot(),
+  );
+  // l3_commit 工具：l3-persona-generator 子代理的收尾动作（推进游标 + 刷新注入快照）
   registerL3CommitTool(
     pi,
     () => manager?.getProfileManager().getActiveProfile()?.path,

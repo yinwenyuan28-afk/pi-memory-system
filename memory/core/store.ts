@@ -565,7 +565,11 @@ export class MemoryStore {
 		if (!existsSync(filePath)) return [];
 		const raw = readFileSync(filePath, "utf-8").trim();
 		if (!raw) return [];
-		const parts = raw.split(ENTRY_DELIMITER);
+		// 2026-09-16：分隔符按行匹配以兼容 CRLF。仓库 core.autocrlf=true，磁盘上的
+		// USER.md 是纯 CRLF —— 旧的 `split(ENTRY_DELIMITER)`（"\n§\n"）在 CRLF 文件上
+		// 一条都切不开，18 条条目被并成 1 条（实测），连带条目粒度、去重、注入头部的
+		// 百分比全部失准。写入侧仍用 ENTRY_DELIMITER（LF），本函数不做行尾转换。
+		const parts = raw.split(/\r?\n§\r?\n/);
 		return parts
 			.map((p) => p.trim())
 			.filter(Boolean)

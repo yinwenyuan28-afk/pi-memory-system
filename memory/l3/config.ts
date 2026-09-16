@@ -1,23 +1,29 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH } from "../l2/config.ts";
 import { loadL1Config, type L1Mode } from "../l1/config.ts";
 import { L3_CURSOR_FILE as PATHS_L3_CURSOR, MEMORY_DB_DIR } from "../paths.ts";
+import { DEFAULT_USER_CHAR_LIMIT } from "../core/types.ts";
+import { SINGLE_ENTRY_CHAR_LIMIT } from "./entries.ts";
+import { readUserFile, userFilePath } from "./user-file.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /** P4 记忆阈值（L2 尚未稳定，高于腾讯默认 20）。 */
 export const L3_INTERVAL = 30;
 /** 子代理超时。 */
 export const L3_SUBAGENT_TIMEOUT_MS = 600_000;
-/** USER.md 字符硬限额（与 DEFAULT_USER_CHAR_LIMIT 一致）。 */
-export const USER_CHAR_LIMIT = 1375;
-/** code 模式软限额（对齐腾讯 Team Operating Doctrine 1200 字）。 */
-export const CODE_PERSONA_CHAR_LIMIT = 1200;
+/**
+ * USER.md 总长预算 —— 单源是 `core/types.ts`（用户 2026-09-16 拍板 1375 → 2200）。
+ * 这里只是给 L3 模块一个本地名字，**不要**再写一遍字面量。
+ */
+export const USER_CHAR_LIMIT = DEFAULT_USER_CHAR_LIMIT;
+/** 单条规则长度上限（见 `entries.ts` 的 SINGLE_ENTRY_CHAR_LIMIT；透出给任务消息）。 */
+export const L3_ENTRY_CHAR_LIMIT = SINGLE_ENTRY_CHAR_LIMIT;
+/** 连续失败多少次熔断自动触发（对齐 L1_FAILURE_THRESHOLD / L2_FAILURE_THRESHOLD = 3）。 */
+export const L3_FAILURE_THRESHOLD = 3;
 
 export const L3_CURSOR_FILE = PATHS_L3_CURSOR;
-export const USER_FILE = "USER.md";
 
 export const PROMPT_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
 
@@ -33,10 +39,18 @@ export interface L3Cursor {
 	lastPersonaUpdate: string;
 	memoriesSinceLastPersona: number;
 	lastTriggeredAt: string;
+	/**
+	 * 最近一次 `l3_commit` 成功的时间戳（2026-09-16 新增）。
+	 *
+	 * 为什么要独立于 `lastTriggeredAt`：子代理"跑完但没提交"（超时/提示词卡住/模型抽风）
+	 * 必须能被主进程识别为**失败**，否则每轮都会重试（见 `l3/index.ts` 的熔断）。
+	 * 用 `lastPersonaUpdate` 判不出这件事 —— force 触发时它可能等于提交前后的同一个值。
+	 */
+	lastCommittedAt: string;
 }
 
 export function defaultL3Cursor(): L3Cursor {
-	return { lastPersonaUpdate: "", memoriesSinceLastPersona: 0, lastTriggeredAt: "" };
+	return { lastPersonaUpdate: "", memoriesSinceLastPersona: 0, lastTriggeredAt: "", lastCommittedAt: "" };
 }
 
 export function loadL3Cursor(profilePath: string): L3Cursor {
@@ -49,11 +63,30 @@ export function loadL3Cursor(profilePath: string): L3Cursor {
 			memoriesSinceLastPersona:
 				typeof data.memoriesSinceLastPersona === "number" ? data.memoriesSinceLastPersona : 0,
 			lastTriggeredAt: typeof data.lastTriggeredAt === "string" ? data.lastTriggeredAt : "",
+			lastCommittedAt: typeof data.lastCommittedAt === "string" ? data.lastCommittedAt : "",
 		};
 	} catch {
 		return defaultL3Cursor();
 	}
 }
+
+/** 原子写 L3 游标（写失败静默降级，非关键路径）。 */
+export function saveL3Cursor(profilePath: string, cursor: L3Cursor): void {
+	const filePath = join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE);
+	try {
+		const dir = join(filePath, "..");
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		const tmpPath = join(dir, `.tmp_l3c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+		writeFileSync(tmpPath, JSON.stringify(cursor, null, 2), "utf-8");
+		renameSync(tmpPath, filePath);
+	} catch {
+		// 游标非关键：失败不阻塞提交
+	}
+}
+
+// ── 跨进程触发信号 ──────────────────────────────────────────
+// 实现与语义在 ./signal.ts（刻意只依赖 paths.ts，供 l2/commit-tool 直接引用而不产生层间纠缠）。
+export { writePendingTrigger, consumePendingTrigger, type L3PendingTrigger } from "./signal.ts";
 
 export function readSceneIndex(profilePath: string): SceneIndexEntry[] {
 	const idxPath = join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH);
@@ -67,10 +100,8 @@ export function readSceneIndex(profilePath: string): SceneIndexEntry[] {
 }
 
 export function readUserPersonaBody(profilePath: string): string {
-	const filePath = join(profilePath, USER_FILE);
-	if (!existsSync(filePath)) return "";
 	try {
-		return readFileSync(filePath, "utf-8").trim();
+		return (readUserFile(profilePath) ?? "").trim();
 	} catch {
 		return "";
 	}
@@ -109,7 +140,7 @@ export function buildL3Task(profilePath: string, triggerReason: string, changedS
 	const mode: L1Mode = loadL1Config(profilePath).mode;
 	return renderPrompt("tasks/l3-task", {
 		profilePath,
-		userMdPath: join(profilePath, USER_FILE),
+		userMdPath: userFilePath(profilePath),
 		cursorPath: join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE),
 		sceneDir: join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME),
 		indexPath: join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH),
@@ -118,5 +149,7 @@ export function buildL3Task(profilePath: string, triggerReason: string, changedS
 		changedScenes: scenes.map((e) => e.filename).join(","),
 		triggerReason,
 		mode,
+		charLimit: String(USER_CHAR_LIMIT),
+		entryCharLimit: String(L3_ENTRY_CHAR_LIMIT),
 	});
 }
