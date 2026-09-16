@@ -97,6 +97,18 @@ export const L3_CURSOR_FILE = join("l3", "cursor.json");
  * 与 `l2/cursor.json` 同款跨进程手法（子代理进程本来就直写游标文件）。
  */
 export const L3_PENDING_TRIGGER_FILE = join("l3", "pending-trigger.json");
+/**
+ * L3 单飞锁（{memoryDB}/l3/run.lock）。
+ *
+ * 存在理由：`runPiSubagent` 是 **async:true 的 fire-and-forget** —— 它在派发后**立刻 resolve**，
+ * 不等子代理做完（实测子代理耗时 56–118s，而 promise 毫秒级返回）。所以**不能**用那个 promise
+ * 的 resolve/reject 当"跑完了"，也不能用它做互斥：2026-09-16 实测因此在一轮里派出了
+ * **3 个并发 L3 子代理**，同时 read-modify-write 同一份 USER.md。
+ *
+ * 锁在**派发前**写入、由"观察到子代理提交"或"超过时限"释放，跨进程/跨 `/reload` 都有效
+ * （L1/L2 靠 pipeline 的 jobs.sqlite `hasActive()` 串行，L3 没有队列，故用文件）。
+ */
+export const L3_RUN_LOCK_FILE = join("l3", "run.lock");
 
 // ── skill-feed ─────────────────────────────────────────────
 /** skill-feed 原料输出目录（{memoryDB}/skill/feed，按 session 一文件）。 */

@@ -22,6 +22,14 @@ export const USER_CHAR_LIMIT = DEFAULT_USER_CHAR_LIMIT;
 export const L3_ENTRY_CHAR_LIMIT = SINGLE_ENTRY_CHAR_LIMIT;
 /** 连续失败多少次熔断自动触发（对齐 L1_FAILURE_THRESHOLD / L2_FAILURE_THRESHOLD = 3）。 */
 export const L3_FAILURE_THRESHOLD = 3;
+/**
+ * 单飞锁的存活时长。
+ *
+ * 为什么是"超时 + 1 分钟"：锁的作用是"派发到提交之间不许再派一轮"。子代理自己会写游标
+ * （`l3_commit`），所以**正常路径靠观察游标释放锁**；这个 TTL 只兜"子代理死了/挂死了"——
+ * 到点视为 stale，下一轮可以抢占，并 abort 掉那个挂死的子代理（见 `l3/index.ts` 的 observeRun）。
+ */
+export const L3_RUN_TTL_MS = L3_SUBAGENT_TIMEOUT_MS + 60_000;
 
 export const L3_CURSOR_FILE = PATHS_L3_CURSOR;
 

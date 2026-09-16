@@ -29,6 +29,14 @@ import { entryBudget, locateEntry, normalizeEntryText, parseUserFile, serializeU
 import { registerL3EditTool } from "../memory/l3/edit-tool.ts";
 import { registerL3CommitTool } from "../memory/l3/commit-tool.ts";
 import { resetBackupFlag, USER_FILE } from "../memory/l3/user-file.ts";
+import {
+	acquireRunLock,
+	evaluateRunOutcome,
+	readRunLock,
+	releaseRunLock,
+	runLockRemainingMs,
+	runLockState,
+} from "../memory/l3/run-lock.ts";
 import { loadFailureState, saveFailureState } from "../memory/failure-state.ts";
 
 let pass = 0;
@@ -351,6 +359,49 @@ async function main(): Promise<void> {
 		check("readUserPersonaBody 非空", readUserPersonaBody(root).length > 0);
 		const raw = readMd(root).trim();
 		check("CRLF 文档切分 = 4 条", raw.split(/\r?\n§\r?\n/).map((s) => s.trim()).filter(Boolean).length === 4);
+		rmSync(root, { recursive: true, force: true });
+	}
+
+	// ════════════════════════════════════════════════════════════════════════
+	console.log("\n=== 14. 单飞锁与「运行结局」判定（并发事故的直接回归） ===");
+	{
+		const root = makeProfile(LF_DOC);
+		mkdirSync(join(root, "memoryDB", "l3"), { recursive: true });
+		const T0 = Date.parse("2026-09-16T10:00:00.000Z");
+
+		check("无锁 → none", runLockState(undefined, T0) === "none");
+		check("无锁 → 剩余 0ms", runLockRemainingMs(undefined, T0) === 0);
+
+		const l1 = acquireRunLock(root, { runId: "run-A", reason: "P4", ttlMs: 60_000, nowMs: T0 });
+		check("空闲时可占锁", !!l1 && l1.runId === "run-A");
+		check("锁已落盘", readRunLock(root)?.runId === "run-A");
+		check("刚占的锁 → running", runLockState(readRunLock(root), T0 + 1) === "running");
+		check("剩余时间 ≈ TTL", runLockRemainingMs(readRunLock(root), T0) === 60_000, `${runLockRemainingMs(readRunLock(root), T0)}ms`);
+
+		// 核心：锁有效期内**必须拒绝**第二次派发 —— 这正是 3 个并发子代理的成因
+		const denied = acquireRunLock(root, { runId: "run-B", reason: "P4", ttlMs: 60_000, nowMs: T0 + 30_000 });
+		check("锁有效期内第二次派发被拒", denied === undefined);
+		check("锁未被第二次派发覆盖", readRunLock(root)?.runId === "run-A");
+
+		check("过 TTL → stale", runLockState(readRunLock(root), T0 + 60_001) === "stale");
+		const takeover = acquireRunLock(root, { runId: "run-C", reason: "P4", ttlMs: 60_000, nowMs: T0 + 61_000 });
+		check("stale 锁可被抢占", !!takeover && readRunLock(root)?.runId === "run-C");
+
+		releaseRunLock(root, "run-A");
+		check("非持有者释放无效", readRunLock(root)?.runId === "run-C");
+		releaseRunLock(root, "run-C");
+		check("持有者可释放", readRunLock(root) === undefined);
+
+		// 结局判定：**promise 返回 ≠ 完成** —— 唯一可信信号是游标推进
+		const U = (over: Partial<Parameters<typeof evaluateRunOutcome>[0]>) =>
+			evaluateRunOutcome({ committedBefore: "", committedAfter: "", deadlineAt: new Date(T0 + 60_000).toISOString(), nowMs: T0, ...over });
+		check("刚派发、游标未动 → running（不能当失败）", U({}) === "running");
+		check("派发 30s 后游标仍未动 → 仍 running", U({ nowMs: T0 + 30_000 }) === "running");
+		check("游标推进 → success", U({ committedAfter: "2026-09-16T10:00:30.000Z" }) === "success");
+		check("游标推进（哪怕已过时限）→ success 优先", U({ committedAfter: "x", nowMs: T0 + 999_999 }) === "success");
+		check("过时限且未推进 → failure", U({ nowMs: T0 + 60_001 }) === "failure");
+		check("首轮（before 为空）推进也算 success", U({ committedBefore: "", committedAfter: "t1" }) === "success");
+		check("时限格式非法 → 不误判 failure", U({ deadlineAt: "不是时间", nowMs: T0 + 999_999 }) === "running");
 		rmSync(root, { recursive: true, force: true });
 	}
 }
