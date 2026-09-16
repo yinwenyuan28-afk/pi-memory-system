@@ -40,7 +40,6 @@ export function registerL3CommitTool(
 				cursor: {
 					type: "string",
 					description: "本批处理的场景中**最新**的 updated ISO 时间戳（从场景文件 META 头读取）",
-					required: true,
 				},
 			},
 			required: ["cursor"],

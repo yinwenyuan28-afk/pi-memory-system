@@ -37,7 +37,6 @@ export function registerL3EditTool(
 					type: "string",
 					enum: ["add", "update", "delete"],
 					description: "add: 追加一条新规则；update: 改写一条已存在的；delete: 删除一条已存在的。",
-					required: true,
 				},
 				content: {
 					type: "string",

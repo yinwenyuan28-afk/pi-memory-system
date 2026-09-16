@@ -187,31 +187,68 @@ export default function (pi: ExtensionAPI) {
 
   // ── Tool schema normalization（修复严格 OpenAI 兼容 provider 报错）────────────
   // pi 在转发工具给 OpenAI 兼容接口时，把 tool.parameters 原样当作函数 JSON Schema
-  // 发出（openai-completions.ts: `parameters: tool.parameters`）。本扩展里部分工具的
-  // parameters 写成了扁平 map：{ paramName: { type, description } }，缺顶层
-  // type:"object"，导致 DeepSeek / opencode(Console Go) 等严格 provider 拒绝并报：
-  //   "schema must be a JSON Schema of 'type: "object"', got 'type: null'"。
-  // 这里把 registerTool 包一层，自动把扁平 map 升级成正规 JSON Schema 对象。
-  // 已经是正规 JSON Schema（含 type:"object"）或 TypeBox schema（含 TypeBox.Kind）的
-  // 工具不受影响，原样透传。
+  // 发出（openai-completions.ts: `parameters: tool.parameters`）。历史上有两类写法会让
+  // 严格 provider（DeepSeek / opencode(Console Go) 等）直接 400：
+  //
+  //   A. 扁平 map：{ paramName: { type, description } }，缺顶层 type:"object"
+  //      → "schema must be a JSON Schema of 'type: "object"', got 'type: null'"
+  //   B. 属性子 schema 里写 `required: true`
+  //      → 2026-09-16 实测："Invalid schema for function 'l3_edit': true is not of type \"array\""
+  //        （`required` 的合法形态只有顶层的字符串数组；写在属性里等于发了个非法关键字。
+  //          这类错误**炸在子代理侧**、主代理看不到、只看代码也看不出，必须在此兜住）
+  //
+  // 这里把 registerTool 包一层，把 A 升级成正规 schema、把 B 的 required 归并到顶层数组并留 warn。
+  // 已经是正规 JSON Schema 或 TypeBox schema（含 TypeBox.Kind）的对象不受影响。
   const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
   const _origRegisterTool = pi.registerTool.bind(pi);
   (pi as { registerTool: (tool: any) => void }).registerTool = (tool: any) => {
     const params = tool?.parameters;
+    const isTypeBox =
+      params && typeof params === "object" && Object.getOwnPropertySymbols(params).includes(TYPEBOX_KIND);
     const isFlatMap =
       params &&
       typeof params === "object" &&
       !Array.isArray(params) &&
       !params.type &&
-      !Object.getOwnPropertySymbols(params).includes(TYPEBOX_KIND);
+      !isTypeBox;
     if (isFlatMap) {
       const properties: Record<string, any> = {};
       const required: string[] = [];
       for (const [key, spec] of Object.entries(params)) {
-        properties[key] = spec;
-        if ((spec as any)?.required === true) required.push(key);
+        const { required: inlineRequired, ...clean } = (spec ?? {}) as Record<string, any>;
+        properties[key] = clean;
+        if (inlineRequired === true) required.push(key);
       }
       tool.parameters = { type: "object", properties, required };
+    }
+
+    // B 类修复：属性子 schema 上的 `required`（非数组）一律上提到顶层 required 数组。
+    // 只处理 depth-1（顶层 properties 的直接属性）—— 嵌套对象/数组项里的 `required: [...]`
+    // 是合法的（如 l2_commit 的 sceneWrites.items.required），不能碰。
+    {
+      const p = tool?.parameters;
+      const props = p && typeof p === "object" && !isTypeBox ? (p as any).properties : undefined;
+      if (props && typeof props === "object" && !Array.isArray(props)) {
+        const demoted: string[] = [];
+        for (const [key, spec] of Object.entries(props as Record<string, any>)) {
+          if (!spec || typeof spec !== "object" || Array.isArray(spec)) continue;
+          if (!("required" in spec) || Array.isArray((spec as any).required)) continue;
+          const inline = (spec as any).required;
+          delete (spec as any).required;
+          if (inline === true) {
+            const req = Array.isArray((p as any).required) ? (p as any).required : [];
+            if (!req.includes(key)) req.push(key);
+            (p as any).required = req;
+            demoted.push(key);
+          }
+        }
+        if (demoted.length > 0) {
+          console.warn(
+            `[memory-system][tool-schema] ${tool?.name}: 把属性上的 required:true 上提到顶层 required 数组（${demoted.join(", ")}）——` +
+              `属性子 schema 里写 required 会被严格 provider 拒收（400: true is not of type "array"），请改源码`,
+          );
+        }
+      }
     }
 
     // Normalize execute result → AgentToolResult.
