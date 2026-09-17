@@ -2,7 +2,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CURSOR_FILE, RECORDS_DIR_NAME } from "./config.ts";
+import { CURSOR_FILE, PROMPT_DIR, RECORDS_DIR_NAME, loadL1Config } from "./config.ts";
+import { applyVerdicts, loadChecklistFromFile, runValueCheck } from "./value-check.ts";
+import { loadRecallConfig } from "../search/recall-config.ts";
 import {
 	createSceneResolver,
 	findSceneByNameOrAlias,
@@ -12,7 +14,7 @@ import {
 	type SceneStats,
 } from "./scene-pool.ts";
 import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
-import { MEMORY_DB_DIR } from "../paths.ts";
+import { MEMORY_DB_DIR, L1_VALUE_CHECK_LOG } from "../paths.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
 import { loadFailureState, saveFailureState } from "../failure-state.ts";
 import { acquireWriteLock } from "./write-lock.ts";
@@ -209,9 +211,138 @@ export function registerL1CommitTool(
 					}
 				}
 
+				// ── 确定性闸门（2026-09-17）────────────────────────────────
+				// 分工：**形式/格式问题一律在这里用代码拦**，不花 LLM 调用；价值问题
+				// （流水账 / 表象 vs 方法论）才交给下一段的一次 agent loop。
+				//
+				// 硬闸（拒绝整批，因为都是"真错"，且改起来是确定动作）：
+				//   · 非 deleted 记录 content 必须非空
+				//   · type 必须在枚举内（旧代码只判"是非空字符串"，报错文案却写着枚举 —— 于是
+				//     历史上有 type:"architecture" 这种越界值落库）
+				//   · priority 若给就必须在 0..100
+				// 软闸（不拒绝，只在返回体暴露 + 留痕，避免把写盘路径变脆）：
+				//   · 子代理记录缺 source_message_ids（旧代码静默塞空数组，违反被无声吞掉）
+				//   · content 超过召回预算（会被 recall 的 maxCharsPerRecord 截断成半句）
+				const provenanceMissingList: string[] = [];
+				const overBudget: number[] = [];
+				let priorityMissing = 0;
+				// 在 try 作用域声明：下面 catch 里要 `writeLock?.release()` 释放，
+				// 若只在闸门块内 `const` 声明，异常路径会变成 "writeLock is not defined"
+				// （把真正的错误盖掉，2026-09-17 实测）。
+				let writeLock: ReturnType<typeof acquireWriteLock>;
+				{
+					const RECORD_TYPES = new Set(["work_fact", "work_task", "work_method", "work_artifact"]);
+					const recallBudget = loadRecallConfig(profilePath).maxCharsPerRecord;
+					for (let i = 0; i < records.length; i++) {
+						const r = records[i] as Record<string, unknown>;
+						if (r.deleted === true) continue; // 标记行沿用原记录字段，不参与形态校验
+						if (typeof r.content !== "string" || !r.content.trim()) {
+							return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].content 必须是非空字符串` }) }], details: {} };
+						}
+						const t = typeof r.type === "string" ? r.type.trim() : "";
+						if (!RECORD_TYPES.has(t)) {
+							return {
+								content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].type 越出枚举：${JSON.stringify(r.type)}（只能是 work_fact/work_task/work_method/work_artifact）` }) }],
+								details: {},
+							};
+						}
+						r.type = t;
+						// 子代理路径原先**不补**默认 priority（只有 main-agent 路径补），漏填就落成 undefined、
+						// 让 quality.ts 的优先级权重失效。这里统一补 70 并计数（软闸，不改写盘行为）。
+						if (r.priority === undefined) {
+							r.priority = 70;
+							priorityMissing++;
+						}
+						if (typeof r.priority !== "number" || r.priority < 0 || r.priority > 100) {
+							return {
+								content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].priority 越界：${JSON.stringify(r.priority)}（必须是 0..100 的数字，或省略由服务端补 70）` }) }],
+								details: {},
+							};
+						}
+					}
+					for (const r of records as Record<string, unknown>[]) {
+						if (r.deleted === true) continue;
+						if (!isMainAgent && (!Array.isArray(r.source_message_ids) || r.source_message_ids.length === 0)) {
+							provenanceMissingList.push(String(r.id ?? ""));
+							// 软闸：补上空数组（保持旧行为，不因缺来源就拒收整批），但**留下计数**
+							r.source_message_ids = [];
+						}
+						if (typeof r.content === "string" && recallBudget > 0 && r.content.length > recallBudget) overBudget.push(r.content.length);
+					}
+				}
+
+				// ── 价值校验（2026-09-17）：一次 agent loop，只判"值不值得留" ──────
+				// 位置很关键：必须在 acquireWriteLock **之前** —— 那个锁只有 10s 超时且跨进程，
+				// 抱着锁跑一次 LLM 会让并发的 l1-admin / fix-tool 直接失败。
+				// 只对子代理路径生效：主代理 path 是同步工具调用，不能让它等一次 LLM。
+				const l1CfgForCheck = loadL1Config(profilePath);
+				let valueCheckReport: Record<string, unknown> | undefined;
+				let recordsToWrite = records as Record<string, unknown>[];
+				// 整段套 try：这一层是**附加**判断，任何失败（模型不可用 / 动态 import 失败 / 判据摘不出）
+				// 都必须 fail-open（照写 + 留痕），绝不能把 L1 写盘拖垮 —— 它是 L2/L3 的唯一饲料。
+				try {
+				if (!isMainAgent && l1CfgForCheck.valueCheck.enabled && recordsToWrite.some((r) => r.deleted !== true)) {
+					const cfgVC = l1CfgForCheck.valueCheck;
+					const candidates = recordsToWrite
+						.filter((r) => r.deleted !== true)
+						.map((r) => ({ content: String(r.content ?? ""), type: String(r.type ?? ""), priority: typeof r.priority === "number" ? r.priority : undefined }));
+					// 判据与提取规则同源：直接摘同一份 md（摘不出 → fail-open）
+					const checklist = loadChecklistFromFile(join(PROMPT_DIR, `extract-${l1CfgForCheck.mode}-personal.md`));
+					if (!checklist) {
+						console.warn(`[memory-system][l1] 价值校验跳过：判据摘取失败（extract-${l1CfgForCheck.mode}-personal.md 的标记段落是否还在？）`);
+						valueCheckReport = { skipped: "判据摘取失败" };
+					} else {
+						// 惰性导入：model-config 静态拉 `@earendil-works/pi-ai/compat`，那是 CJS 下
+						// 没有 require 条件的包（AGENTS.md「环境」），静态导入会牵连所有间接引用本模块的脚本
+						const { resolveConfiguredModel } = await import("../../config/model-config.ts");
+						const outcome = await runValueCheck({
+							model: resolveConfiguredModel(profilePath, (ctx as { model?: unknown } | undefined)?.model),
+							checklist,
+							candidates,
+							ctx,
+							getApiKey: (p) => (ctx as { modelRegistry?: { getApiKeyForProvider?: (x: string) => string | undefined } } | undefined)?.modelRegistry?.getApiKeyForProvider?.(p),
+							maxTurns: cfgVC.maxTurns,
+							timeoutMs: cfgVC.timeoutMs,
+							maxRecordChars: cfgVC.maxRecordChars,
+							sessionId: typeof ctx?.sessionManager?.getSessionId === "function" ? ctx.sessionManager.getSessionId() : undefined,
+							onError: (err) => console.warn(`[memory-system][l1] 价值校验失败（fail-open，照写）: ${err instanceof Error ? err.message : String(err)}`),
+						});
+						const applied = applyVerdicts(recordsToWrite, outcome.verdicts);
+						recordsToWrite = applied.kept;
+						valueCheckReport = {
+							...(outcome.skipped ? { skipped: outcome.skipped } : {}),
+							dropped: applied.dropped.length,
+							retyped: applied.retyped.length,
+							...(!outcome.verdicts && outcome.raw ? { rawHint: outcome.raw } : {}),
+						};
+						// 被丢弃的记录**不在库里**，必须落到侧车日志，否则"它拦了什么/有没有误杀"完全不可见
+						if (applied.dropped.length > 0) {
+							try {
+								const logPath = join(profilePath, MEMORY_DB_DIR, L1_VALUE_CHECK_LOG);
+								const at = new Date().toISOString();
+								appendFileSync(
+									logPath,
+									applied.dropped.map((d) => JSON.stringify({ at, action: "drop", reason: d.reason, record: d.record })).join("\n") + "\n",
+									"utf-8",
+								);
+							} catch {
+								// 留痕失败不阻塞写盘
+							}
+						}
+					}
+				}
+				} catch (err) {
+					// 价值校验层的任何异常都在这里止步：照写 + 留痕
+					const msg = err instanceof Error ? err.message : String(err);
+					console.warn(`[memory-system][l1] 价值校验异常（fail-open，照写）: ${msg}`);
+					valueCheckReport = { skipped: `校验层异常：${msg}` };
+				}
+
 				// B2（2026-09-11）：跨进程写锁——就地标记段是整分片 read-modify-write，
 				// l1_commit（子代理进程）/ fix-tool（主进程 exec）/ 手动 l1-admin 可能并发改写同一分片。
-				const writeLock = acquireWriteLock(profilePath);
+				// 位置刻意在确定性闸门与价值校验**之后**：那个锁只有 10s 超时，
+				// 抱着锁跑一次 LLM 会让并发的其他写者直接失败。
+				writeLock = acquireWriteLock(profilePath);
 				if (!writeLock) {
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "L1 库被其他写者占用（写锁超时 10s），请稍后重试" }) }], details: {} };
 				}
@@ -224,7 +355,7 @@ export function registerL1CommitTool(
 				const sceneWarns: string[] = [];
 				let sceneNameFallback = false;
 				let mainAgentUnclassified = 0;
-				for (const r of records as Record<string, unknown>[]) {
+				for (const r of recordsToWrite) {
 					// `deleted:true` 标记行不参与池解析（不登记、不计数、不累积 cwds）
 					if (r.deleted === true) continue;
 					const recCwd = typeof r.cwd === "string" ? r.cwd : "";
@@ -323,7 +454,8 @@ export function registerL1CommitTool(
 			const appendedLines: string[] = [];
 			const markByFile = new Map<string, Set<number>>(); // 就地标记：file → 行索引集合
 			const nowStamp = new Date().toISOString();
-			for (const r of records) {
+			// 用校验后的集合（价值校验可能已剔除/改型若干条）
+			for (const r of recordsToWrite) {
 				const isDeleted = r.deleted === true;
 				if (!isDeleted) {
 					if (existingIds.has(r.id)) continue; // 同 id 重投（重试 / 部分提交）
@@ -497,7 +629,30 @@ export function registerL1CommitTool(
 
 
 				return {
-					content: [{ type: "text", text: JSON.stringify({ success: true, written, cursor, vectorStats, markedInPlace: markByFile.size, sceneStats, sceneWarns, poolWriteFailed, sceneNameFallback, ...(mainAgentUnclassified > 0 ? { sceneHint: `${mainAgentUnclassified} 条未归类：记录前请先调 list_l1_scenes 从清单里挑 scene_id（或给稳定的 scene_name），否则只能落占位 ${MAIN_AGENT_SCENE_FALLBACK}。` } : {}) }) }],
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify({
+									success: true,
+									written,
+									cursor,
+									vectorStats,
+									markedInPlace: markByFile.size,
+									sceneStats,
+									sceneWarns,
+									poolWriteFailed,
+									sceneNameFallback,
+									// 价值校验结果（2026-09-17）：dropped 的条目不写库，所以这里必须回报，
+									// 否则子代理无从知道"我提交的 N 条里有几条没进库"。
+									...(valueCheckReport ? { valueCheck: valueCheckReport } : {}),
+									// 软闸观测（硬闸已在前面直接拒绝）：本来只该是 0；非 0 即说明规则没被遵守
+									...(provenanceMissingList.length > 0 ? { provenanceMissing: provenanceMissingList.length } : {}),
+									...(priorityMissing > 0 ? { priorityDefaulted: priorityMissing } : {}),
+									...(overBudget.length > 0 ? { overRecallBudget: overBudget.length, overBudgetMax: Math.max(...overBudget) } : {}),
+									...(mainAgentUnclassified > 0 ? { sceneHint: `${mainAgentUnclassified} 条未归类：记录前请先调 list_l1_scenes 从清单里挑 scene_id（或给稳定的 scene_name），否则只能落占位 ${MAIN_AGENT_SCENE_FALLBACK}。` } : {}),
+								}),
+							},
+						],
 					details: {},
 				};
 			} catch (err) {

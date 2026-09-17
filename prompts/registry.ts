@@ -79,6 +79,17 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 		template:
 			"<scene-context>\n{{>shared#system-note-scene-context}}\n\n{{nav}}\n</scene-context>",
 	},
+	/**
+	 * L1 价值校验器（2026-09-17）：与 l1_commit 内的一次 agent loop 配套。
+	 * 判据部分是 `vars.checklist`——**运行时从 L1 提取规则同一份 md 里摘出来的**，
+	 * 所以这里不复制判据正文（复制就会与提取器看到的版本分叉）。
+	 * 兜底模板只保底到"能跑"的程度；真正的判据永远来自 checklist。
+	 */
+	"injection/l1-value-check": {
+		vars: ["checklist", "recordsJson"],
+		template:
+			"你是记忆价值审查员。只判断每条候选记忆值不值得留下（流水账 / 停在表象 → 低价值），不评价事实对不对与格式。\n\n判据（原样摘自提取规则）：\n{{checklist}}\n\n只输出 JSON：{\"verdicts\":[{\"i\":0,\"v\":\"keep\"}]}，v ∈ keep|drop|retype（drop 必给 r，retype 必给 t 与 r）。拿不准就 keep。\n\n候选记录：\n{{recordsJson}}",
+	},
 	"injection/rules#loaded-prefix": {
 		vars: [],
 		template: "[L1 Record Contract Loaded]",
@@ -350,6 +361,7 @@ const PREFLIGHT_KEYS = [
 	"injection/l1-records",
 	"injection/memory-context",
 	"injection/scene-context",
+	"injection/l1-value-check",
 	"injection/rules#loaded-prefix",
 	"injection/rules#pi-rules-wrap",
 	"injection/l1-contract",

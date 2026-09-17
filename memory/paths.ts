@@ -65,6 +65,13 @@ export const L1_SCENES_FILE = join("l1", "scenes.json");
 export const L1_HIT_STATS_SQLITE = join("l1", "hit-stats.sqlite");
 /** L1 命中统计 JSON 侧车（{memoryDB}/l1/hit-stats.json，供 records-viewer.html fetch）。 */
 export const L1_HIT_STATS_JSON = join("l1", "hit-stats.json");
+/**
+ * L1 价值校验的丢弃留痕（{memoryDB}/l1/value-check-log.jsonl）。
+ *
+ * 校验器判 `drop` 的记录**不写进库**，所以必须在别处留痕：否则"被扔掉的东西"完全不可见 ——
+ * 既无法审计它是不是误杀，也无法度量它到底拦下了什么。一行一条（append-only）。
+ */
+export const L1_VALUE_CHECK_LOG = join("l1", "value-check-log.jsonl");
 
 // ── L2 场景 ────────────────────────────────────────────────
 /** L2 场景块目录（{memoryDB}/l2/scene-blocks）。 */

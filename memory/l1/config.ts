@@ -48,9 +48,53 @@ export const PROMPT_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts
 /** L1 提取模式（与腾讯 MemoryPromptMode 对齐）。 */
 export type L1Mode = "code" | "chat";
 
+/**
+ * L1 价值校验（2026-09-17）：l1_commit 在写盘前跑一次 agent loop，只判"值不值得留"。
+ *
+ * 为什么放在写盘路径里而不是"子代理自觉去调一个工具"：跳过工具调用是可能的，跳过写盘闸不可能。
+ * 为什么是 agent loop 而不是 `callLLM`：判据要跟着提取规则同源演进，且需要能升级成多轮（如让它
+ * 自己查证），所以走 `util/agent-loop.ts`；**但 turn 数必须封顶**（用户要求），默认 1。
+ *
+ * 只对 `source=subagent` 生效 —— 主代理那条路是同步调用，不能让它等一次 LLM。
+ */
+export interface L1ValueCheckConfig {
+	/** 总开关；关掉则完全不跑（写盘行为与从前一致）。 */
+	enabled: boolean;
+	/** agent loop 的 turn 上限。**1 = 纯判定、不给工具**；放开到 2+ 必须同时想清楚给它什么工具。 */
+	maxTurns: number;
+	/** 单次校验的整体超时。超时即 fail-open（照写 + 留痕），不能拖住写盘。 */
+	timeoutMs: number;
+	/** 单条候选在提示词里的截断长度（防止一条超长记录把校验上下文吃掉）。 */
+	maxRecordChars: number;
+}
+
+/** 价值校验默认值（配置中心 `l1.valueCheck` 缺省时用它）。 */
+export const DEFAULT_VALUE_CHECK: L1ValueCheckConfig = {
+	enabled: true,
+	maxTurns: 1,
+	timeoutMs: 60_000,
+	maxRecordChars: 400,
+};
+
 /** l1-config.json 结构。 */
 export interface L1Config {
 	mode: L1Mode;
+	valueCheck: L1ValueCheckConfig;
+}
+
+/** 取 valueCheck 子节并按类型逐字段兜底（配置写成字符串/负数都不该让校验层失控）。 */
+function readValueCheck(section: unknown): L1ValueCheckConfig {
+	const v = (section && typeof section === "object" ? (section as { valueCheck?: unknown }).valueCheck : undefined) ?? {};
+	const o = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+	const num = (x: unknown, d: number, min: number, max: number) =>
+		typeof x === "number" && Number.isFinite(x) ? Math.min(max, Math.max(min, Math.floor(x))) : d;
+	return {
+		enabled: typeof o.enabled === "boolean" ? o.enabled : DEFAULT_VALUE_CHECK.enabled,
+		// 上限硬封在 1..3：放更大就等于允许它自己展开成一个不受控的循环
+		maxTurns: num(o.maxTurns, DEFAULT_VALUE_CHECK.maxTurns, 1, 3),
+		timeoutMs: num(o.timeoutMs, DEFAULT_VALUE_CHECK.timeoutMs, 5_000, 300_000),
+		maxRecordChars: num(o.maxRecordChars, DEFAULT_VALUE_CHECK.maxRecordChars, 100, 4000),
+	};
 }
 
 /**
@@ -62,24 +106,37 @@ export function loadL1Config(profilePath: string): L1Config {
 	const appProps = loadAppProps(profilePath);
 	const section = appProps?.l1 as Partial<L1Config> | undefined;
 	if (section && typeof section === "object") {
-		if (section.mode === "chat" || section.mode === "code") return { mode: section.mode };
+		if (section.mode === "chat" || section.mode === "code") {
+			return { mode: section.mode, valueCheck: readValueCheck(section) };
+		}
+		return { mode: "code", valueCheck: readValueCheck(section) };
 	}
 	// 2) 旧独立 l1-config.json（迁移期兜底）
 	const filePath = join(profilePath, MEMORY_DB_DIR, CONFIG_FILE);
 	if (existsSync(filePath)) {
 		try {
 			const data = JSON.parse(readFileSync(filePath, "utf-8")) as Partial<L1Config>;
-			if (data.mode === "chat" || data.mode === "code") return { mode: data.mode };
+			if (data.mode === "chat" || data.mode === "code") {
+				return { mode: data.mode, valueCheck: readValueCheck(data) };
+			}
 		} catch {
 			// 非法配置回退默认
 		}
 	}
-	return { mode: "code" };
+	return { mode: "code", valueCheck: { ...DEFAULT_VALUE_CHECK } };
 }
 
-/** 写入 L1 模式（收束：写 application-propertis.json 的 l1 节，合并保留其他节）。 */
+/**
+ * 写入 L1 模式（收束：写 application-propertis.json 的 l1 节）。
+ *
+ * 注意 `saveAppSection` 是**整节替换**（`appProps[section] = value`，不做深合并），
+ * 所以这里必须先读出 l1 节已有字段再合并 —— 否则 `/l1-mode chat` 会把同节的 `valueCheck` 冲掉。
+ */
 export function saveL1Mode(profilePath: string, mode: L1Mode): void {
-	saveAppSection(profilePath, "l1", { mode } as L1Config);
+	const cur = loadAppProps(profilePath)?.l1;
+	const merged = (cur && typeof cur === "object" ? { ...(cur as Record<string, unknown>) } : {}) as Record<string, unknown>;
+	merged.mode = mode;
+	saveAppSection(profilePath, "l1", merged);
 }
 
 /** 读取 L1 游标 lastRecordedAt（ISO 字符串；无则返回空串）。 */
