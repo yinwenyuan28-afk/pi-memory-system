@@ -14,11 +14,16 @@ import { render as renderPrompt } from "../../prompts/registry.ts";
 //  read。保持"子代理自主读取"（对齐腾讯架构）而非主进程预读塞任务消息。
 //
 //  返回值约定：
-//    - messages: 游标后新消息（按时间升序，全部增量；子代理按 maxNewMessages
-//      规则自行截取最近 ≤10 条）
-//    - background: 增量最前面一条的前 5 条背景消息（仅供理解，禁止提取）
-//    - nextCursor: 增量最后一条的 recordedAt（子代理提交时作为 cursor）
-//    - truncated: 增量超 200 条时截断标记（防上下文爆炸，子代理据此分轮处理）
+//    - messages: 游标后新消息（按时间升序），**最多 MAX_INCREMENT 条，取最旧的**
+//    - background: 游标之前最近 BG_COUNT 条背景消息（仅供理解，禁止提取）
+//    - nextCursor: 返回的 messages 最后一条的 recordedAt —— **仅作参考**：子代理要提交的
+//      cursor 是「本批实际处理的那几条里的最后一条」，不是它
+//    - truncated: messages 被 MAX_INCREMENT 截断的标记（后面还有更晚的没返回）
+//
+//  ⚠ 2026-09-19 改正截断方向：原先取**最新**的 200 条，配合子代理「只提最新的 ≤10 条」，
+//  会让比该批更旧的所有消息落到游标之后（下一轮 `recordedAt <= cursor` 归入 background、
+//  永不提取）—— 实测积压 4 天时一次就静默跳过 190 条。现在取**最旧**的 200 条，配合
+//  子代理「提最旧的 ≤25 条、游标推进到本批最后一条」，积压才是真正被串行消化掉的。
 // ══════════════════════════════════════════════════════════════
 
 /** 单次返回最大增量条数（超限截断，防上下文爆炸）。 */
@@ -55,7 +60,7 @@ function parseL0Line(line: string): L0Line | null {
  * @returns { messages, background, nextCursor, truncated }
  *
  * background = 游标之前最近 BG_COUNT 条（真正的历史上下文，供子代理理解语境，
- * 禁止从中提取）；messages = 游标后全部增量（按时间升序）。
+ * 禁止从中提取）；messages = 游标后的增量（按时间升序），**超 MAX_INCREMENT 时取最旧的**。
  */
 export function readL0Increment(
 	l0Files: string,
@@ -91,9 +96,9 @@ export function readL0Increment(
 	// 背景：游标之前最近 BG_COUNT 条（无历史时为空）
 	const background = prev.slice(-BG_COUNT);
 
-	// 截断保护
+	// 截断保护：**取最旧的**（与子代理"提最旧的一批、游标往前推"配套；取最新的会静默丢积压）
 	const truncated = all.length > MAX_INCREMENT;
-	const slice = truncated ? all.slice(all.length - MAX_INCREMENT) : all;
+	const slice = truncated ? all.slice(0, MAX_INCREMENT) : all;
 
 	const nextCursor = slice.length > 0 ? (slice[slice.length - 1].recordedAt ?? cursor) : cursor;
 
