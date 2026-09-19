@@ -155,6 +155,10 @@ export function registerL1CommitTool(
 			required: ["records"],
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			// 写锁句柄**必须声明在 try 之外**：catch 里要 `writeLock?.release()` 释放，
+			// 而 `let` 在 try 块内声明时对同级的 catch 块不可见（2026-09-20 tsc TS2304 证实：
+			// 旧写法在写盘异常路径会抛 “writeLock is not defined”，把真正的错误盖掉）。
+			let writeLock: ReturnType<typeof acquireWriteLock>;
 			try {
 				const profilePath = getProfilePath();
 				if (!profilePath) {
@@ -231,10 +235,7 @@ export function registerL1CommitTool(
 				const provenanceMissingList: string[] = [];
 				const overBudget: number[] = [];
 				let priorityMissing = 0;
-				// 在 try 作用域声明：下面 catch 里要 `writeLock?.release()` 释放，
-				// 若只在闸门块内 `const` 声明，异常路径会变成 "writeLock is not defined"
-				// （把真正的错误盖掉，2026-09-17 实测）。
-				let writeLock: ReturnType<typeof acquireWriteLock>;
+				// 写锁句柄在 execute 作用域声明（见函数开头）：catch 里的 `writeLock?.release()` 才看得到
 				{
 					const RECORD_TYPES = new Set(["work_fact", "work_task", "work_method", "work_artifact"]);
 					const recallBudget = loadRecallConfig(profilePath).maxCharsPerRecord;
@@ -687,6 +688,8 @@ export function registerL1CommitTool(
 									written,
 									cursor,
 									vectorStats,
+									// 口径：被**改写的分片文件数**（Map 的 key 是文件名），不是墓碑条数——
+									// 3 条墓碑全在同一分片时这里就是 1（2026-09-20 子代理据此误判“计数与落盘不一致”）。
 									markedInPlace: markByFile.size,
 									sceneStats,
 									sceneWarns,
