@@ -100,7 +100,7 @@ console.log("\n=== 2. resolveConfiguredModel：三段解析链 ===");
 	rmSync(empty, { recursive: true, force: true });
 }
 
-console.log("\n=== 3. 与生产配置一致性（只读真实 profile；读不到就跳过） ===");
+console.log("\n=== 3. 与生产配置一致性（**只读**；读不到就跳过）===" );
 {
 	const realProfile = "C:/Users/leaf/.pi/agent/profiles/default";
 	const cfg = readConfig(realProfile);
@@ -108,9 +108,9 @@ console.log("\n=== 3. 与生产配置一致性（只读真实 profile；读不�
 		console.log("  SKIP  生产 profile 未配置 model.llm（或路径不同）");
 	} else {
 		check("生产配置能被读出（provider/modelId 非空）", cfg.provider.length > 0 && cfg.modelId.length > 0, `${cfg.provider}/${cfg.modelId}`);
-		// 不联网、不构造 registry：只验证"没有 registry 时不会拿到 undefined"（本次修复的核心语义）
-		const resolved = resolveConfiguredModel(realProfile, null, { find: () => undefined });
-		check("生产配置 + 查不到的 registry → 返回 fallback（不是 undefined）", resolved === null, String(resolved));
+		// 本题只读：**不要**在这里跑一次必然失败的 resolveConfiguredModel —— 它会往真实 profile 的
+		// logs/llm.log 写一行“已回退到会话模型”（2026-09-20 实测：回归跑两次就攒了 6 条误导性日志）。
+		// “查不到必须回退、不得返回 undefined” 已由第 2 组（临时 profile）覆盖。
 	}
 }
 
