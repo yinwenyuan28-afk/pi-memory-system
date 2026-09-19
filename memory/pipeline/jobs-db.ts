@@ -1,10 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { join } from "node:path";
 import { MEMORY_DB_DIR, PIPELINE_JOBS_FILE } from "../paths.ts";
 
 export type PipelineJobType = "l1" | "l2";
-export type PipelineJobSource = "interval" | "manual" | "l1_commit";
+/** `drain` = L1 收尾后因「L0 仍有积压」而连续排的下一批（2026-09-19）。 */
+export type PipelineJobSource = "interval" | "manual" | "l1_commit" | "drain";
 export type PipelineJobStatus = "queued" | "running" | "done" | "skipped" | "failed";
 
 /** recoverStuckRunning 只回收 started_at 早于该阈值的 running（防子进程误杀刚启动的 job）。 */
@@ -77,6 +79,10 @@ export class PipelineJobsDB {
 		const memDir = join(profilePath, MEMORY_DB_DIR);
 		mkdirSync(memDir, { recursive: true });
 		this.dbPath = join(memDir, PIPELINE_JOBS_FILE);
+		// 建到**文件所在目录**（PIPELINE_JOBS_FILE 是多段相对路径 `pipeline/jobs.sqlite`）：
+		// 只建 memoryDB/ 的话，全新 profile 会 "unable to open database file"
+		//（生产 profile 里 pipeline/ 恰好已存在，所以这个缺口一直没暴露）
+		mkdirSync(dirname(this.dbPath), { recursive: true });
 		this.db = new DatabaseSync(this.dbPath);
 		this.db.exec("PRAGMA journal_mode = WAL;");
 		this.db.exec("PRAGMA busy_timeout = 5000;");
@@ -129,11 +135,45 @@ export class PipelineJobsDB {
 
 	/** l1_commit：把当前 running 的 l1 标 done（没有也不抛错）。 */
 	completeRunningL1(): number {
+		return this.completeRunning("l1");
+	}
+
+	/**
+	 * l2_commit：把当前 running 的 l2 标 done。
+	 *
+	 * 为什么 L2 也需要它：`runPiSubagent` 是 async:true（派发后毫秒级返回），所以
+	 * `l2/index.ts` 里 `await runPiSubagent(...)` 之后紧接着读游标**必然还没推进** ——
+	 * 旧代码据此就把 job 标 done，于是任务在 0 秒"完成"、队列以为空闲、立刻又 claim 下一条
+	 * → 2026-09-19 实测两个 L2 子代理并发改同一批场景块（与 L3 那次并发同源）。
+	 * 真完成信号只能由子代理自己写：它提交成功时调这个方法。
+	 */
+	completeRunningL2(): number {
+		return this.completeRunning("l2");
+	}
+
+	/**
+	 * 把当前 running 的指定层标 done（子代理提交成功时调用；没有匹配行返回 0）。
+	 */
+	completeRunning(type: PipelineJobType): number {
 		const now = new Date().toISOString();
 		const info = this.db
-			.prepare("UPDATE jobs SET status = 'done', finished_at = ? WHERE type = 'l1' AND status = 'running'")
-			.run(now);
+			.prepare("UPDATE jobs SET status = 'done', finished_at = ? WHERE type = ? AND status = 'running'")
+			.run(now, type);
 		return Number(info.changes);
+	}
+
+	/**
+	 * 是否有**任何** job 处于 running（跨层、跨进程）。
+	 *
+	 * 用途：串行执行器 claim 下一个 job 前先看它。`peekNext()` 只挑 `queued`，
+	 * 所以两个 pi 进程同时开着时各自都能 claim 走一条 queued → 两个子代理并发。
+	 * 有这个判断后，"同一时刻只有一个 L1/L2/L3 子代理"才在**全局**成立，而不只是单进程内。
+	 */
+	hasAnyRunning(): boolean {
+		const row = this.db.prepare("SELECT 1 AS n FROM jobs WHERE status = 'running' LIMIT 1").get() as
+			| { n: number }
+			| undefined;
+		return Boolean(row);
 	}
 
 	/**

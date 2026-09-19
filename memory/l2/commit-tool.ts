@@ -12,6 +12,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config } from "./config.ts";
 import { BACKUP_DIR, L2_INDEX_DIR, MEMORY_DB_DIR } from "../paths.ts";
 import { writePendingTrigger } from "../l3/signal.ts";
+import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
@@ -848,6 +849,15 @@ export function registerL2CommitTool(
 			const personaReason = typeof params?.personaReason === "string" ? params.personaReason : undefined;
 			if (personaSignal) {
 				writePendingTrigger(profilePath, { personaSignal: true, personaReason });
+			}
+
+			// L2 job 的**真完成信号**（2026-09-19）：由子代理提交成功这一刻写下。
+			// 主进程 worker 靠轮询这张表判断"L2 跑完了"，不再信 `await runPiSubagent` 的返回
+			// （async:true 下它只代表"派出去了"）—— 那是两个 L2 并发改场景块的根因。
+			try {
+				getPipelineJobsDB(profilePath).completeRunningL2();
+			} catch {
+				// 队列不可用不影响写盘（记录/场景已落盘）
 			}
 
 				return {

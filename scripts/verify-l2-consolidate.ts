@@ -8,6 +8,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSceneBlock, registerL2CommitTool } from "../memory/l2/commit-tool.ts";
+import { closePipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
+
+/** 关掉缓存里的 jobs.sqlite 再删目录：Windows 下句柄未释放时 rmSync 会 EPERM（2026-09-19 实测）。 */
+function drop(dir: string): void {
+	try {
+		closePipelineJobsDB(dir);
+	} catch {
+		// 未打开过则忽略
+	}
+	rmSync(dir, { recursive: true, force: true });
+}
 
 let pass = 0;
 let fail = 0;
@@ -183,9 +194,9 @@ async function main(): Promise<void> {
 	const afterCreate = await capCall("cap-create-ok", { action: "create", filename: "New.md", content: "- 新内容" });
 	check("腾出空位后 create 恢复可过", afterCreate.success === true, afterCreate.error ?? "");
 	check("最终 3 块，且未出现 overLimit warning", dirCount() === 3 && afterCreate.warning === undefined, `dir=${dirCount()} warning=${afterCreate.warning ?? "无"}`);
-	rmSync(p2, { recursive: true, force: true });
+	drop(p2);
 
-	rmSync(p, { recursive: true, force: true });
+	drop(p);
 }
 
 main()

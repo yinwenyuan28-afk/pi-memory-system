@@ -15,7 +15,9 @@ import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.ts";
 import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.ts";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
-import { registerReadL0IncrementTool } from "./memory/l1/read-tool.ts";
+import { registerReadL0IncrementTool, readL0Increment } from "./memory/l1/read-tool.ts";
+import { listL0Files, loadL1Cursor } from "./memory/l1/config.ts";
+import { countNewRecords, loadL2Cursor } from "./memory/l2/config.ts";
 import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
@@ -421,6 +423,29 @@ export default function (pi: ExtensionAPI) {
         runL1: (ctx, job) => l1Controls!.executeJob(ctx, job),
         runL2: (ctx, job) => l2Controls!.executeJob(ctx, job),
         isCooledDown: (type) => (type === "l1" ? l1Controls!.isCooledDown() : l2Controls!.isCooledDown()),
+        // L1 收尾后由 worker 决定下一步（2026-09-19）：还有 L0 积压就继续排 L1，
+        // 排空了且有新记录才排 L2 —— 对应"多个 L1 串行跑完才轮到 L2"。
+        hasL1Remaining: () => {
+          const p = manager?.getProfileManager().getActiveProfile()?.path;
+          if (!p) return false;
+          try {
+            const cursor = loadL1Cursor(p);
+            const files = listL0Files(p, cursor);
+            if (files.length === 0) return false;
+            return readL0Increment(files.join(","), cursor).messages.length > 0;
+          } catch {
+            return false;
+          }
+        },
+        hasNewRecordsForL2: () => {
+          const p = manager?.getProfileManager().getActiveProfile()?.path;
+          if (!p) return false;
+          try {
+            return countNewRecords(p, loadL2Cursor(p).lastProcessedAt) > 0;
+          } catch {
+            return false;
+          }
+        },
       };
     }
     pipelineWorker?.setCachedCtx(ctx);

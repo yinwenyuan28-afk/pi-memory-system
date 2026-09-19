@@ -20,7 +20,18 @@ import {
 	type ValueVerdict,
 } from "../memory/l1/value-check.ts";
 import { DEFAULT_VALUE_CHECK, loadL1Config, saveL1Mode, PROMPT_DIR } from "../memory/l1/config.ts";
+import { closePipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { registerL1CommitTool } from "../memory/l1/commit-tool.ts";
+
+/** 关掉缓存里的 jobs.sqlite 再删目录：Windows 下句柄未释放时 rmSync 会 EPERM（2026-09-19 实测）。 */
+function drop(dir: string): void {
+	try {
+		closePipelineJobsDB(dir);
+	} catch {
+		// 未打开过则忽略
+	}
+	rmSync(dir, { recursive: true, force: true });
+}
 
 let pass = 0;
 let fail = 0;
@@ -192,14 +203,14 @@ async function main(): Promise<void> {
 		const c1 = loadL1Config(p1);
 		check("缺省 → 默认值", JSON.stringify(c1.valueCheck) === JSON.stringify(DEFAULT_VALUE_CHECK), JSON.stringify(c1.valueCheck));
 		check("默认 turn 上限 = 1（纯判定）", c1.valueCheck.maxTurns === 1);
-		rmSync(p1, { recursive: true, force: true });
+		drop(p1);
 
 		const p2 = makeProfile({ enabled: true, maxTurns: 99, timeoutMs: 1, maxRecordChars: 999999 });
 		const c2 = loadL1Config(p2);
 		check("maxTurns 钳到 3（不许放开成不受控循环）", c2.valueCheck.maxTurns === 3);
 		check("timeoutMs 钳到下限 5000", c2.valueCheck.timeoutMs === 5000);
 		check("maxRecordChars 钳到上限 4000", c2.valueCheck.maxRecordChars === 4000);
-		rmSync(p2, { recursive: true, force: true });
+		drop(p2);
 
 		const p3 = makeProfile({ enabled: false });
 		check("可显式关闭", loadL1Config(p3).valueCheck.enabled === false);
@@ -207,7 +218,7 @@ async function main(): Promise<void> {
 		saveL1Mode(p3, "chat");
 		const c3 = loadL1Config(p3);
 		check("saveL1Mode 保留同节其他字段", c3.mode === "chat" && c3.valueCheck.enabled === false, JSON.stringify(c3));
-		rmSync(p3, { recursive: true, force: true });
+		drop(p3);
 	}
 
 	// ════════════════════════════════════════════════════════════════════════
@@ -244,7 +255,7 @@ async function main(): Promise<void> {
 		const lines = shardFiles.flatMap((f) => readFileSync(join(shardDir, f), "utf-8").split("\n").filter(Boolean));
 		const types = lines.map((l) => JSON.parse(l).type);
 		check("被拒批次未写库（只有合法 type）", types.length > 0 && types.every((t) => ["work_fact", "work_task", "work_method", "work_artifact"].includes(t)), types.join(","));
-		rmSync(root, { recursive: true, force: true });
+		drop(root);
 	}
 
 	// ════════════════════════════════════════════════════════════════════════
@@ -264,8 +275,8 @@ async function main(): Promise<void> {
 		// 主代理路径不跑价值校验（同步工具调用不能被 LLM 卡住）
 		const res3 = await commit2({ source: "main-agent", records: [{ content: "主代理直写的事实", type: "work_fact" }] });
 		check("main-agent 路径不出现 valueCheck", res3.success === true && res3.valueCheck === undefined);
-		rmSync(root, { recursive: true, force: true });
-		rmSync(root2, { recursive: true, force: true });
+		drop(root);
+		drop(root2);
 	}
 }
 

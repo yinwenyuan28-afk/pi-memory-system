@@ -604,9 +604,10 @@ export function registerL1CommitTool(
 								console.warn(`[l1_commit] 重置失败计数出错: ${e instanceof Error ? e.message : String(e)}`);
 							}
 						}
-						if (countNewRecords(profilePath, loadL2Cursor(profilePath).lastProcessedAt) > 0) {
-							jobs.enqueue("l2", "l1_commit");
-						}
+						// L2 入队**不在这里**（2026-09-19 移出）：一次 L1 运行可能提交多批，
+						// 每批都入队会让 L2 在 L1 还没啃完积压时就开跑，且"多 1 条也起一个完整 L2"。
+						// 现在由主进程 worker 在 L1 job 收尾后统一编排：还有 L0 积压 → 继续排 L1；
+						// 积压清空且有新记录 → 排一个 L2（见 pipeline/worker.ts 的下一步编排）。
 					}
 				} catch (e) {
 					console.warn(`[l1_commit] pipeline enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
