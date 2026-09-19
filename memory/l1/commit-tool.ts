@@ -158,7 +158,8 @@ export function registerL1CommitTool(
 			// 写锁句柄**必须声明在 try 之外**：catch 里要 `writeLock?.release()` 释放，
 			// 而 `let` 在 try 块内声明时对同级的 catch 块不可见（2026-09-20 tsc TS2304 证实：
 			// 旧写法在写盘异常路径会抛 “writeLock is not defined”，把真正的错误盖掉）。
-			let writeLock: ReturnType<typeof acquireWriteLock>;
+			// 用 `| undefined` 标注：声明处未赋值，catch 里的 `writeLock?.release()` 靠可选链短路。
+			let writeLock: ReturnType<typeof acquireWriteLock> | undefined;
 			try {
 				const profilePath = getProfilePath();
 				if (!profilePath) {

@@ -12,11 +12,13 @@ import { setupSkillReviewer } from "./skill/reviewer.ts";
 // import { setupWorkflowSystem } from "./workflow/index.ts";
 import { archiveSessionIncrement } from "./memory/l0/index.ts";
 import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.ts";
-import { loadL1Config, saveL1Mode, setupL1Extractor } from "./memory/l1/index.ts";
+import { loadL1Config, setupL1Extractor } from "./memory/l1/index.ts";
+// saveL1Mode 的真实定义在 config.ts（l1/index.ts 不转出它）——2026-09-20 类型检查发现：
+// 旧写法从 l1/index.ts 导入得到 undefined，/my-memory:l1-mode 一调用就 TypeError。
+import { listL0Files, loadL1Cursor, saveL1Mode } from "./memory/l1/config.ts";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
 import { registerReadL0IncrementTool, readL0Increment } from "./memory/l1/read-tool.ts";
-import { listL0Files, loadL1Cursor } from "./memory/l1/config.ts";
 import { countNewRecords, loadL2Cursor } from "./memory/l2/config.ts";
 import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
