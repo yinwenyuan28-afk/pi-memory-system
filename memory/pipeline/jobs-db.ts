@@ -4,9 +4,12 @@ import { dirname } from "node:path";
 import { join } from "node:path";
 import { MEMORY_DB_DIR, PIPELINE_JOBS_FILE } from "../paths.ts";
 
-export type PipelineJobType = "l1" | "l2";
-/** `drain` = L1 收尾后因「L0 仍有积压」而连续排的下一批（2026-09-19）。 */
-export type PipelineJobSource = "interval" | "manual" | "l1_commit" | "drain";
+export type PipelineJobType = "l1" | "l2" | "l3";
+/**
+ * `drain` = L1 收尾后因「L0 仍有积压」而连续排的下一批（2026-09-19）。
+ * `trigger` = L3 的台账式触发（`agent_settled` 五级门控命中）或子代理 `personaSignal`。
+ */
+export type PipelineJobSource = "interval" | "manual" | "l1_commit" | "drain" | "trigger";
 export type PipelineJobStatus = "queued" | "running" | "done" | "skipped" | "failed";
 
 /** recoverStuckRunning 只回收 started_at 早于该阈值的 running（防子进程误杀刚启动的 job）。 */
@@ -68,8 +71,9 @@ function mapRow(r: Row): PipelineJob {
 }
 
 /**
- * L1/L2 流水线队列（node:sqlite）。
- * 主进程 worker 与 l1-extractor 子进程（l1_commit）都会打开同一文件；WAL + busy_timeout 防并发写。
+ * L1/L2/L3 流水线队列（node:sqlite）。
+ * 主进程 worker 与子代理进程（l1_commit / l2_commit / l3_commit）都会打开同一文件；WAL + busy_timeout 防并发写。
+ * L3 自 2026-09-19 起也走这里（此前只有 L1/L2，L3 用 `l3/run.lock` 自己单飞）。
  */
 export class PipelineJobsDB {
 	private db: DatabaseSync;
@@ -102,7 +106,14 @@ export class PipelineJobsDB {
 	}
 
 	peekNext(): PipelineJob | undefined {
-		const row = this.db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id ASC LIMIT 1").get() as Row | undefined;
+		// L3 永远排最后（2026-09-19 并入串行执行器时定）：L3 的输入是 L1/L2 的产物
+		// （场景块），让它在 L1 还在啃 L0 积压、L2 还没组织场景时就插队跑，既浪费一次
+		// 子代理，也会基于半成品画像。同 id 序里其它 type 一律优先于 l3。
+		const row = this.db
+			.prepare(
+				"SELECT * FROM jobs WHERE status = 'queued' ORDER BY CASE type WHEN 'l3' THEN 1 ELSE 0 END ASC, id ASC LIMIT 1",
+			)
+			.get() as Row | undefined;
 		return row ? mapRow(row) : undefined;
 	}
 
@@ -117,6 +128,16 @@ export class PipelineJobsDB {
 	getJob(id: number): PipelineJob | undefined {
 		const row = this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Row | undefined;
 		return row ? mapRow(row) : undefined;
+	}
+
+	/** 当前 queued 的全部 job（按 peekNext 的优先级排序；观测/回归用）。 */
+	listQueued(): PipelineJob[] {
+		const rows = this.db
+			.prepare(
+				"SELECT * FROM jobs WHERE status = 'queued' ORDER BY CASE type WHEN 'l3' THEN 1 ELSE 0 END ASC, id ASC",
+			)
+			.all() as Row[];
+		return rows.map(mapRow);
 	}
 
 	hasActive(type: PipelineJobType): boolean {
@@ -149,6 +170,17 @@ export class PipelineJobsDB {
 	 */
 	completeRunningL2(): number {
 		return this.completeRunning("l2");
+	}
+
+	/**
+	 * l3_commit：把当前 running 的 l3 标 done。
+	 *
+	 * 与 L2 同源：`runPiSubagent` 是 async:true（派发后毫秒级返回），所以"派发完就读游标"
+	 * 必然还是旧值。L3 并入队列后，唯一可信的完成信号就是子代理自己提交时调的这一个
+	 * （取代了此前的 `l3/run.lock` + 主进程观察游标那一套，见 §11.11）。
+	 */
+	completeRunningL3(): number {
+		return this.completeRunning("l3");
 	}
 
 	/**

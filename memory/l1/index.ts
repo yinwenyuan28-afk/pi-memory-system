@@ -9,8 +9,14 @@ import {
 	loadL1Cursor,
 } from "./config.ts";
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
+import { logEvent, noticeCard } from "../../util/notice.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
 import { waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+
+/** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
+function l1CoolDownMessage(failures: number): string {
+	return `L1 记忆提取连续失败 ${failures} 次，已暂停自动提取。用 /my-memory:l1-trigger 手动重试或检查日志。`;
+}
 
 /**
  * 注册 L1 提取调度。
@@ -90,7 +96,7 @@ export function setupL1Extractor(
 		try {
 			const spawnP = runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS, abortCtl.signal);
 			void spawnP.catch((err) => {
-				console.warn(`[memory-system][l1] spawn later: ${err instanceof Error ? err.message : String(err)}`);
+				logEvent("l1", `spawn later: ${err instanceof Error ? err.message : String(err)}`);
 			});
 			await Promise.race([spawnP, waitP]);
 			if (db.getJob(job.id)?.status === "running") await waitP;
@@ -113,13 +119,21 @@ export function setupL1Extractor(
 			await spawnP.catch(() => {});
 			const s2 = loadL1State();
 			s2.consecutiveFailures++;
-			console.warn(`[memory-system][l1] extract ended without commit (job ${job.id}, status=${after?.status})`);
+			// 子代理超时未提交 = “记忆没写成”的实锤（以前只有 console.warn，用户完全看不见）
+			const timeoutDetail = `job ${job.id}，status=${after?.status}`;
+			logEvent("l1", `extract ended without commit (${timeoutDetail})`);
+			noticeCard({
+				level: "warning",
+				title: "L1 提取未提交（超时/无 l1_commit）",
+				lines: [
+					`job ${job.id}（来源 ${job.source}）在时限内未调入 l1_commit`,
+					`连续失败 ${s2.consecutiveFailures}/${L1_FAILURE_THRESHOLD}`,
+				],
+				detail: `status=${after?.status}\n进程内日志：memoryDB/logs/l1.log`,
+			});
 			if (s2.consecutiveFailures >= L1_FAILURE_THRESHOLD && !s2.cooledDown) {
 				s2.cooledDown = true;
-				ctx.ui.notify(
-					`L1 记忆提取连续失败 ${s2.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l1-trigger 手动重试或检查日志。`,
-					"error",
-				);
+				ctx.ui.notify(l1CoolDownMessage(s2.consecutiveFailures), "error");
 			}
 			saveL1State(s2);
 			return "failed";
@@ -127,13 +141,17 @@ export function setupL1Extractor(
 			abortCtl.abort();
 			const s2 = loadL1State();
 			s2.consecutiveFailures++;
-			console.warn(`[memory-system][l1] extract failed: ${err instanceof Error ? err.message : String(err)}`);
+			const failMsg = err instanceof Error ? err.message : String(err);
+			logEvent("l1", `extract failed: ${failMsg}`);
+			noticeCard({
+				level: "warning",
+				title: "L1 提取派发失败",
+				lines: [`job ${job.id}，连续失败 ${s2.consecutiveFailures}/${L1_FAILURE_THRESHOLD}`],
+				detail: failMsg,
+			});
 			if (s2.consecutiveFailures >= L1_FAILURE_THRESHOLD && !s2.cooledDown) {
 				s2.cooledDown = true;
-				ctx.ui.notify(
-					`L1 记忆提取连续失败 ${s2.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l1-trigger 手动重试或检查日志。`,
-					"error",
-				);
+				ctx.ui.notify(l1CoolDownMessage(s2.consecutiveFailures), "error");
 			}
 			saveL1State(s2);
 			const still = db.getJob(job.id);
@@ -151,7 +169,7 @@ export function setupL1Extractor(
 			return;
 		}
 		if (hasActiveL1()) {
-			if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warn");
+			if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warning");
 			return;
 		}
 		// 同样只做增量判空，不与 executeJob 重复构造任务消息
@@ -170,7 +188,7 @@ export function setupL1Extractor(
 			return;
 		}
 		if (queued.duplicate) {
-			if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warn");
+			if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warning");
 			return;
 		}
 		if (ctx) ctx.ui.notify("L1 提取已入队", "info");

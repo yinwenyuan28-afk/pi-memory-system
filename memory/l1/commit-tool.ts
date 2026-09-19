@@ -15,12 +15,17 @@ import {
 } from "./scene-pool.ts";
 import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
 import { MEMORY_DB_DIR, L1_VALUE_CHECK_LOG } from "../paths.ts";
+import { logEvent, noticeCard } from "../../util/notice.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
 import { loadFailureState, saveFailureState } from "../failure-state.ts";
 import { acquireWriteLock } from "./write-lock.ts";
 import { loadEmbeddingConfig } from "../search/embedding/config.ts";
 import { isVectorizationReady } from "../search/embedding/vectorization-config.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
+// 静态导入（不得改回执行期 await import()）：jiti(moduleCache:false) 下并发首次调用会拿到
+// 「求值未完成」的命名空间 → getter 读到未初始化的模块级绑定（2026-09-19 实测复现）
+import { getEmbeddingService } from "../search/embedding/service.ts";
+import { getVectorStore } from "../search/vector-store/store.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  l1_commit 工具 —— 子代理写盘桥接
@@ -289,7 +294,16 @@ export function registerL1CommitTool(
 					// 判据与提取规则同源：直接摘同一份 md（摘不出 → fail-open）
 					const checklist = loadChecklistFromFile(join(PROMPT_DIR, `extract-${l1CfgForCheck.mode}-personal.md`));
 					if (!checklist) {
-						console.warn(`[memory-system][l1] 价值校验跳过：判据摘取失败（extract-${l1CfgForCheck.mode}-personal.md 的标记段落是否还在？）`);
+						// fail-open 属于“闸门静默失效”：用户应该知道这次没有过滤（但不必每次都知道 → dedup）
+						const skipMsg = `价值校验跳过：判据摘取失败（extract-${l1CfgForCheck.mode}-personal.md 的标记段落是否还在？）`;
+						logEvent("l1", skipMsg, profilePath);
+						noticeCard({
+							level: "warning",
+							title: "L1 价值校验未生效（fail-open，照写）",
+							lines: [skipMsg],
+							detail: "影响：本批记录未经过“值不值得留”的过滤。判据文件与提取规则同源，修好 md 后自动恢复。",
+							dedupKey: "l1-value-check-failopen",
+						});
 						valueCheckReport = { skipped: "判据摘取失败" };
 					} else {
 						// 惰性导入：model-config 静态拉 `@earendil-works/pi-ai/compat`，那是 CJS 下
@@ -305,7 +319,16 @@ export function registerL1CommitTool(
 							timeoutMs: cfgVC.timeoutMs,
 							maxRecordChars: cfgVC.maxRecordChars,
 							sessionId: typeof ctx?.sessionManager?.getSessionId === "function" ? ctx.sessionManager.getSessionId() : undefined,
-							onError: (err) => console.warn(`[memory-system][l1] 价值校验失败（fail-open，照写）: ${err instanceof Error ? err.message : String(err)}`),
+							onError: (err) => {
+								const vcErr = err instanceof Error ? err.message : String(err);
+								logEvent("l1", `价值校验失败（fail-open，照写）: ${vcErr}`, profilePath);
+								noticeCard({
+									level: "warning",
+									title: "L1 价值校验调用失败（fail-open，照写）",
+									lines: [vcErr.slice(0, 120)],
+									dedupKey: "l1-value-check-failopen",
+								});
+							},
 						});
 						const applied = applyVerdicts(recordsToWrite, outcome.verdicts);
 						recordsToWrite = applied.kept;
@@ -334,7 +357,13 @@ export function registerL1CommitTool(
 				} catch (err) {
 					// 价值校验层的任何异常都在这里止步：照写 + 留痕
 					const msg = err instanceof Error ? err.message : String(err);
-					console.warn(`[memory-system][l1] 价值校验异常（fail-open，照写）: ${msg}`);
+					logEvent("l1", `价值校验异常（fail-open，照写）: ${msg}`, profilePath);
+					noticeCard({
+						level: "warning",
+						title: "L1 价值校验异常（fail-open，照写）",
+						lines: [msg.slice(0, 120)],
+						dedupKey: "l1-value-check-failopen",
+					});
 					valueCheckReport = { skipped: `校验层异常：${msg}` };
 				}
 
@@ -522,8 +551,7 @@ export function registerL1CommitTool(
 				} else if (!isVectorizationReady(profilePath)) {
 					// VECTORIZATION_ENABLED=false 或未达阈值，跳过向量写入
 				} else if (toEmbed.length > 0 || toDelete.length > 0) {
-					const { getEmbeddingService } = await import("../search/embedding/service.ts");
-					const { getVectorStore } = await import("../search/vector-store/store.ts");
+					// 两个单例由文件头部静态导入（见那里的注释）；此处保持静态引用，避免半成品命名空间竞态
 					const embService = await getEmbeddingService(profilePath);
 					const vecStore = await getVectorStore(profilePath);
 
@@ -556,8 +584,13 @@ export function registerL1CommitTool(
 			} catch (e) {
 				// 向量写入失败不阻塞 records 写盘（业务级降级）
 				const msg = e instanceof Error ? e.message : String(e);
-				console.warn(`[l1_commit] 向量化写入失败: ${msg}`);
-				ctx.ui.notify(`L1 commit 成功，但向量化写入失败: ${msg}`, "error");
+				logEvent("l1", `向量化写入失败: ${msg}`, profilePath);
+				// 卡片走 relay：主代理写入时直接 appendEntry；子代理进程则落 notices.jsonl 等主进程 drain
+				noticeCard({
+					level: "error",
+					title: "L1 记录已落盘，但向量化写入失败",
+					lines: [msg.slice(0, 120), "影响：这批记忆召回不到（向量库缺条目），需 /my-memory:l1:embedding:backfill 补"],
+				});
 			}
 
 				// 2.5 场景池写回（2026-09-15）——**刻意放在所有记录落盘之后**：池写失败时记录
@@ -567,7 +600,15 @@ export function registerL1CommitTool(
 					scenePool.updatedAt = new Date().toISOString();
 					poolWriteFailed = !writeScenePool(profilePath, scenePool);
 					if (poolWriteFailed) {
-						console.warn("[l1_commit] 场景池写入失败（记录已落盘；池条目缺失将在下批重建）");
+						logEvent("l1", "场景池写入失败（记录已落盘；池条目缺失将在下批重建）", profilePath);
+						noticeCard({
+							level: "warning",
+							title: "场景池写入失败",
+							lines: [
+								"记录已落盘且带正确场景名；池条目缺失将在下批重建（幂等）",
+								"影响：本批新场景不会立刻出现在 select-l1-scenes 清单里，可能多计未归类",
+							],
+						});
 					}
 				}
 				const sceneStats: SceneStats | null = sceneResolver ? sceneResolver.stats() : null;
@@ -596,12 +637,14 @@ export function registerL1CommitTool(
 									fs.l1.consecutiveFailures = 0;
 									fs.l1.cooledDown = false;
 									saveFailureState(profilePath, fs);
-									console.warn(
-										`[l1_commit] 纠正超时误判：job done=${doneNow} reclaimed=${reclaimed}，L1 失败计数已重置`,
+									logEvent(
+										"l1",
+										`纠正超时误判：job done=${doneNow} reclaimed=${reclaimed}，L1 失败计数已重置`,
+										profilePath,
 									);
 								}
 							} catch (e) {
-								console.warn(`[l1_commit] 重置失败计数出错: ${e instanceof Error ? e.message : String(e)}`);
+								logEvent("l1", `重置失败计数出错: ${e instanceof Error ? e.message : String(e)}`, profilePath);
 							}
 						}
 						// L2 入队**不在这里**（2026-09-19 移出）：一次 L1 运行可能提交多批，
@@ -610,7 +653,7 @@ export function registerL1CommitTool(
 						// 积压清空且有新记录 → 排一个 L2（见 pipeline/worker.ts 的下一步编排）。
 					}
 				} catch (e) {
-					console.warn(`[l1_commit] pipeline enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
+					logEvent("l1", `pipeline 完成信号/编排失败: ${e instanceof Error ? e.message : String(e)}`, profilePath);
 				}
 
 				// 5. 通知 L3 计数（L2 不再走此回调）
@@ -620,11 +663,17 @@ export function registerL1CommitTool(
 					// 非致命
 				}
 
-				// 6. TUI 通知（向量化状态）
+				// 6. 通知（向量化状态）
+				// 主代理主动记录 → notify 一行（用户关心的动作）；子代理批次 → 只落文件
+				//（2026-09-19 决策：后台每批都弹通知会吵；且子代理进程里 ui.notify 本就是 no-op）。
 				const vInfo = vectorStats
 					? `，向量化写入 +${vectorStats.inserted}/-${vectorStats.deleted} 条`
 					: "";
-				ctx.ui.notify(`L1 commit: ${written} 条记录已提交${vInfo}`, "info");
+				if (isMainAgent) {
+					ctx.ui.notify(`L1 commit: ${written} 条记录已提交${vInfo}`, "info");
+				} else {
+					logEvent("l1", `提交 ${written} 条记录${vInfo}`, profilePath);
+				}
 
 				writeLock.release();
 

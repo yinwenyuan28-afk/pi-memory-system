@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { closePipelineJobsDB, getPipelineJobsDB, type PipelineJob, type PipelineJobType } from "./jobs-db.ts";
+import { drainNoticeCards, logEvent } from "../../util/notice.ts";
 
 export const PIPELINE_POLL_MS = 2000;
 const JOB_WAIT_POLL_MS = 400;
@@ -9,6 +10,8 @@ export type PipelineJobResult = "done" | "skipped" | "failed";
 export interface PipelineExecutors {
 	runL1: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
 	runL2: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
+	/** L3 自 2026-09-19 起也走队列（此前由主进程 `setupL3Persona` 自行拉起，见 §11.11）。 */
+	runL3: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
 	isCooledDown: (type: PipelineJobType) => boolean;
 	/**
 	 * L1 的 L0 增量是否还没啃完（游标之后仍有消息）。
@@ -22,6 +25,7 @@ export interface PipelineExecutors {
 export interface PipelineWorker {
 	enqueueL1: (source: "interval" | "manual") => { id: number; duplicate: boolean } | undefined;
 	enqueueL2: (source: "manual" | "l1_commit") => { id: number; duplicate: boolean } | undefined;
+	enqueueL3: (source: "trigger" | "manual") => { id: number; duplicate: boolean } | undefined;
 	kick: () => void;
 	setCachedCtx: (ctx: ExtensionContext) => void;
 	reset: () => void;
@@ -45,8 +49,8 @@ export function decideNextAfterL1(input: { hasL1Remaining: boolean; hasNewRecord
 }
 
 /**
- * 主进程单飞行 worker：2s 轮询 + kick；同时只跑 1 个 job。
- * L1 占用未结束（running）时不会 claim L2。
+ * 主进程单飞行 worker：2s 轮询 + kick；同时只跑 1 个 job（L1/L2/L3 共用一条队列）。
+ * 任一 job 占用未结束（running）时不会 claim 下一个 —— 这是"同一时刻只有一个 L1-L3 子代理"的执行侧。
  */
 export function setupPipelineWorker(
 	pi: ExtensionAPI,
@@ -63,7 +67,7 @@ export function setupPipelineWorker(
 		try {
 			return fn(getPipelineJobsDB(p));
 		} catch (err) {
-			console.warn(`[memory-system][pipeline] ${err instanceof Error ? err.message : String(err)}`);
+			logEvent("pipeline", err instanceof Error ? err.message : String(err), p);
 			return undefined;
 		}
 	}
@@ -74,6 +78,17 @@ export function setupPipelineWorker(
 
 	function enqueueL2(source: "manual" | "l1_commit") {
 		return withDb((db) => db.enqueue("l2", source));
+	}
+
+	function enqueueL3(source: "trigger" | "manual") {
+		return withDb((db) => db.enqueue("l3", source));
+	}
+
+	/** 三层共用一个派发表（新增层时只改这里）。 */
+	function runJob(executors: PipelineExecutors, ctx: ExtensionContext, job: PipelineJob): Promise<PipelineJobResult> {
+		if (job.type === "l1") return executors.runL1(ctx, job);
+		if (job.type === "l2") return executors.runL2(ctx, job);
+		return executors.runL3(ctx, job);
 	}
 
 	async function drain(): Promise<void> {
@@ -97,8 +112,8 @@ export function setupPipelineWorker(
 
 		busy = true;
 		try {
-			const result = job.type === "l1" ? await executors.runL1(cachedCtx, job) : await executors.runL2(cachedCtx, job);
-			// l1/l2 的真完成信号都来自子代理里的 commit 工具（completeRunningL1/L2）；
+			const result = await runJob(executors, cachedCtx, job);
+			// l1/l2/l3 的真完成信号都来自子代理里的 commit 工具（completeRunningL1/L2/L3）；
 			// 若执行器返回时仍是 running，说明执行器已经尽力（超时/未提交）→ 按它的结论收尾。
 			const after = db.getJob(job.id);
 			if (after?.status === "running") db.complete(job.id, result === "failed" ? "failed" : result);
@@ -116,23 +131,32 @@ export function setupPipelineWorker(
 					if (next) {
 						const q = db.enqueue(next, next === "l1" ? "drain" : "l1_commit");
 						if (!q.duplicate) {
-							console.log(
+							logEvent(
+								"pipeline",
 								next === "l1"
-									? `[memory-system][pipeline] L0 仍有积压 → 继续排 L1（job ${q.id}）`
-									: `[memory-system][pipeline] L1 已排空 → 排 L2（job ${q.id}）`,
+									? `L0 仍有积压 → 继续排 L1（job ${q.id}）`
+									: `L1 已排空 → 排 L2（job ${q.id}）`,
+								getProfilePath(),
 							);
 						}
 					}
 				} catch (err) {
-					console.warn(`[memory-system][pipeline] 下一步编排失败: ${err instanceof Error ? err.message : String(err)}`);
+					logEvent("pipeline", `下一步编排失败: ${err instanceof Error ? err.message : String(err)}`, getProfilePath());
 				}
 			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			console.warn(`[memory-system][pipeline] ${job.type} job ${job.id} failed: ${msg}`);
+			logEvent("pipeline", `${job.type} job ${job.id} failed: ${msg}`, getProfilePath());
 			db.complete(job.id, "failed", msg);
 		} finally {
 			busy = false;
+			// 子代理写的卡片（notices.jsonl）在每个 job 收尾时就地渲染——
+			// 不能等下一轮 agent_settled：那可能隔很久，用户会以为“什么都没发生”。
+			try {
+				drainNoticeCards();
+			} catch (e) {
+				logEvent("notice", `job 收尾 drain 失败: ${e instanceof Error ? e.message : String(e)}`, getProfilePath());
+			}
 		}
 		queueMicrotask(() => {
 			void drain();
@@ -157,15 +181,16 @@ export function setupPipelineWorker(
 		if (!p) return;
 		try {
 			const n = getPipelineJobsDB(p).recoverStuckRunning();
-			if (n > 0) console.warn(`[memory-system][pipeline] recovered ${n} leftover running job(s)`);
+			if (n > 0) logEvent("pipeline", `recovered ${n} leftover running job(s)`, p);
 		} catch (err) {
-			console.warn(`[memory-system][pipeline] recover failed: ${err instanceof Error ? err.message : String(err)}`);
+			logEvent("pipeline", `recover failed: ${err instanceof Error ? err.message : String(err)}`, p);
 		}
 	});
 
 	return {
 		enqueueL1,
 		enqueueL2,
+		enqueueL3,
 		kick,
 		setCachedCtx: (ctx) => {
 			cachedCtx = ctx;

@@ -4,6 +4,12 @@ import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
 import { waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { logEvent, noticeCard } from "../../util/notice.ts";
+
+/** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
+function l2CoolDownMessage(failures: number): string {
+	return `L2 场景组织连续失败 ${failures} 次，已暂停自动提取。用 /my-memory:l2-trigger 手动重试或检查日志。`;
+}
 
 /**
  * 注册 L2 组织调度。
@@ -40,7 +46,7 @@ export function setupL2Organizer(
 		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
 		const staged = readAllRecords(profilePath).filter((r) => r.epoch > watermark);
 		if (staged.length === 0) {
-			console.warn("[memory-system][l2] skip: no new records");
+			logEvent("l2", "skip: no new records", profilePath);
 			return "skipped";
 		}
 		ctx.ui.setStatus("memory", job.source === "manual" ? `Memory ⚙L2 (manual, ${staged.length} records)...` : "Memory ⚙L2...");
@@ -55,7 +61,7 @@ export function setupL2Organizer(
 			const waitP = waitWhileRunning(() => db.getJob(job.id), L2_SUBAGENT_TIMEOUT_MS + 30_000);
 			const spawnP = runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS, abortCtl.signal);
 			void spawnP.catch((err) => {
-				console.warn(`[memory-system][l2] spawn later: ${err instanceof Error ? err.message : String(err)}`);
+				logEvent("l2", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
 			});
 			await Promise.race([spawnP, waitP]);
 			if (db.getJob(job.id)?.status === "running") await waitP;
@@ -78,13 +84,20 @@ export function setupL2Organizer(
 			await spawnP.catch(() => {});
 			const st = loadL2State();
 			st.consecutiveFailures++;
-			console.warn(`[memory-system][l2] organize ended without l2_commit (job ${job.id}, status=${after?.status})`);
+			const l2TimeoutDetail = `job ${job.id}，status=${after?.status}`;
+			logEvent("l2", `organize ended without l2_commit (${l2TimeoutDetail})`, profilePath);
+			noticeCard({
+				level: "warning",
+				title: "L2 场景组织未提交（超时/无 l2_commit）",
+				lines: [
+					`job ${job.id}（来源 ${job.source}）在时限内未调入 l2_commit`,
+					`连续失败 ${st.consecutiveFailures}/${L2_FAILURE_THRESHOLD}`,
+				],
+				detail: `status=${after?.status}\n进程内日志：memoryDB/logs/l2.log`,
+			});
 			if (st.consecutiveFailures >= L2_FAILURE_THRESHOLD && !st.cooledDown) {
 				st.cooledDown = true;
-				ctx.ui.notify(
-					`L2 场景组织连续失败 ${st.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l2-trigger 手动重试或检查日志。`,
-					"error",
-				);
+				ctx.ui.notify(l2CoolDownMessage(st.consecutiveFailures), "error");
 			}
 			saveL2State(st);
 			return "failed";
@@ -92,13 +105,17 @@ export function setupL2Organizer(
 			abortCtl.abort();
 			const st = loadL2State();
 			st.consecutiveFailures++;
-			console.warn(`[memory-system][l2] organize failed: ${err instanceof Error ? err.message : String(err)}`);
+			const l2FailMsg = err instanceof Error ? err.message : String(err);
+			logEvent("l2", `organize failed: ${l2FailMsg}`, profilePath);
+			noticeCard({
+				level: "warning",
+				title: "L2 场景组织派发失败",
+				lines: [`job ${job.id}，连续失败 ${st.consecutiveFailures}/${L2_FAILURE_THRESHOLD}`],
+				detail: l2FailMsg,
+			});
 			if (st.consecutiveFailures >= L2_FAILURE_THRESHOLD && !st.cooledDown) {
 				st.cooledDown = true;
-				ctx.ui.notify(
-					`L2 场景组织连续失败 ${st.consecutiveFailures} 次，已暂停自动提取。用 /my-memory:l2-trigger 手动重试或检查日志。`,
-					"error",
-				);
+				ctx.ui.notify(l2CoolDownMessage(st.consecutiveFailures), "error");
 			}
 			saveL2State(st);
 			return "failed";
@@ -113,7 +130,7 @@ export function setupL2Organizer(
 		}
 		try {
 			if (getPipelineJobsDB(profilePath).hasActive("l2")) {
-				if (ctx) ctx.ui.notify("L2 场景组织已在队列或运行中", "warn");
+				if (ctx) ctx.ui.notify("L2 场景组织已在队列或运行中", "warning");
 				return;
 			}
 		} catch {
@@ -123,7 +140,7 @@ export function setupL2Organizer(
 		const stageCount = readAllRecords(profilePath).filter((r) => r.epoch > watermark).length;
 		if (stageCount === 0) {
 			if (ctx) ctx.ui.notify("L2 无新 records（cursor 已是最新）", "info");
-			console.warn("[memory-system][l2] manual trigger: no new records");
+			logEvent("l2", "manual trigger: no new records", profilePath);
 			return;
 		}
 
@@ -138,7 +155,7 @@ export function setupL2Organizer(
 			return;
 		}
 		if (queued.duplicate) {
-			if (ctx) ctx.ui.notify("L2 场景组织已在队列或运行中", "warn");
+			if (ctx) ctx.ui.notify("L2 场景组织已在队列或运行中", "warning");
 			return;
 		}
 		if (ctx) ctx.ui.notify(`L2 场景组织已入队（${stageCount} records）`, "info");

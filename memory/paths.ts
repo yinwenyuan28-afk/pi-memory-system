@@ -102,20 +102,11 @@ export const L3_CURSOR_FILE = join("l3", "cursor.json");
  * `setupL3Persona` 之前）—— 于是 `onCommitted` 回调不是"通道"，是静默丢弃。
  * 子代理把意图写成这个文件，主进程在 `agent_settled` 读取并消费（读后即删）。
  * 与 `l2/cursor.json` 同款跨进程手法（子代理进程本来就直写游标文件）。
+ *
+ * 注（2026-09-19）：L3 已并入串行执行器（`pipeline/jobs.sqlite` 的 `type='l3'`），
+ * 原先的 `l3/run.lock` 文件锁已退役 —— 队列的 running 状态就是那个跨进程真闸。
  */
 export const L3_PENDING_TRIGGER_FILE = join("l3", "pending-trigger.json");
-/**
- * L3 单飞锁（{memoryDB}/l3/run.lock）。
- *
- * 存在理由：`runPiSubagent` 是 **async:true 的 fire-and-forget** —— 它在派发后**立刻 resolve**，
- * 不等子代理做完（实测子代理耗时 56–118s，而 promise 毫秒级返回）。所以**不能**用那个 promise
- * 的 resolve/reject 当"跑完了"，也不能用它做互斥：2026-09-16 实测因此在一轮里派出了
- * **3 个并发 L3 子代理**，同时 read-modify-write 同一份 USER.md。
- *
- * 锁在**派发前**写入、由"观察到子代理提交"或"超过时限"释放，跨进程/跨 `/reload` 都有效
- * （L1/L2 靠 pipeline 的 jobs.sqlite `hasActive()` 串行，L3 没有队列，故用文件）。
- */
-export const L3_RUN_LOCK_FILE = join("l3", "run.lock");
 
 // ── skill-feed ─────────────────────────────────────────────
 /** skill-feed 原料输出目录（{memoryDB}/skill/feed，按 session 一文件）。 */
@@ -130,6 +121,24 @@ export const VECTORS_DIR = join("search", "vectors");
 export const PIPELINE_JOBS_FILE = join("pipeline", "jobs.sqlite");
 /** 各层失败状态（{memoryDB}/state/failure-state.json）。 */
 export const FAILURE_STATE_FILE = join("state", "failure-state.json");
+
+// ── 运行日志与跨进程通知 ────────────────────────────────────
+/**
+ * 运行日志目录（{memoryDB}/logs）。
+ *
+ * 四通道之一「文件日志」的落点：`logEvent()` 按 scope 追加 `{scope}.log`（单文件 5MB 轮转一代）。
+ * 高频观测（召回观测行、L3 未触发原因、编排决策）只进这里，不打终端也不进聊天区。
+ */
+export const MEMORY_LOGS_DIR = "logs";
+/**
+ * 跨进程通知队列（{memoryDB}/logs/notices.jsonl）。
+ *
+ * 为什么需要：卡片通道用的是 `pi.appendEntry()`，而 L1/L2/L3 子代理跑在**独立进程**
+ * （pi-subagents spawn + `--mode json`），那里的 appendEntry 只写进子代理自己的 session，
+ * 用户永远看不到。所以子代理把卡片载荷落进本文件，主进程用 rename 原子取走后渲染成
+ * 真正的聊天区卡片（见 `util/notice.ts` 的 `noticeCard` / `drainNoticeCards`）。
+ */
+export const NOTICE_QUEUE_FILE = join("logs", "notices.jsonl");
 
 // ── viewer / 备份 ──────────────────────────────────────────
 /** 查看器目录（{memoryDB}/viewers：records-viewer.html / vue-viewer/）。 */

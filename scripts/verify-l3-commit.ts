@@ -29,14 +29,8 @@ import { entryBudget, locateEntry, normalizeEntryText, parseUserFile, serializeU
 import { registerL3EditTool } from "../memory/l3/edit-tool.ts";
 import { registerL3CommitTool } from "../memory/l3/commit-tool.ts";
 import { resetBackupFlag, USER_FILE } from "../memory/l3/user-file.ts";
-import {
-	acquireRunLock,
-	evaluateRunOutcome,
-	readRunLock,
-	releaseRunLock,
-	runLockRemainingMs,
-	runLockState,
-} from "../memory/l3/run-lock.ts";
+import { setupL3Persona } from "../memory/l3/index.ts";
+import { closePipelineJobsDB, getPipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { loadFailureState, saveFailureState } from "../memory/failure-state.ts";
 
 let pass = 0;
@@ -56,6 +50,15 @@ function makeProfile(userMd: string | null): string {
 	const root = mkdtempSync(join(tmpdir(), "l3edit-"));
 	if (userMd !== null) writeFileSync(join(root, USER_FILE), userMd, "utf-8");
 	return root;
+}
+
+/**
+ * 清临时目录。开了 pipeline 队列的用例必须走这里：Windows 下 sqlite 还开着句柄时
+ * `rmSync` 会 EPERM（与 verify-l1-value-check / verify-l2-consolidate 同款）。
+ */
+function dropRoot(root: string): void {
+	closePipelineJobsDB(root);
+	rmSync(root, { recursive: true, force: true });
 }
 
 /** 抓取注册的工具，返回一个可直接调用的薄封装。 */
@@ -289,7 +292,21 @@ async function main(): Promise<void> {
 		);
 		await call("l3_commit", { cursor: "2026-09-17T00:00:00.000Z" });
 		check("再次 commit 把 42 归零", loadL3Cursor(root).memoriesSinceLastPersona === 0);
-		rmSync(root, { recursive: true, force: true });
+
+		// 队列的真完成信号（2026-09-19 并入串行执行器）：只有 l3_commit 能把 running 的 l3 job 标 done。
+		// 派发方（worker）等不到这个时刻 —— runPiSubagent 是 async:true，所以这条断言就是"谁算跑完"的定义。
+		const db = getPipelineJobsDB(root);
+		const q = db.enqueue("l3", "trigger");
+		db.claim(q.id);
+		check("claim 后 l3 job 是 running", db.getJob(q.id)?.status === "running");
+		check("running 期间队列非空闲（跨层单飞的前提）", db.hasAnyRunning() === true);
+		const other = db.enqueue("l1", "interval");
+		db.claim(other.id);
+		await call("l3_commit", { cursor: "2026-09-18T00:00:00.000Z" });
+		check("l3_commit 把 running 的 l3 标 done", db.getJob(q.id)?.status === "done" && !!db.getJob(q.id)?.finishedAt);
+		check("l3_commit 不误标 running 的 l1", db.getJob(other.id)?.status === "running");
+		check("再调一次无匹配行（幂等）", db.completeRunningL3() === 0);
+		dropRoot(root);
 	}
 
 	// ════════════════════════════════════════════════════════════════════════
@@ -363,46 +380,86 @@ async function main(): Promise<void> {
 	}
 
 	// ════════════════════════════════════════════════════════════════════════
-	console.log("\n=== 14. 单飞锁与「运行结局」判定（并发事故的直接回归） ===");
+	console.log("\n=== 14. 触发 → 入队（2026-09-19 并入串行执行器，取代 run.lock 自单飞） ===");
 	{
-		const root = makeProfile(LF_DOC);
-		mkdirSync(join(root, "memoryDB", "l3"), { recursive: true });
-		const T0 = Date.parse("2026-09-16T10:00:00.000Z");
+		// 造场景：P2 冷启动要求"有场景文件且无 persona"
+		const root = makeProfile(null);
+		mkdirSync(join(root, "memoryDB", "l2", "index"), { recursive: true });
+		mkdirSync(join(root, "memoryDB", "l2", "scene-blocks"), { recursive: true });
+		mkdirSync(join(root, "memoryDB", "config"), { recursive: true });
+		writeFileSync(join(root, "memoryDB", "config", "application-propertis.json"), '{"l1":{"mode":"code"}}', "utf-8");
+		writeFileSync(
+			join(root, "memoryDB", "l2", "index", "scene_index.json"),
+			JSON.stringify([
+				{ filename: "s.md", summary: "x", heat: 1, created: "2026-09-01T00:00:00.000Z", updated: "2026-09-10T00:00:00.000Z" },
+			]),
+			"utf-8",
+		);
+		writeFileSync(join(root, "memoryDB", "l2", "scene-blocks", "s.md"), "x", "utf-8");
 
-		check("无锁 → none", runLockState(undefined, T0) === "none");
-		check("无锁 → 剩余 0ms", runLockRemainingMs(undefined, T0) === 0);
+		// 假队列：记下入队请求；active 模拟"队列里已有一条 queued/running 的 l3"（去重语义）
+		const log: Array<{ source: string; duplicate: boolean }> = [];
+		let active = false;
+		const fakePipeline = {
+			enqueueL3: (source: "trigger" | "manual") => {
+				const duplicate = active;
+				log.push({ source, duplicate });
+				if (!duplicate) active = true;
+				return { id: log.length, duplicate };
+			},
+			setCachedCtx: () => {},
+			kick: () => {},
+		};
+		const handlers: Record<string, Array<(e: unknown, ctx: unknown) => void>> = {};
+		const fakePi = {
+			on: (ev: string, fn: (e: unknown, ctx: unknown) => void) => {
+				(handlers[ev] ??= []).push(fn);
+			},
+		};
+		const ctx = { ui: { notify: () => {}, setStatus: () => {} } };
+		const controls = setupL3Persona(fakePi as never, () => root, fakePipeline as never);
+		const settle = () => (handlers.agent_settled ?? []).forEach((f) => f({}, ctx));
 
-		const l1 = acquireRunLock(root, { runId: "run-A", reason: "P4", ttlMs: 60_000, nowMs: T0 });
-		check("空闲时可占锁", !!l1 && l1.runId === "run-A");
-		check("锁已落盘", readRunLock(root)?.runId === "run-A");
-		check("刚占的锁 → running", runLockState(readRunLock(root), T0 + 1) === "running");
-		check("剩余时间 ≈ TTL", runLockRemainingMs(readRunLock(root), T0) === 60_000, `${runLockRemainingMs(readRunLock(root), T0)}ms`);
+		// ① 冷启动门控命中 → 入队（本模块不再 spawn：spawn 归 worker，见 §11.11）
+		check("agent_settled 已注册", (handlers.agent_settled ?? []).length === 1);
+		settle();
+		check("冷启动命中 → 入队 trigger", log.length === 1 && log[0].source === "trigger" && !log[0].duplicate);
+		check("入队时写 lastTriggeredAt（可观测）", loadL3Cursor(root).lastTriggeredAt.length > 0);
 
-		// 核心：锁有效期内**必须拒绝**第二次派发 —— 这正是 3 个并发子代理的成因
-		const denied = acquireRunLock(root, { runId: "run-B", reason: "P4", ttlMs: 60_000, nowMs: T0 + 30_000 });
-		check("锁有效期内第二次派发被拒", denied === undefined);
-		check("锁未被第二次派发覆盖", readRunLock(root)?.runId === "run-A");
+		// ② 队列去重：同一轮触发不会堆第二条（重复改 USER.md 的入口在此堵死）
+		settle();
+		check("队列里已有 L3 时再触发 → duplicate（不堆第二条）", log.length === 2 && log[1].duplicate === true);
 
-		check("过 TTL → stale", runLockState(readRunLock(root), T0 + 60_001) === "stale");
-		const takeover = acquireRunLock(root, { runId: "run-C", reason: "P4", ttlMs: 60_000, nowMs: T0 + 61_000 });
-		check("stale 锁可被抢占", !!takeover && readRunLock(root)?.runId === "run-C");
+		// 模拟"那条 job 跑完了"
+		active = false;
 
-		releaseRunLock(root, "run-A");
-		check("非持有者释放无效", readRunLock(root)?.runId === "run-C");
-		releaseRunLock(root, "run-C");
-		check("持有者可释放", readRunLock(root) === undefined);
+		// ③ 无变化场景 + 已有 persona → 增量跳过：一次 enqueue 都不该发生
+		writeFileSync(join(root, USER_FILE), "现有画像正文", "utf-8");
+		writeFileSync(
+			join(root, "memoryDB", "l3", "cursor.json"),
+			JSON.stringify({ lastPersonaUpdate: "2026-09-20T00:00:00.000Z", memoriesSinceLastPersona: 0, lastTriggeredAt: "", lastCommittedAt: "" }),
+			"utf-8",
+		);
+		settle();
+		check("无变化场景 → 门控不命中，不入队", log.length === 2);
 
-		// 结局判定：**promise 返回 ≠ 完成** —— 唯一可信信号是游标推进
-		const U = (over: Partial<Parameters<typeof evaluateRunOutcome>[0]>) =>
-			evaluateRunOutcome({ committedBefore: "", committedAfter: "", deadlineAt: new Date(T0 + 60_000).toISOString(), nowMs: T0, ...over });
-		check("刚派发、游标未动 → running（不能当失败）", U({}) === "running");
-		check("派发 30s 后游标仍未动 → 仍 running", U({ nowMs: T0 + 30_000 }) === "running");
-		check("游标推进 → success", U({ committedAfter: "2026-09-16T10:00:30.000Z" }) === "success");
-		check("游标推进（哪怕已过时限）→ success 优先", U({ committedAfter: "x", nowMs: T0 + 999_999 }) === "success");
-		check("过时限且未推进 → failure", U({ nowMs: T0 + 60_001 }) === "failure");
-		check("首轮（before 为空）推进也算 success", U({ committedBefore: "", committedAfter: "t1" }) === "success");
-		check("时限格式非法 → 不误判 failure", U({ deadlineAt: "不是时间", nowMs: T0 + 999_999 }) === "running");
-		rmSync(root, { recursive: true, force: true });
+		// ④ 熔断期间台账式评估不入队（否则每轮 settle 都白排一条）
+		// 注意：saveFailureState 不建目录、写失败静默降级 —— 不先建 state/ 的话这组会因为
+		// "状态根本没落盘"而通过，等于没测（第一次就是这么假绿的）。
+		mkdirSync(join(root, "memoryDB", "state"), { recursive: true });
+		saveFailureState(root, {
+			...loadFailureState(root),
+			l3: { consecutiveFailures: L3_FAILURE_THRESHOLD, cooledDown: true },
+		});
+		check("熔断状态已落盘（前置条件）", loadFailureState(root).l3.cooledDown === true);
+		settle();
+		check("熔断中 → 自动触发不入队", log.length === 2);
+
+		// ⑤ 手动触发：越过熔断与门控，但**仍走队列**（不绕过串行执行器直接 spawn）
+		controls.triggerManual(ctx as never);
+		check("手动触发 → 入队 manual", log.length === 3 && log[2].source === "manual" && !log[2].duplicate);
+		check("手动触发复位熔断", loadFailureState(root).l3.cooledDown === false);
+		dropRoot(root);
 	}
 }
 

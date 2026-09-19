@@ -3,6 +3,7 @@ import type { MemoryManager } from "../core/manager.ts";
 import { USER_CHAR_LIMIT, loadL3Cursor, saveL3Cursor } from "./config.ts";
 import { entryBudget, parseUserFile } from "./entries.ts";
 import { readUserFile } from "./user-file.ts";
+import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 export interface L3CommitResult {
@@ -70,6 +71,13 @@ export function registerL3CommitTool(
 				});
 
 				getManager()?.refreshUserSnapshot();
+				// 队列的**真完成信号**（2026-09-19 并入串行执行器）：只有子代理自己提交了才算这一轮跑成。
+				// 子代理进程里做不了别的事 —— `runPiSubagent` 是 async:true，派发方等不到这个时刻。
+				try {
+					getPipelineJobsDB(profilePath).completeRunningL3();
+				} catch {
+					// 队列不可用不影响提交本身
+				}
 				try {
 					onCommitted?.();
 				} catch {

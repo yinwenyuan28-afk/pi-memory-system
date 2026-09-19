@@ -17,7 +17,12 @@
 
 import { loadL1RecordById } from "./embedding/record-loader.ts";
 import { loadRecallConfig } from "./recall-config.ts";
+// 静态导入（不得改回执行期 await import()）：jiti(moduleCache:false) 下并发首次调用会拿到
+// 「求值未完成」的命名空间 → getter 读到未初始化的模块级绑定（2026-09-19 实测复现）
+import { getEmbeddingService } from "./embedding/service.ts";
+import { getVectorStore } from "./vector-store/store.ts";
 import type { HitSource } from "../stats/l1-hit-stats-db.ts";
+import { logEvent } from "../../util/notice.ts";
 
 /** L1 record 召回候选 */
 export interface L1RecordCandidate {
@@ -96,8 +101,7 @@ export async function recallL1Records(
   const shadowMode = cfg.shadowMode;
 
   try {
-    const { getEmbeddingService } = await import("./embedding/service.ts");
-    const { getVectorStore } = await import("./vector-store/store.ts");
+    // 两个单例由文件头部静态导入（见那里的注释）；此处保持静态引用，避免半成品命名空间竞态
 
     // 已被取消（超时/被覆盖/profile 切换）→ 直接空结果，不做任何网络调用
     if (options.signal?.aborted) return result;
@@ -142,19 +146,21 @@ export async function recallL1Records(
       }
 
       // 观测日志：调 minScore 的唯一依据（filtered 多 → 阈值偏低；0 且全进 → 可下调）
+      // 2026-09-19 改道：原 console.log 在 interactive 下绕开 TUI 渲染器直接写终端
+      //（实测在输入框上方留野行），且不落盘、事后无法查。现只落文件。
       if (hits.length > 0) {
-        console.log(
-          `[l1-recall] recall=${hits.length} filtered=${filtered}` +
+        logEvent(
+          "recall",
+          `recall=${hits.length} filtered=${filtered}` +
             ` kept=${result.l1Records.length} minScore=${minScore}` +
             (shadowMode ? " (shadow)" : "") +
-            ` q="${queryText.slice(0, 40)}${queryText.length > 40 ? "…" : ""}"`
+            ` q="${queryText.slice(0, 40)}${queryText.length > 40 ? "…" : ""}"`,
+          profilePath,
         );
       }
     }
   } catch (e) {
-    console.warn(
-      `[recall-l1Records] 召回失败: ${e instanceof Error ? e.message : String(e)}`
-    );
+    logEvent("recall", `召回失败: ${e instanceof Error ? e.message : String(e)}`, profilePath);
   }
 
   // 命中计数：agent 面向召回 → 每条返回的 record 命中 +1
@@ -179,9 +185,7 @@ export async function recallL1Records(
       }
       if (ids.length > 0) getL1HitStatsDB(profilePath).recordHits(ids, options.source);
     } catch (e) {
-      console.warn(
-        `[recall-l1Records] 命中计数失败（不影响召回）: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      logEvent("recall", `命中计数失败（不影响召回）: ${e instanceof Error ? e.message : String(e)}`, profilePath);
     }
   }
 

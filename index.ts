@@ -21,8 +21,8 @@ import { countNewRecords, loadL2Cursor } from "./memory/l2/config.ts";
 import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
-import { setupPipelineWorker, type PipelineExecutors, type PipelineWorker } from "./memory/pipeline/worker.ts";
-import { getPipelineJobsDB } from "./memory/pipeline/jobs-db.ts";
+import { setupPipelineWorker, type PipelineExecutors, type PipelineJobResult, type PipelineWorker } from "./memory/pipeline/worker.ts";
+import { getPipelineJobsDB, type PipelineJob } from "./memory/pipeline/jobs-db.ts";
 import { registerL2CommitTool } from "./memory/l2/commit-tool.ts";
 import { setupL3Persona } from "./memory/l3/index.ts";
 import { registerL3CommitTool } from "./memory/l3/commit-tool.ts";
@@ -36,6 +36,16 @@ import { createRecallScheduler } from "./memory/search/recall-scheduler.ts";
 import { handleSkillManageTool } from "./skill/skill-tool.ts";
 import { handleSkillViewTool } from "./skill/skill-view-tool.ts";
 import { render as renderPrompt, checkPromptAssets } from "./prompts/registry.ts";
+import {
+  drainNoticeCards,
+  logEvent,
+  notice,
+  noticeCard,
+  noticeReport,
+  initNotice,
+  resetNoticeDedup,
+  setNoticeProfileResolver,
+} from "./util/notice.ts";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -135,7 +145,7 @@ export default function (pi: ExtensionAPI) {
       loadRecallConfig(manager?.getProfileManager().getActiveProfile()?.path ?? "");
     recallScheduler = createRecallScheduler<RecallPayload, L1RecordCandidate[]>({
       maxHoldMs: cfgForScheduler().maxHoldMs,
-      log: (m) => console.warn(`[memory-system]${m}`),
+      log: (m) => logEvent("recall", `[recall-scheduler]${m}`),
       run: async (payload, signal) => {
         const { recallL1Records } = await import("./memory/search/hybrid-recall.ts");
         const r = await recallL1Records(payload.queryText, payload.profilePath, {
@@ -179,12 +189,15 @@ export default function (pi: ExtensionAPI) {
   let pipelineWorker: PipelineWorker | undefined;
   let pipelineExecutors: PipelineExecutors | undefined;
 
-  // L3 persona 调度器（单次注册）：**仅主进程**，由 agent_settled 台账式评估触发
+  // L3 persona 调度器（单次注册）：由 pipeline 队列串行消费（`type='l3'`）——
+  // 本模块只做五级门控 + 入队，spawn 在 worker 里（2026-09-19 并入，取代 l3/run.lock 自单飞）。
   let l3Initialized = false;
   let l3Controls: {
     onL1Committed: (recordCount: number) => void;
     triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
     reset: () => void;
+    executeJob: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
+    isCooledDown: () => boolean;
   } | undefined;
 
   // ── Tool schema normalization（修复严格 OpenAI 兼容 provider 报错）────────────
@@ -281,6 +294,12 @@ export default function (pi: ExtensionAPI) {
     return _origRegisterTool(tool);
   };
 
+  // 通知模块的 profile 解析器：在**模块顶层**注入（不能放到 session_start 之后——
+  // 子代理进程在 session_start 里早退，那样子代理的 noticeCard 会因拿不到 profile 而丢通知）。
+  setNoticeProfileResolver(() => manager?.getProfileManager().getActiveProfile()?.path);
+  // 卡片渲染器（聊天区卡片 = pi.appendEntry + entry renderer；落 session、不进 LLM 上下文）
+  initNotice(pi);
+
   // l1_commit 工具：l1-extractor 子代理的写盘桥接（工具调用不受 Plan Enforcer 拦截）。
   // L2 由 commit 进程直接写入 pipeline/jobs.sqlite；此处回调只给 L3 计数。
   registerL1CommitTool(
@@ -345,10 +364,20 @@ export default function (pi: ExtensionAPI) {
     if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
     // 提示词资产自检（PROMPT_REGISTRY）：md 被误删/改名/移走属仓库级损坏，
-    // 离线逐字节校验见 scripts/verify-prompt-contracts.mjs；此处为每次启动的廉价兜底（console.warn）。
-    for (const problem of checkPromptAssets()) {
-      console.warn(`[memory-system][prompts] ${problem}`);
+    // 离线逐字节校验见 scripts/verify-prompt-contracts.mjs；此处为每次启动的廉价兜底。
+    // 2026-09-19 改道：从 console.warn（用户看不见）改为**聊天区卡片**——资产缺失属于“用户需要知道”的仓库级问题。
+    const promptProblems = checkPromptAssets();
+    if (promptProblems.length > 0) {
+      noticeCard({
+        level: "warning",
+        title: `提示词模板缺失/损坏（${promptProblems.length} 项）`,
+        lines: promptProblems.slice(0, 6),
+        detail: promptProblems.join("\n"),
+      });
     }
+
+    // 新会话：重置一次性告警去重（同一会话只报一次的那些，如价值校验 fail-open）
+    resetNoticeDedup();
 
     skillManager = new SkillManager(profile.path, [
       resolve(agentDir, "skills"),
@@ -383,9 +412,7 @@ export default function (pi: ExtensionAPI) {
             await getVectorStore(profile.path);
             await getEmbeddingService(profile.path);
           } catch (e) {
-            console.warn(
-              `[memory-system][prewarm] 预热失败（不影响后续懒加载）: ${e instanceof Error ? e.message : String(e)}`,
-            );
+            logEvent("store", `预热失败（不影响后续懒加载）: ${e instanceof Error ? e.message : String(e)}`, profile.path);
           }
         })();
       }
@@ -401,9 +428,9 @@ export default function (pi: ExtensionAPI) {
     if (profile) {
       try {
         const n = getPipelineJobsDB(profile.path).recoverStuckRunning();
-        if (n > 0) console.warn(`[memory-system][pipeline] recovered ${n} leftover running job(s)`);
+        if (n > 0) logEvent("pipeline", `recovered ${n} leftover running job(s)`, profile.path);
       } catch (err) {
-        console.warn(`[memory-system][pipeline] recover failed: ${err instanceof Error ? err.message : String(err)}`);
+        logEvent("pipeline", `recover failed: ${err instanceof Error ? err.message : String(err)}`, profile.path);
       }
     }
 
@@ -418,11 +445,23 @@ export default function (pi: ExtensionAPI) {
       l1Initialized = true;
     }
 
-    if (l1Controls && l2Controls) {
+    // L3 persona 调度器（单次注册）：只做触发判定 + 入队，spawn 归串行执行器（2026-09-19 并入）
+    if (!l3Initialized && pipelineWorker) {
+      l3Controls = setupL3Persona(
+        pi,
+        () => manager?.getProfileManager().getActiveProfile()?.path,
+        pipelineWorker,
+      );
+      l3Initialized = true;
+    }
+
+    if (l1Controls && l2Controls && l3Controls) {
       pipelineExecutors = {
         runL1: (ctx, job) => l1Controls!.executeJob(ctx, job),
         runL2: (ctx, job) => l2Controls!.executeJob(ctx, job),
-        isCooledDown: (type) => (type === "l1" ? l1Controls!.isCooledDown() : l2Controls!.isCooledDown()),
+        runL3: (ctx, job) => l3Controls!.executeJob(ctx, job),
+        isCooledDown: (type) =>
+          type === "l1" ? l1Controls!.isCooledDown() : type === "l2" ? l2Controls!.isCooledDown() : l3Controls!.isCooledDown(),
         // L1 收尾后由 worker 决定下一步（2026-09-19）：还有 L0 积压就继续排 L1，
         // 排空了且有新记录才排 L2 —— 对应"多个 L1 串行跑完才轮到 L2"。
         hasL1Remaining: () => {
@@ -450,12 +489,6 @@ export default function (pi: ExtensionAPI) {
     }
     pipelineWorker?.setCachedCtx(ctx);
     pipelineWorker?.kick();
-
-    // 初始化 L3 persona 调度器（单次注册）：L2 提交后评估触发
-    if (!l3Initialized) {
-      l3Controls = setupL3Persona(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
-      l3Initialized = true;
-    }
 
     // [DISABLED] 初始化工作流保存系统已禁用（保留代码，恢复时取消注释）
     // workflowController.init(ctx);
@@ -503,22 +536,32 @@ export default function (pi: ExtensionAPI) {
     // 根因验证：2026-08-18 l0/cursor.json 含大量 /\run-0\session.jsonl/ entry，
     // 对应子代理 session 文件（id 与主会话不同，modelId=mimo-v2.5）。
     if (process.env.PI_SUBAGENT_CHILD === "1") return;
+
+    // 跨进程通知漏斗：子代理进程里的 noticeCard 落盘在 logs/notices.jsonl，
+    // 在这里（每 turn 收尾）取出来渲染成真正的聊天区卡片。
+    try {
+      const drained = drainNoticeCards();
+      if (drained > 0) logEvent("notice", `drained ${drained} card(s) from subagent`);
+    } catch (e) {
+      logEvent("notice", `drain failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     try {
       const sessionFile = ctx.sessionManager.getSessionFile();
       const profile = manager?.getProfileManager().getActiveProfile();
       if (sessionFile && profile) {
         const result = archiveSessionIncrement(sessionFile, profile.path, ctx.cwd);
         if (result.error) {
-          console.warn(`[memory-system][l0] ${result.error}`);
+          logEvent("l0", result.error, profile.path);
         }
         // skill-feed 原料清洗（5-role 高保真，喂 skill-reviewer；与 L0 双通道并存）
         const feedResult = archiveSkillFeedIncrement(sessionFile, profile.path, ctx.cwd);
         if (feedResult.error) {
-          console.warn(`[memory-system][skill-feed] ${feedResult.error}`);
+          logEvent("skill", feedResult.error, profile.path);
         }
       }
     } catch (e) {
-      console.warn(`[memory-system][l0] archive failed: ${e instanceof Error ? e.message : String(e)}`);
+      logEvent("l0", `archive failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   });
 
@@ -575,8 +618,9 @@ export default function (pi: ExtensionAPI) {
           .slice(0, 200);
         if (recentUser) {
           queryText = `${event.prompt}\n${recentUser}`;
-          console.log(
-            `[memory-system][l1-query] contextExpansion 触发: q="${event.prompt.slice(0, 40)}…" + ${recentUser.length}字历史`
+          logEvent(
+            "recall",
+            `contextExpansion 触发: q="${event.prompt.slice(0, 40)}…" + ${recentUser.length}字历史`,
           );
         }
       }
@@ -649,12 +693,12 @@ export default function (pi: ExtensionAPI) {
           void request
             .then(applyResult)
             .catch((e) =>
-              console.warn(`[memory-system][l1-recall] ${e instanceof Error ? e.message : String(e)}`),
+              logEvent("recall", `异步召回失败: ${e instanceof Error ? e.message : String(e)}`),
             );
         }
       } catch (e) {
         // 召回/配置失败静默降级（不阻塞主流程，不注入）
-        console.warn(`[memory-system][l1-recall] ${e instanceof Error ? e.message : String(e)}`);
+        logEvent("recall", `自动注入召回失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
@@ -738,9 +782,7 @@ export default function (pi: ExtensionAPI) {
             void import("./memory/stats/l1-hit-stats-db.ts")
               .then(({ getL1HitStatsDB }) => getL1HitStatsDB(profilePath).recordHits(fresh, "inject"))
               .catch((e) =>
-                console.warn(
-                  `[memory-system][l1-recall] 命中计数失败（不影响注入）: ${e instanceof Error ? e.message : String(e)}`,
-                ),
+                logEvent("recall", `命中计数失败（不影响注入）: ${e instanceof Error ? e.message : String(e)}`),
               );
           }
         }
@@ -1072,7 +1114,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const { getVectorizationStatus, formatStatus } = await import("./memory/search/embedding/backfill.ts");
         const status = await getVectorizationStatus(profile.path);
-        ctx.ui.notify(formatStatus(status, limit), "info");
+        noticeReport("L1 向量化状态", formatStatus(status, limit), { level: "info" });
       } catch (e) {
         ctx.ui.notify(`查询失败: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
@@ -1174,8 +1216,10 @@ export default function (pi: ExtensionAPI) {
         if (pv !== undefined) params.priority = Number(pv);
         const text = await runFix(params, profilePath, { force });
         const parsed = JSON.parse(text);
-        ctx.ui.notify(parsed.success ? "L1 修正成功" : `L1 修正被拒：${parsed.error}`, parsed.success ? "info" : "error");
-        ctx.console?.log?.(text);
+        notice(ctx, parsed.success ? "info" : "error", parsed.success ? "L1 修正成功" : `L1 修正被拒：${parsed.error}`);
+        // 完整结果进卡片：以前这里是 `ctx.console?.log?.()`——pi 的 ExtensionContext 没有 console
+        // 字段，可选链静默跳过，于是命令等于没输出（2026-09-19 核实）。
+        noticeReport("L1 修正结果", text, { level: parsed.success ? "info" : "warning", maxSummaryLines: 8 });
         return text;
       } catch (err) {
         ctx.ui.notify(`l1:fix 异常：${err instanceof Error ? err.message : String(err)}`, "error");
@@ -1193,7 +1237,8 @@ export default function (pi: ExtensionAPI) {
         const { fileURLToPath } = await import("node:url");
         const toolDir = join(dirname(fileURLToPath(import.meta.url)), "scripts", "l1-admin");
         const stdout = execFileSync(process.execPath, ["health.mjs", "--profile", profilePath], { cwd: toolDir, encoding: "utf8", timeout: 60000 });
-        ctx.console?.log?.(stdout);
+        // 体检报告较长：进聊天区卡片（以前用 ctx.console?.log?.() = 静默 no-op）
+        noticeReport("L1 库体检", stdout, { level: "info" });
         return stdout;
       } catch (err) {
         ctx.ui.notify(`l1:health 异常：${err instanceof Error ? err.message : String(err)}`, "error");
@@ -1218,7 +1263,7 @@ export default function (pi: ExtensionAPI) {
           const ct=(r.content||"").slice(0,60).replace(/\n/g," ");
           lines.push(`[${String(i+1).padStart(2)}] q=${q} eff=${eff} hits=${hi} decay=${dc} days=${dy} tag=${tag} pri=${pri} id=${r.id} | ${ct}`);
         });
-        ctx.ui.notify(lines.join("\n"), "info");
+        noticeReport("L1 质量排行", lines.join("\n"), { level: "info", maxSummaryLines: 14 });
       } catch(e){ ctx.ui.notify(`quality 失败: ${e instanceof Error?e.message:String(e)}`, "error"); }
     },
   });
@@ -1244,7 +1289,7 @@ export default function (pi: ExtensionAPI) {
         lines.push("", `淘汰候选 ${s.prune.length} 条（已排除 priority>=${s.protectedPriority}(P75动态) / work_method / 有效命中过的记忆；quality 低只代表热度低，不代表可删）`);
         s.prune.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} type=${r.type} id=${r.id} | ${r.content.slice(0,50)}`));
         lines.push("", `最早记录距今 ${s.ranked.length? Math.max(...s.ranked.map(r=>r.days)).toFixed(1):0} ${unit}，${s.total>0 && s.cold.length===0 ? `冷标签需等记录>14${unit}后可观测` : ""}`);
-        ctx.ui.notify(lines.join("\n"), "info");
+        noticeReport("L1 质量汇总", lines.join("\n"), { level: "info", maxSummaryLines: 14 });
       } catch(e){ ctx.ui.notify(`stats 失败: ${e instanceof Error?e.message:String(e)}`, "error"); }
     },
   });
