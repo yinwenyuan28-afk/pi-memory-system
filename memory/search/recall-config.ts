@@ -36,7 +36,8 @@ export type InjectMode = "blocking" | "async";
 
 /** 召回闸门配置结构（application-propertis.json 的 recall 节）。 */
 export interface RecallConfig {
-  /** 相似度下限（cosine score = 1 - distance）。低于此值的候选不注入。0 = 不过滤。 */
+  /** 相似度下限（**真余弦相似度**，范围 -1~1）。低于此值的候选不注入。0 = 不过滤。
+   *  2026-09-19 更正：此前误写为 `1 - distance`，而 vec0 默认返回 L2 距离，导致阈值实际被抬高到 cos≈0.68。 */
   minScore: number;
   /**
    * shadow mode：true = 只统计「会被阈值滤掉多少」并打日志，不真剔除。

@@ -50,10 +50,32 @@ function l2Normalize(vec: Vector): Vector {
   return vec.map((v) => v / norm);
 }
 
-/** 全局单例（进程级） */
-let serviceInstance: EmbeddingService | null = null;
-/** 进行中的初始化 promise（并发去重，理由同 vector-store/store.ts） */
-let serviceInitPromise: Promise<EmbeddingService> | null = null;
+/**
+ * 进程级单例 holder —— 存在 globalThis 上，而不是模块级 `let`。
+ *
+ * ⚠️ 2026-09-19 修复（子代理 embed_and_search 报 TDZ 的根因，已实测复现）：
+ * 模块级 `let` 在模块体执行到那一行之前处于 TDZ，而 `export function` 是 hoisted、一开始就能调用。
+ * pi 用 jiti 加载扩展且 `moduleCache:false`，l1-extractor 同一回合并发发出多个
+ * embed_and_search 时：先到的调用者触发模块求值，其余调用者在求值未完成时就拿到命名空间
+ * 并调用 getter → 读未初始化的 `let` → `Cannot access 'serviceInstance' before initialization`。
+ * 主代理有 session_start 预热；子代理 `PI_SUBAGENT_CHILD=1` 在预热前就 return，所以必踩。
+ *
+ * 与文件顶部「子代理进程独立实例化，不通过 globalThis 桥接传递配置」不矛盾：那句指
+ * 父子**进程**间不共享（跨进程本就做不到）；globalThis 是进程内的，各子代理进程仍各自初始化。
+ */
+interface EmbeddingServiceHolder {
+  instance: EmbeddingService | null;
+  initPromise: Promise<EmbeddingService> | null;
+}
+
+/** 取进程级 holder；只碰 globalThis（语言全局，恒可用），不引用任何模块级绑定 → 不会 TDZ */
+function getEmbeddingServiceHolder(): EmbeddingServiceHolder {
+  const g = globalThis as unknown as { __piMemorySystem_embeddingService?: EmbeddingServiceHolder };
+  if (!g.__piMemorySystem_embeddingService) {
+    g.__piMemorySystem_embeddingService = { instance: null, initPromise: null };
+  }
+  return g.__piMemorySystem_embeddingService;
+}
 
 /**
  * 获取 EmbeddingService 实例（懒加载）
@@ -62,15 +84,15 @@ let serviceInitPromise: Promise<EmbeddingService> | null = null;
  * 子代理进程：进程启动后首次 embed 调用时初始化
  * 主代理进程：before_agent_start 首次调用时初始化
  *
- * ⚠️ 并发保护（2026-09-15 修复）：只判 `if (serviceInstance)` 不够，原因同
- * vector-store/store.ts —— 首参初始化是异步的，并发调用会重复初始化。
- * 改缓存进行中的 promise；失败时清空以便重试。
+ * 历史：2026-09-15 曾用「缓存 in-flight promise」防并发重复初始化，但缓存本身也是模块级
+ * `let`，在同一个竞态窗口里同样不可用，故未治到病（详见上方 holder 注释）。
  *
  * @param profilePath profile 根目录（子代理进程从环境变量或参数传入）
  */
 export async function getEmbeddingService(profilePath?: string): Promise<EmbeddingService> {
-  if (serviceInstance) return serviceInstance;
-  if (serviceInitPromise) return serviceInitPromise;
+  const holder = getEmbeddingServiceHolder();
+  if (holder.instance) return holder.instance;
+  if (holder.initPromise) return holder.initPromise;
 
   const config = loadEmbeddingConfig(profilePath ?? process.env.PI_PROFILE_PATH ?? "");
   if (!config) {
@@ -81,12 +103,13 @@ export async function getEmbeddingService(profilePath?: string): Promise<Embeddi
     );
   }
 
-  serviceInitPromise = createRemoteEmbeddingService(config);
+  holder.initPromise = createRemoteEmbeddingService(config);
   try {
-    serviceInstance = await serviceInitPromise;
-    return serviceInstance;
+    holder.instance = await holder.initPromise;
+    return holder.instance;
   } catch (e) {
-    serviceInitPromise = null;
+    // 初始化失败：清空 in-flight 缓存，允许后续调用重试（不缓存失败态）
+    holder.initPromise = null;
     throw e;
   }
 }

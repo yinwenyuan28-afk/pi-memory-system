@@ -255,19 +255,20 @@ export async function rebuildAllVectors(
     };
   }
 
-  // 2. 加载当前已向量化的 record id 列表，批量 delete 清空
-  const existingIds = await vecStore.getAllVectorizedRecordIds();
-  if (existingIds.length > 0) {
-    try {
-      await vecStore.deleteBatch(existingIds);
-    } catch (e) {
-      errors.push(`清理旧向量失败: ${e instanceof Error ? e.message : String(e)}`);
-    }
+  // 2. 清空向量 + 映射表（同一事务）
+  // ⚠️ 2026-09-19 修复：旧实现只删「映射表 ∩ 向量表」里能对上的 id（getAllVectorizedRecordIds
+  // 返回交集）；当两表已经错位时交集为空 → 等于什么都没清 → 重建后依旧是错位状态
+  // （本次「重建后召回仍为空」即此因）。clearAll 不依赖映射是否完好。
+  let cleared = 0;
+  try {
+    cleared = await vecStore.clearAll();
+  } catch (e) {
+    errors.push(`清理旧向量失败: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   onProgress?.({
     total: records.length,
-    cleared: existingIds.length,
+    cleared,
     embedded: 0,
     currentBatchStart: 0,
   });
@@ -295,15 +296,27 @@ export async function rebuildAllVectors(
 
     onProgress?.({
       total: records.length,
-      cleared: existingIds.length,
+      cleared,
       embedded,
       currentBatchStart: i,
     });
   }
 
+  // 4. 重建后一致性自检（拒绝静默失效）：有孤儿行/不可对齐就写进 errors，不伪装成成功
+  try {
+    const c = await vecStore.checkConsistency();
+    if (c.indexRows !== c.vectorRows || c.aligned !== c.vectorRows) {
+      errors.push(
+        `重建后一致性异常：映射表 ${c.indexRows} 行 / 向量表 ${c.vectorRows} 行 / 可对齐 ${c.aligned} 行`
+      );
+    }
+  } catch (e) {
+    errors.push(`重建后一致性自检失败: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   return {
     total: records.length,
-    cleared: existingIds.length,
+    cleared,
     embedded,
     failed,
     durationMs: Date.now() - startTime,
