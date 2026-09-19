@@ -312,7 +312,13 @@ export function registerL1CommitTool(
 						// 没有 require 条件的包（AGENTS.md「环境」），静态导入会牵连所有间接引用本模块的脚本
 						const { resolveConfiguredModel } = await import("../../config/model-config.ts");
 						const outcome = await runValueCheck({
-							model: resolveConfiguredModel(profilePath, (ctx as { model?: unknown } | undefined)?.model),
+							model: resolveConfiguredModel(
+								profilePath,
+								(ctx as { model?: unknown } | undefined)?.model,
+								// 必须把宿主 registry 传进去：models.json 里的自定义 provider（command / opencode-go）
+								// 只能靠它解析（pi-ai 内置目录里没有），否则会静默回退到会话模型
+								(ctx as { modelRegistry?: unknown } | undefined)?.modelRegistry,
+							),
 							checklist,
 							candidates,
 							ctx,

@@ -22,7 +22,9 @@
  *
  * ```ts
  * const text = await runAgentLoopOnce(
- *   resolveConfiguredModel(profilePath, ctx.model),   // 或直接 ctx.model
+ *   resolveConfiguredModel(profilePath, ctx.model, ctx.modelRegistry),  // 或直接 ctx.model
+ *   // ↑ 第三个参数（宿主 registry）不能省：models.json 里的自定义 provider（本机 command /
+ *   //   opencode-go）只有它能解析，pi-ai 内置目录里没有；省了就会静默回退到会话模型。
  *   "你是记忆提取器。只输出 JSON，不要解释。",
  *   "把下面这段对话拆成原子记忆：\n" + transcript,
  *   {

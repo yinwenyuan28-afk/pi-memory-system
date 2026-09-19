@@ -10,9 +10,9 @@
  *   - 只做「超时 + content 提取 + 错误兜底」，返回纯文本或 null；
  *   - JSON 解析、业务语义（关键词数组 / keep keys / 布尔判定）留在各调用点。
  *
- * 模型来源：由调用方传 `resolveConfiguredModel(profilePath, ctx.model)` 的结果
- * （config/model-config.ts，读 memory-system-model.json 的 type=llm 条目），
- * 或 ctx.model 本身；传 null/undefined 直接返回 null。
+ * 模型来源：由调用方传 `resolveConfiguredModel(profilePath, ctx.model, ctx.modelRegistry)` 的结果
+ * （config/model-config.ts，读统一配置中心的 `model.llm` 条目；第三个参数是宿主 registry，
+ *   少了它解析不了 models.json 里的自定义 provider），或 ctx.model 本身；传 null/undefined 直接返回 null。
  */
 
 import { completeSimple } from "@earendil-works/pi-ai/compat";
