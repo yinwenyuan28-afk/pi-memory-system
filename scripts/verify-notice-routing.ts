@@ -31,6 +31,7 @@ import {
 } from "../util/notice.ts";
 import { setupL3Persona } from "../memory/l3/index.ts";
 import { closePipelineJobsDB, getPipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
+import { getVectorStore } from "../memory/search/vector-store/store.ts";
 
 let pass = 0;
 let fail = 0;
@@ -403,6 +404,51 @@ const l3Group = (async () => {
 	closePipelineJobsDB(l3Root);
 	rmSync(l3Root, { recursive: true, force: true });
 	setNoticeProfileResolver(() => profile);
+
+	// ══════════════════════════════════════════════════════════════════════
+	console.log("\n=== 10. 向量库初始化路径冒烟（离线真库；防“变量越界”类静默破坏） ===");
+	// ══════════════════════════════════════════════════════════════════════
+	// 本组是为一个真实事故加的：把 store.ts 的 console.* 改道时，一致性自检分支里写错了变量名
+	// （用了只存在于 getVectorStore 作用域的 baseProfilePath）→ 初始化成功路径抛 ReferenceError
+	// → 子代理的 embed_and_search 全部 fallback（向量去重路不可用）。此类错误**没有 tsc 门禁**
+	// （仓库无构建），只有真跑一次初始化才能暴露。
+	{
+		const storeRoot = mkdtempSync(join(tmpdir(), "notice-store-"));
+		mkdirSync(join(storeRoot, "memoryDB", "config"), { recursive: true });
+		writeFileSync(join(storeRoot, "memoryDB", "config", "application-propertis.json"), "{}", "utf-8");
+		let store: { count(): Promise<number>; close(): void } | undefined;
+		let initError: unknown;
+		try {
+			store = (await getVectorStore(storeRoot)) as unknown as { count(): Promise<number>; close(): void };
+		} catch (e) {
+			initError = e;
+		}
+		check("getVectorStore 初始化不抛错（空库走一致性自检通过分支）", !initError, String(initError));
+		if (store) {
+			let n = -1;
+			try {
+				n = await store.count();
+			} catch (e) {
+				initError = e;
+			}
+			check("初始化后可查 count（空库 = 0）", n === 0, `n=${n} err=${String(initError ?? "")}`);
+		}
+		const storeLog = join(storeRoot, "memoryDB", "logs", "store.log");
+		check(
+			"初始化完成日志落到 store.log（走通 logEvent 分支）",
+			existsSync(storeLog) && readFileSync(storeLog, "utf8").includes("初始化完成"),
+		);
+		store?.close();
+		// 单例存在 globalThis 上：不释放的话临时目录会被 sqlite 文件句柄锁住（Windows EPERM）
+		delete (globalThis as unknown as { __piMemorySystem_vectorStore?: unknown }).__piMemorySystem_vectorStore;
+		try {
+			rmSync(storeRoot, { recursive: true, force: true });
+		} catch {
+			// 初始化失败时 sqlite 句柄已泄漏在进程内（getVectorStore 只清 initPromise，不关库），
+			// Windows 下临时目录删不掉是预期的——不得因此把“一次 FAIL”渲染成“脚本崩溃”。
+			console.log("  （临时目录未能删除：初始化失败时句柄已泄漏，重启进程自清）");
+		}
+	}
 })();
 
 // ══════════════════════════════════════════════════════════════

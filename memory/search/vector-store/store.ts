@@ -183,7 +183,7 @@ async function createSqliteVecStore(vectorsDir: string, profilePath: string): Pr
     // 一致性异常 = 「召回恒空」的静默失效：必须让用户看到（会话级去重，不重复刷）
     const detail =
       `映射表 ${indexCount.n} 行 / 向量表 ${vectorCount.n} 行 / 可对齐 ${alignedCount.n} 行`;
-    logEvent("store", `⚠️ 一致性异常：${detail} —— 召回会失败（恒空），请执行 /my-memory:l1:embedding:rebuild`, baseProfilePath);
+    logEvent("store", `⚠️ 一致性异常：${detail} —— 召回会失败（恒空），请执行 /my-memory:l1:embedding:rebuild`, profilePath);
     noticeCard({
       level: "error",
       title: "向量库一致性异常（召回会恒空）",
@@ -191,7 +191,7 @@ async function createSqliteVecStore(vectorsDir: string, profilePath: string): Pr
       dedupKey: "vector-store-integrity",
     });
   } else {
-    logEvent("store", `sqlite-vec 初始化完成，${vectorCount.n} 条向量（映射一致）`, baseProfilePath);
+    logEvent("store", `sqlite-vec 初始化完成，${vectorCount.n} 条向量（映射一致）`, profilePath);
   }
 
   const store: VectorStore = {
