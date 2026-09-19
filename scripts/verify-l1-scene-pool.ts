@@ -41,6 +41,7 @@ import {
 import { buildL1Task, detectBatchCwd, detectBatchProject } from "../memory/l1/config.ts";
 import { registerL1CommitTool, stampRecordTimes } from "../memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "../memory/l1/scene-tool.ts";
+import { readL0Increment } from "../memory/l1/read-tool.ts";
 
 let pass = 0;
 let fail = 0;
@@ -532,6 +533,78 @@ console.log("\n=== F. stampRecordTimes ===");
 	const bad: Record<string, unknown> = { createdAt: "not-a-date" };
 	stampRecordTimes(bad, true, now);
 	check("标记行不可解析 → 补 now", bad.createdAt === now);
+}
+
+// ══════════════════════════════════════════════════════════════
+console.log("\n=== G. readL0Increment：批次取「最旧」+ 无丢失（2026-09-19 修） ===");
+{
+	// 造 300 条消息（跨 3 个分片），id 与 recordedAt 同步递增
+	const N = 300;
+	const names = ["2026-09-15.jsonl", "2026-09-16.jsonl", "2026-09-17.jsonl"];
+	const shards: Record<string, string[]> = { [names[0]]: [], [names[1]]: [], [names[2]]: [] };
+	for (let i = 0; i < N; i++) {
+		const rec = {
+			sessionKey: "s1",
+			id: `m${i}`,
+			role: i % 2 ? "assistant" : "user",
+			content: `第 ${i} 条`,
+			timestamp: `t${i}`,
+			recordedAt: `2026-09-${String(15 + Math.floor(i / 100)).padStart(2, "0")}T00:00:${String(i % 100).padStart(2, "0")}.000Z`,
+		};
+		shards[names[Math.floor(i / 100)]].push(JSON.stringify(rec));
+	}
+	const p = makeProfile({ l0: Object.fromEntries(Object.entries(shards).map(([f, ls]) => [f, ls.map((l) => JSON.parse(l))])) });
+	const files = names.map((f) => join(p, "memoryDB", "l0", "conversations", f));
+
+	const r1 = readL0Increment(files.join(","), "");
+	check("超上限时 truncated=true", r1.truncated === true, `${r1.messages.length} 条`);
+	check("返回条数 = 上限 200", r1.messages.length === 200);
+	// 关键：**取最旧**（修复前取最新 → 前 100 条被永久丢掉）
+	check("取的是最旧的 200 条（首条 = m0）", String(r1.messages[0].id) === "m0", String(r1.messages[0].id));
+	check("末条 = m199", String(r1.messages[199].id) === "m199", String(r1.messages[199].id));
+	check(
+		"升序排列",
+		r1.messages.every((m, i) => i === 0 || String(m.recordedAt) >= String(r1.messages[i - 1].recordedAt)),
+	);
+	check("background 为空（游标为空串）", r1.background.length === 0);
+
+	// 新批策略（最旧 ≤25）：游标 = 本批最后一条
+	const batch1 = r1.messages.slice(0, 25);
+	const cursor1 = String(batch1[batch1.length - 1].recordedAt);
+	check("本批 25 条、末条 = m24", batch1.length === 25 && String(batch1[24].id) === "m24");
+
+	// 第二轮必须从 m25 无缝衔接 —— 没有任何一条被跳过
+	const r2 = readL0Increment(files.join(","), cursor1);
+	check("第二轮首条 = m25（无跳号）", String(r2.messages[0].id) === "m25", String(r2.messages[0].id));
+	check("第二轮不含已处理的 m24", !r2.messages.some((m) => String(m.id) === "m24"));
+	check(
+		"background = 游标前 5 条（m20..m24）",
+		r2.background.length === 5 && String(r2.background[4].id) === "m24",
+		r2.background.map((m) => m.id).join(","),
+	);
+
+	// 对照：修复前的语义 = 工具返回**最新** 200 条（m100..m299），子代理把游标推到这条窗口的末条
+	// （m299）⇒ 更旧的 m0..m99 再也读不到（下一轮 `recordedAt <= cursor` 全被归入 background）
+	const oldCursor = `2026-09-17T00:00:${String((N - 1) % 100).padStart(2, "0")}.000Z`;
+	const r3 = readL0Increment(files.join(","), oldCursor);
+	check("（对照）旧语义的游标之后无增量 ⇒ m0..m99 永久丢失", r3.messages.length === 0, `${r3.messages.length} 条`);
+	check("（对照）旧语义下那 100 条只剩 background 里 5 条", r3.background.length === 5, `${r3.background.length} 条`);
+
+	// 逐轮啃完：25 条/轮 ⇒ 300 条 = 12 轮，且每条恰好覆盖一次
+	let cursor = "";
+	const seen = new Set<string>();
+	let rounds = 0;
+	for (; rounds < 40; rounds++) {
+		const rr = readL0Increment(files.join(","), cursor);
+		if (rr.messages.length === 0) break;
+		const batch = rr.messages.slice(0, 25);
+		for (const m of batch) seen.add(String(m.id));
+		cursor = String(batch[batch.length - 1].recordedAt);
+		if (batch.length < 25) break;
+	}
+	check("逐轮啃完覆盖全部 300 条（零丢失）", seen.size === N, `覆盖 ${seen.size}/${N}，共 ${rounds} 轮`);
+	check("轮数符合预期（300/25 = 12 轮）", rounds === 12, `${rounds} 轮`);
+	rmSync(p, { recursive: true, force: true });
 }
 
 // ══════════════════════════════════════════════════════════════
