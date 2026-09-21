@@ -561,6 +561,11 @@ export default function (pi: ExtensionAPI) {
         if (feedResult.error) {
           logEvent("skill", feedResult.error, profile.path);
         }
+      } else {
+        // 2026-09-21 补：这两个分支原先**静默跳过**，于是"L0 归档停了几小时、cursor 停在旧行数"
+        // 这种情况在日志里一点痕迹都没有（实测：同一会话文件 815 → 956 行，无任何 L0 记录）。
+        // 不猜原因，先把事实留下 —— 下次一眼能看出是"没有 sessionFile"还是"没有 profile"。
+        logEvent("l0", `跳过归档：sessionFile=${sessionFile ? "有" : "无"}，profile=${profile ? "有" : "无"}`);
       }
     } catch (e) {
       logEvent("l0", `archive failed: ${e instanceof Error ? e.message : String(e)}`);
