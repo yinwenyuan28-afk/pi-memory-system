@@ -12,11 +12,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	applyVerdicts,
+	applyVerdictsToBatch,
 	buildCheckUserContent,
 	buildChecklist,
 	loadChecklistFromFile,
 	parseVerdicts,
 	runValueCheck,
+	splitBatch,
 	type ValueVerdict,
 } from "../memory/l1/value-check.ts";
 import { DEFAULT_VALUE_CHECK, loadL1Config, saveL1Mode, PROMPT_DIR } from "../memory/l1/config.ts";
@@ -154,6 +156,74 @@ async function main(): Promise<void> {
 
 		const untouched = applyVerdicts(recs, null);
 		check("verdicts=null → 全部原样保留（fail-open 语义）", untouched.kept.length === 3 && untouched.dropped.length === 0 && untouched.retyped.length === 0);
+	}
+
+	// ════════════════════════════════════════════════════════════════════════
+	console.log("\n=== 3b. 批内含墓碑行时不偏移 + 孤儿墓碑护栏（2026-09-21 根因修复回归） ===");
+	{
+		const row = (id: string, over: Record<string, unknown> = {}) => ({
+			id,
+			content: `记忆内容 ${id}`,
+			type: "work_fact",
+			priority: 80,
+			deleted: false,
+			...over,
+		});
+
+		// 拆两半：候选集与墓碑行分离（错位 bug 的根源就在于候选集过滤了、回填没过滤）
+		const split = splitBatch([row("a"), row("t", { deleted: true }), row("b")]);
+		check("splitBatch：候选人 = deleted!==true", split.candidates.map((r) => r.id).join(",") === "a,b");
+		check("splitBatch：墓碑行 = deleted===true", split.tombstones.map((r) => r.id).join(",") === "t");
+
+		// 用例 1（索引对齐）：裁决下标是【候选集】下标。修复前 applyVerdicts(整批) 会把 drop 误落到墓碑行 t 上。
+		const batch1 = [row("a"), row("t", { deleted: true }), row("b")];
+		const applied1 = applyVerdictsToBatch(batch1, [{ i: 0, v: "keep" }, { i: 1, v: "drop", r: "低价值" }]);
+		check("裁决命中候选人而非墓碑行", applied1.dropped.map((d) => (d.record as { id: string }).id).join(",") === "b");
+		check("墓碑行原样保留在 kept 里", applied1.kept.some((r) => r.id === "t"));
+		const oldWay1 = applyVerdicts(batch1, [{ i: 0, v: "keep" }, { i: 1, v: "drop", r: "低价值" }]);
+		check("（对照）旧写法确实会误判墓碑行", oldWay1.dropped.some((d) => (d.record as { id: string }).id === "t"));
+
+		// 用例 2（孤儿墓碑护栏）：替代行被 drop ⇒ 其墓碑必须撤销，否则净损失
+		const batch2 = [row("newX", { metadata: { replaced: "oldX" } }), row("oldX", { deleted: true })];
+		const applied2 = applyVerdictsToBatch(batch2, [{ i: 0, v: "drop", r: "变更流水" }]);
+		check("替代行被 drop", applied2.dropped.length === 1);
+		check("墓碑被一并撤销", applied2.revokedTombstones.length === 1 && applied2.revokedTombstones[0].id === "oldX" && applied2.revokedTombstones[0].replacedBy === "newX");
+		check("被撤销的墓碑不写库", !applied2.kept.some((r) => r.id === "oldX"));
+
+		// 用例 3（无墓碑行 → 与旧行为一致，防回归）
+		const batch3 = [row("a"), row("b"), row("c")];
+		const verdicts3: ValueVerdict[] = [{ i: 0, v: "drop", r: "流水账" }, { i: 1, v: "keep" }, { i: 2, v: "keep" }];
+		const applied3 = applyVerdictsToBatch(batch3, verdicts3);
+		const oldWay3 = applyVerdicts(batch3, verdicts3);
+		check("无墓碑行时结果与 applyVerdicts 一致", JSON.stringify(applied3.dropped.map((d) => (d.record as { id: string }).id)) === JSON.stringify(oldWay3.dropped.map((d) => (d.record as { id: string }).id)) && applied3.kept.length === oldWay3.kept.length);
+		check("无墓碑行时无撤销", applied3.revokedTombstones.length === 0);
+
+		// 用例 4（2026-09-21 真实批次形态回放：3 组「新记录 + 墓碑」按对交错）
+		const replay = [
+			row("k3f7", { metadata: { replaced: "u2h5" } }),
+			row("u2h5", { deleted: true }),
+			row("p8m2", { metadata: { replaced: "g4y1" } }),
+			row("g4y1", { deleted: true }),
+			row("w5q9", { metadata: { replaced: "b3l7" } }),
+			row("b3l7", { deleted: true }),
+			row("z2t6"),
+			row("r7j4"),
+			row("v9c1"),
+		];
+		const replayVerdicts: ValueVerdict[] = [
+			{ i: 0, v: "drop", r: "变更流水" },
+			{ i: 1, v: "drop", r: "可从代码找回" },
+			{ i: 2, v: "drop", r: "明确排除项" },
+			{ i: 3, v: "keep" },
+			{ i: 4, v: "keep" },
+			{ i: 5, v: "drop", r: "一次性实现步骤" },
+		];
+		const replayed = applyVerdictsToBatch(replay, replayVerdicts);
+		const replayedDrops = replayed.dropped.map((d) => (d.record as { id: string }).id);
+		check("回放：drop 命中候选人", replayedDrops.join(",") === "k3f7,p8m2,w5q9,v9c1", replayedDrops.join(","));
+		check("回放：不再误伤墓碑行 b3l7", !replayedDrops.includes("b3l7"));
+		check("回放：三条孤儿墓碑全被撤销（替代行都未落盘）", replayed.revokedTombstones.map((r) => r.id).sort().join(",") === "b3l7,g4y1,u2h5", replayed.revokedTombstones.map((r) => r.id).join(","));
+		check("回放：存活的只有通过校验的两条", replayed.kept.map((r) => r.id).join(",") === "z2t6,r7j4", replayed.kept.map((r) => r.id).join(","));
 	}
 
 	// ════════════════════════════════════════════════════════════════════════

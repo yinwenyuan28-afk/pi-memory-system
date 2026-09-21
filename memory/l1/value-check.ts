@@ -306,3 +306,41 @@ export function applyVerdicts<T extends { type?: unknown }>(
 	});
 	return { kept, dropped, retyped };
 }
+
+/** 批内拆两半：候选人（`deleted!==true`）/ 墓碑行。
+ *  存在意义：裁决是按【数组下标】回填的，而候选集把墓碑行过滤掉了 —— 两者必须同源，
+ *  否则批内一旦混入墓碑行，其后所有裁决整体错位（2026-09-21 修复前实测 7 次误判墓碑行）。 */
+export function splitBatch<T extends { deleted?: unknown }>(records: T[]): { candidates: T[]; tombstones: T[] } {
+	return {
+		candidates: records.filter((r) => r.deleted !== true),
+		tombstones: records.filter((r) => r.deleted === true),
+	};
+}
+
+/** 把裁决作用到**整批**（含墓碑行）的推荐入口 —— 错位 bug 的收口点。
+ *  1) 裁决只作用于候选人（与 candidates 同源，下标永不偏移）；
+ *  2) 墓碑行原样拼回，不参与裁决；
+ *  3) 替代行被判 drop 时，其墓碑行会被撤销（`revokedTombstones`）—— 否则旧内容被隐藏、
+ *     替代品又没落盘 = 净损失（实测 l1_1790006400003_u2h5 / l1_1790006400005_g4y1）。
+ *  纯函数、不改入参，便于回归测试。 */
+export function applyVerdictsToBatch<T extends { deleted?: unknown; id?: unknown; metadata?: unknown }>(
+	records: T[],
+	verdicts: ValueVerdict[] | null,
+): AppliedVerdicts<T> & { revokedTombstones: Array<{ id: string; replacedBy: string }> } {
+	const { candidates, tombstones } = splitBatch(records);
+	const applied = applyVerdicts(candidates, verdicts);
+	// 被 drop 的替代行 → 要撤销的旧 id（约定：新记录 metadata.replaced = 旧 id，见 l1-admin/rewrite.mjs）
+	const revokedTargets = new Map<string, string>();
+	for (const d of applied.dropped) {
+		const replaced = String((d.record as { metadata?: { replaced?: unknown } })?.metadata?.replaced ?? "");
+		if (replaced) revokedTargets.set(replaced, String((d.record as { id?: unknown })?.id ?? ""));
+	}
+	const revokedTombstones: Array<{ id: string; replacedBy: string }> = [];
+	const keptTombstones: T[] = [];
+	for (const row of tombstones) {
+		const rid = String((row as { id?: unknown })?.id ?? "");
+		if (revokedTargets.has(rid)) revokedTombstones.push({ id: rid, replacedBy: revokedTargets.get(rid) ?? "" });
+		else keptTombstones.push(row);
+	}
+	return { ...applied, kept: [...applied.kept, ...keptTombstones], revokedTombstones };
+}

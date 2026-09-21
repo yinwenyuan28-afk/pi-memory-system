@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_FILE, PROMPT_DIR, RECORDS_DIR_NAME, loadL1Config } from "./config.ts";
-import { applyVerdicts, loadChecklistFromFile, runValueCheck } from "./value-check.ts";
+import { applyVerdictsToBatch, loadChecklistFromFile, runValueCheck, splitBatch } from "./value-check.ts";
 import { loadRecallConfig } from "../search/recall-config.ts";
 import {
 	createSceneResolver,
@@ -290,8 +290,12 @@ export function registerL1CommitTool(
 				try {
 				if (!isMainAgent && l1CfgForCheck.valueCheck.enabled && recordsToWrite.some((r) => r.deleted !== true)) {
 					const cfgVC = l1CfgForCheck.valueCheck;
-					const candidates = recordsToWrite
-						.filter((r) => r.deleted !== true)
+					// 候选集与回填必须是**同一个数组**（2026-09-21 修）：applyVerdicts 是按【数组下标】回填裁决的，
+					// 而候选集把 deleted:true 墓碑行过滤掉了 —— 若把裁决回填到未过滤的 recordsToWrite，
+					// 批内一旦混入墓碑行，其后所有裁决都会整体错位（drop/retype 落到别的记录上）。
+					// 历史实测错位 7 次，见 plan/memory-system/L1价值校验索引错位与孤儿墓碑-PLAN.md。
+					const { candidates: candidatesRecords } = splitBatch(recordsToWrite);
+					const candidates = candidatesRecords
 						.map((r) => ({ content: String(r.content ?? ""), type: String(r.type ?? ""), priority: typeof r.priority === "number" ? r.priority : undefined }));
 					// 判据与提取规则同源：直接摘同一份 md（摘不出 → fail-open）
 					const checklist = loadChecklistFromFile(join(PROMPT_DIR, `extract-${l1CfgForCheck.mode}-personal.md`));
@@ -338,12 +342,17 @@ export function registerL1CommitTool(
 								});
 							},
 						});
-						const applied = applyVerdicts(recordsToWrite, outcome.verdicts);
+						// 收口点：裁决只作用于候选人，墓碑行原样拼回，且「替代行被 drop ⇒ 撤销其墓碑」
+						// （实现与回归用例都在 value-check.ts 的 applyVerdictsToBatch）。
+						const applied = applyVerdictsToBatch(recordsToWrite, outcome.verdicts);
 						recordsToWrite = applied.kept;
+						const revokedRows = applied.revokedTombstones;
+						const tombstonesRevoked = revokedRows.length;
 						valueCheckReport = {
 							...(outcome.skipped ? { skipped: outcome.skipped } : {}),
 							dropped: applied.dropped.length,
 							retyped: applied.retyped.length,
+							...(tombstonesRevoked > 0 ? { tombstonesRevoked } : {}),
 							...(!outcome.verdicts && outcome.raw ? { rawHint: outcome.raw } : {}),
 						};
 						// 被丢弃的记录**不在库里**，必须落到侧车日志，否则"它拦了什么/有没有误杀"完全不可见
@@ -353,7 +362,22 @@ export function registerL1CommitTool(
 								const at = new Date().toISOString();
 								appendFileSync(
 									logPath,
-									applied.dropped.map((d) => JSON.stringify({ at, action: "drop", reason: d.reason, record: d.record })).join("\n") + "\n",
+									[
+										...applied.dropped.map((d) =>
+											JSON.stringify({
+												at,
+												action: "drop",
+												reason: d.reason,
+												// 金丝雀：drop 的对象永远应当来自候选集（deleted!==true）。
+												// 出现 false 即说明「候选集 ≠ 回填数组」的错位又回来了（2026-09-21 修复前实测 7 次）。
+												inCandidates: (d.record as { deleted?: unknown })?.deleted !== true,
+												record: d.record,
+											}),
+										),
+										...revokedRows.map((row) =>
+											JSON.stringify({ at, action: "revoke-tombstone", reason: "替代行未通过价值校验，墓碑一并撤销", id: row.id, replacedBy: row.replacedBy }),
+										),
+									].join("\n") + "\n",
 									"utf-8",
 								);
 							} catch {
