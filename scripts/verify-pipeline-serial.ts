@@ -219,6 +219,16 @@ console.log("\n=== 7. 手动触发：熔断不许把自己的恢复入口也堵�
 	);
 }
 
+console.log("\n=== 8. 来源即意图：l3 的 signal 必须与 trigger 分开（2026-09-21 job 51 回归） ===");
+{
+	// personaSignal 是 P1；claim 时若按普通 trigger 重估门控，信号会被静默降级成 skipped
+	const db = makeDb();
+	const sig = db.enqueue("l3", "signal");
+	check("signal 可作为 l3 的来源入库", db.getJob(sig.id)?.source === "signal");
+	check("signal 与 trigger 不互相去重（都能入队，type 去重只按 type）", db.enqueue("l3", "trigger").duplicate === true);
+	db.close();
+}
+
 for (const r of roots) {
 	try {
 		rmSync(r, { recursive: true, force: true });

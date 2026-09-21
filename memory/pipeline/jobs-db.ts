@@ -7,9 +7,16 @@ import { MEMORY_DB_DIR, PIPELINE_JOBS_FILE } from "../paths.ts";
 export type PipelineJobType = "l1" | "l2" | "l3";
 /**
  * `drain` = L1 收尾后因「L0 仍有积压」而连续排的下一批（2026-09-19）。
- * `trigger` = L3 的台账式触发（`agent_settled` 五级门控命中）或子代理 `personaSignal`。
+ * `trigger` = L3 的台账式触发（`agent_settled` 五级门控命中）。
+ * `signal`  = L3 的 **P1 显式信号**（`l2_commit` 的 `personaSignal`）。
+ * `manual`  = 手动命令（`/my-memory:l*-trigger`），执行器据此 force 掉门控与熔断。
+ *
+ * 为什么 `signal` 必须与 `trigger` 分开（2026-09-21 修）：L3 的 executeJob 会在 claim 时
+ * 重估门控，而重估时没有信号上下文 → P1 丢了，只剩 P2–P4，于是"L2 刚提交、明确要求刷新画像"
+ * 这个意图被静默降级成"门控不成立 → skipped"（实测 job 51：入队后 5ms 就 skipped）。
+ * 来源即意图，必须带到 claim 时。
  */
-export type PipelineJobSource = "interval" | "manual" | "l1_commit" | "drain" | "trigger";
+export type PipelineJobSource = "interval" | "manual" | "l1_commit" | "drain" | "trigger" | "signal";
 export type PipelineJobStatus = "queued" | "running" | "done" | "skipped" | "failed";
 
 /** recoverStuckRunning 只回收 started_at 早于该阈值的 running（防子进程误杀刚启动的 job）。 */

@@ -193,7 +193,17 @@ export function setupL3Persona(
 		if (!profilePath) return "failed";
 
 		const forced = job.source === "manual";
-		const gate = evaluateTrigger(profilePath, forced ? { force: true, personaReason: "手动 l3-trigger" } : {});
+		// 来源即意图：`signal` 是 P1（l2_commit 的显式请求），必须在 claim 时还原成 personaSignal。
+		// 少了这一句，重估只剩 P2–P4，信号会在 5ms 内被降级成 skipped（实测 job 51）。
+		const signaled = job.source === "signal";
+		const gate = evaluateTrigger(
+			profilePath,
+			forced
+				? { force: true, personaReason: "手动 l3-trigger" }
+				: signaled
+					? { personaSignal: true, personaReason: "L2 personaSignal 显式请求" }
+					: {},
+		);
 		if (!gate.should) {
 			logEvent("l3", `入队但 claim 时门控已不成立，跳过：${gate.reason || "五级门控未命中"}`, profilePath);
 			return "skipped";
@@ -274,7 +284,8 @@ export function setupL3Persona(
 		}
 
 		// 去重靠队列本身：同 type 已有 queued/running 时不堆第二条（重复触发等于重复改 USER.md）
-		const queued = pipeline.enqueueL3(opts.force ? "manual" : "trigger");
+		// source 要带上意图：executeJob 在 claim 时会照 source 还原 force / personaSignal（见那里的注释）
+		const queued = pipeline.enqueueL3(opts.force ? "manual" : opts.personaSignal ? "signal" : "trigger");
 		if (!queued) {
 			// 队列不可用（无 profile / sqlite 打不开）→ 宁可少跑一轮，也不要绕过串行器直接 spawn
 			logSkip("入队失败（队列不可用）");

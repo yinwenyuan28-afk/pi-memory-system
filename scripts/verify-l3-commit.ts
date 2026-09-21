@@ -459,6 +459,17 @@ async function main(): Promise<void> {
 		controls.triggerManual(ctx as never);
 		check("手动触发 → 入队 manual", log.length === 3 && log[2].source === "manual" && !log[2].duplicate);
 		check("手动触发复位熔断", loadFailureState(root).l3.cooledDown === false);
+
+		// ⑥ personaSignal（P1）→ 来源必须是 signal：执行器在 claim 时会照 source 还原 P1，
+		//    若记成 trigger，重估只剩 P2–P4，信号会被静默降级成 skipped（2026-09-21 实测 job 51）。
+		active = false; // 模拟上一条跑完
+		writePendingTrigger(root, { personaSignal: true, personaReason: "场景发生实质变化" });
+		settle();
+		check(
+			"personaSignal → 入队 source=signal",
+			log.length === 4 && log[3].source === "signal" && !log[3].duplicate,
+			`source=${log[3]?.source}`,
+		);
 		dropRoot(root);
 	}
 }

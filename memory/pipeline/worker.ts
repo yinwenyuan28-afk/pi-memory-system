@@ -120,7 +120,7 @@ export function setupPipelineWorker(
 		return withDb((db) => db.enqueue("l2", source));
 	}
 
-	function enqueueL3(source: "trigger" | "manual") {
+	function enqueueL3(source: "trigger" | "signal" | "manual") {
 		return withDb((db) => db.enqueue("l3", source));
 	}
 
