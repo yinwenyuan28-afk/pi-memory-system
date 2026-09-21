@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.ts";
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { decideManualTrigger, waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
@@ -129,8 +129,27 @@ export function setupL2Organizer(
 			return;
 		}
 		try {
-			if (getPipelineJobsDB(profilePath).hasActive("l2")) {
+			const db = getPipelineJobsDB(profilePath);
+			const verdict = decideManualTrigger({
+				hasActive: db.hasActive("l2"),
+				queuedOfType: db.listQueued().some((j) => j.type === "l2"),
+				cooledDown: loadL2State().cooledDown,
+			});
+			if (verdict === "refuse-busy") {
 				if (ctx) ctx.ui.notify("L2 场景组织已在队列或运行中", "warning");
+				return;
+			}
+			if (verdict === "unpause-queued") {
+				// 队列里那条 L2 正被熔断按着（熔断把恢复入口也堵死了）：复位 + kick，让它按队序跑。
+				// 不再排第二条 —— 排队那条的 source 是 l1_commit，本来就是要干的活。
+				const st0 = loadL2State();
+				st0.cooledDown = false;
+				st0.consecutiveFailures = 0;
+				saveL2State(st0);
+				if (ctx) pipeline.setCachedCtx(ctx);
+				pipeline.kick();
+				logEvent("l2", "manual trigger: 复位熔断，队列中的 job 将执行", profilePath);
+				if (ctx) ctx.ui.notify("L2 已复位熔断，排队中的任务将执行", "info");
 				return;
 			}
 		} catch {

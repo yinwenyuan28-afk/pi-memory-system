@@ -49,6 +49,46 @@ export function decideNextAfterL1(input: { hasL1Remaining: boolean; hasNewRecord
 }
 
 /**
+ * 从按优先级排好的队列里挑下一个**可以跑**的 job（纯函数，可离线测）。
+ *
+ * 为什么不是"取队首、它熔断就整条队列歇着"（2026-09-21 实测事故）：L2 连败 3 次熔断后，
+ * 队列里排着 `l2(68)` 和它后面的 `l1(69)`，而 `drain` 每 2s 取队首 → 是 L2 → 熔断 → 直接 return。
+ * 结果 **L1 被堵在后面 5 个多小时**（job 69 一直 queued），用户手动 `/l1-trigger` 又被
+ * `hasActive("l1")` 拦下（"已在队列或运行中"）—— 看起来就是"L1 子代理卡死了"。
+ * 熔断的语义是"这一层别跑"，不是"整条流水线停摆"：跳过熔断层，让它后面的照常跑；
+ * 被跳过的 job 留在队列里，等这一层被手动复位（`/my-memory:l2-trigger` 之类）。
+ */
+export function pickNextClaimable(
+	queued: PipelineJob[],
+	isCooledDown: (type: PipelineJobType) => boolean,
+): PipelineJob | undefined {
+	return queued.find((j) => !isCooledDown(j.type));
+}
+
+/**
+ * 手动触发（`/my-memory:l*-trigger`）面对"队列里已经有本层 job"时的裁决（纯函数，可离线测）。
+ *
+ * 为什么需要它（2026-09-21 实测）：L2 连败熔断后，队列里还压着一条 L2 job（L1 收尾时排进来的），
+ * 于是 `/l2-trigger` 被 `hasActive("l2")` 拦下、提示"已在队列或运行中" —— **熔断把它自己的恢复入口
+ * 也堵死了**（用户能看到的只有"点了没反应"）。熔断要人工复位是设计，但"人工复位"这条路必须通。
+ *
+ *   · `proceed`        —— 队列里没有本层 job，照常入队
+ *   · `unpause-queued` —— 本层熔断 + 队列里那条正被熔断按着 → 复位熔断 + kick，让它按队序跑
+ *   · `refuse-busy`    —— 真有 running（或未熔断的排队）→ 维持原提示
+ */
+export type ManualTriggerVerdict = "proceed" | "unpause-queued" | "refuse-busy";
+
+export function decideManualTrigger(input: {
+	hasActive: boolean;
+	queuedOfType: boolean;
+	cooledDown: boolean;
+}): ManualTriggerVerdict {
+	if (!input.hasActive) return "proceed";
+	if (input.queuedOfType && input.cooledDown) return "unpause-queued";
+	return "refuse-busy";
+}
+
+/**
  * 主进程单飞行 worker：2s 轮询 + kick；同时只跑 1 个 job（L1/L2/L3 共用一条队列）。
  * 任一 job 占用未结束（running）时不会 claim 下一个 —— 这是"同一时刻只有一个 L1-L3 子代理"的执行侧。
  */
@@ -100,14 +140,15 @@ export function setupPipelineWorker(
 		if (!profilePath) return;
 
 		const db = getPipelineJobsDB(profilePath);
-		// 全局单飞（2026-09-19）：peekNext 只挑 queued，两个 pi 进程同时开着时各自都能 claim
-		// 走一条 → 两个子代理并发（实测过 L2 并发改场景块）。这里要求"当前没有任何 running"。
+		// 全局单飞（2026-09-19）：两个 pi 进程同时开着时各自都能 claim 走一条 queued
+		// → 两个子代理并发（实测过 L2 并发改场景块）。这里要求"当前没有任何 running"。
 		if (db.hasAnyRunning()) return;
-		const peek = db.peekNext();
-		if (!peek) return;
-		if (executors.isCooledDown(peek.type)) return;
+		// 跳过熔断层（2026-09-21 修）：取队首会让"队首那一层熔断"变成整条流水线停摆，
+		// 把后面别的层（实测是 L1）永久堵在队列里。熔断的语义是"这一层别跑"，不是"全停"。
+		const job0 = pickNextClaimable(db.listQueued(), executors.isCooledDown);
+		if (!job0) return;
 
-		const job = db.claim(peek.id);
+		const job = db.claim(job0.id);
 		if (!job) return;
 
 		busy = true;

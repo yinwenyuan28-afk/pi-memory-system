@@ -15,7 +15,7 @@ import { loadFailureState, saveFailureState, type LayerFailureState } from "../f
 import { evaluateTrigger } from "./trigger.ts";
 import { consumePendingTrigger } from "./signal.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { waitWhileRunning, decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { parseUserFile } from "./entries.ts";
 import { readUserFile } from "./user-file.ts";
@@ -114,7 +114,7 @@ export interface L3Controls {
  *   · 由 worker 串行 claim/执行，`hasAnyRunning()` 保证跨进程/跨层单飞；
  *   · 真完成信号 = 子代理 `l3_commit` 里的 `completeRunningL3()`（与 L1/L2 同款，
  *     取代"主进程观察游标"——那是 `async:true` 时代没有队列时的替代品）；
- *   · 排队优先级最低（`jobs-db.peekNext`）：L3 的输入是 L1/L2 的产物，不该插队到积压前面。
+ *   · 排队优先级最低（`jobs-db.listQueued` 的排序）：L3 的输入是 L1/L2 的产物，不该插队到积压前面。
  *
  * 于是 `l3/run.lock` 退役（`run-lock.ts` 已删）：队列的 running 状态就是那个跨进程真闸。
  *
@@ -310,8 +310,26 @@ export function setupL3Persona(
 			return;
 		}
 		try {
-			if (getPipelineJobsDB(profilePath).hasActive("l3")) {
+			const db = getPipelineJobsDB(profilePath);
+			const verdict = decideManualTrigger({
+				hasActive: db.hasActive("l3"),
+				queuedOfType: db.listQueued().some((j) => j.type === "l3"),
+				cooledDown: loadL3State().cooledDown,
+			});
+			if (verdict === "refuse-busy") {
 				if (ctx) ctx.ui.notify("L3 画像已在队列或运行中", "warning");
+				return;
+			}
+			if (verdict === "unpause-queued") {
+				// 队列里那条 L3 正被熔断按着：复位熔断 + kick（不排第二条）
+				const st0 = loadL3State();
+				st0.cooledDown = false;
+				st0.consecutiveFailures = 0;
+				saveL3State(st0);
+				if (ctx) pipeline.setCachedCtx(ctx);
+				pipeline.kick();
+				logEvent("l3", "手动触发：复位熔断，队列中的 job 将执行", profilePath);
+				if (ctx) ctx.ui.notify("L3 已复位熔断，排队中的任务将执行", "info");
 				return;
 			}
 		} catch {

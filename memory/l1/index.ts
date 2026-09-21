@@ -11,7 +11,7 @@ import {
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { decideManualTrigger, waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l1CoolDownMessage(failures: number): string {
@@ -168,9 +168,31 @@ export function setupL1Extractor(
 			if (ctx) ctx.ui.notify("L1 调度器未初始化（缺少有效 profile）", "error");
 			return;
 		}
-		if (hasActiveL1()) {
-			if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warning");
-			return;
+		try {
+			const db = getPipelineJobsDB(profilePath);
+			const verdict = decideManualTrigger({
+				hasActive: db.hasActive("l1"),
+				queuedOfType: db.listQueued().some((j) => j.type === "l1"),
+				cooledDown: loadL1State().cooledDown,
+			});
+			if (verdict === "refuse-busy") {
+				if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warning");
+				return;
+			}
+			if (verdict === "unpause-queued") {
+				// 队列里那条 L1 正被熔断按着：复位熔断 + kick（不排第二条）
+				const s0 = loadL1State();
+				s0.cooledDown = false;
+				s0.consecutiveFailures = 0;
+				saveL1State(s0);
+				if (ctx) pipeline.setCachedCtx(ctx);
+				pipeline.kick();
+				logEvent("l1", "manual trigger: 复位熔断，队列中的 job 将执行", profilePath);
+				if (ctx) ctx.ui.notify("L1 已复位熔断，排队中的任务将执行", "info");
+				return;
+			}
+		} catch {
+			// 队列不可用 → 继续走下面的入队（失败会有提示）
 		}
 		// 同样只做增量判空，不与 executeJob 重复构造任务消息
 		if (listL0Files(profilePath, loadL1Cursor(profilePath)).length === 0) {

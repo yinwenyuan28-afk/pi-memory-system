@@ -105,16 +105,20 @@ export class PipelineJobsDB {
 		return { id: Number(info.lastInsertRowid), duplicate: false };
 	}
 
-	peekNext(): PipelineJob | undefined {
-		// L3 永远排最后（2026-09-19 并入串行执行器时定）：L3 的输入是 L1/L2 的产物
-		// （场景块），让它在 L1 还在啃 L0 积压、L2 还没组织场景时就插队跑，既浪费一次
-		// 子代理，也会基于半成品画像。同 id 序里其它 type 一律优先于 l3。
-		const row = this.db
+	/**
+	 * 当前 queued 的全部 job，**按 claim 优先级排序**（L3 永远最后，其余按入队序）。
+	 *
+	 * 这是"谁下一个跑"的唯一出口：`worker.drain` 拿它跳过熔断层之后挑一个。
+	 * 早先还有个只取第一条的 `peekNext()`（2026-09-21 删）—— 它让"队首恰好是熔断层"变成
+	 * 整条队列停摆，见 `worker.ts` 的 `pickNextClaimable`。
+	 */
+	listQueued(): PipelineJob[] {
+		const rows = this.db
 			.prepare(
-				"SELECT * FROM jobs WHERE status = 'queued' ORDER BY CASE type WHEN 'l3' THEN 1 ELSE 0 END ASC, id ASC LIMIT 1",
+				"SELECT * FROM jobs WHERE status = 'queued' ORDER BY CASE type WHEN 'l3' THEN 1 ELSE 0 END ASC, id ASC",
 			)
-			.get() as Row | undefined;
-		return row ? mapRow(row) : undefined;
+			.all() as Row[];
+		return rows.map(mapRow);
 	}
 
 	/** queued → running；id 已被别人 claim 则返回 undefined。 */
@@ -128,16 +132,6 @@ export class PipelineJobsDB {
 	getJob(id: number): PipelineJob | undefined {
 		const row = this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Row | undefined;
 		return row ? mapRow(row) : undefined;
-	}
-
-	/** 当前 queued 的全部 job（按 peekNext 的优先级排序；观测/回归用）。 */
-	listQueued(): PipelineJob[] {
-		const rows = this.db
-			.prepare(
-				"SELECT * FROM jobs WHERE status = 'queued' ORDER BY CASE type WHEN 'l3' THEN 1 ELSE 0 END ASC, id ASC",
-			)
-			.all() as Row[];
-		return rows.map(mapRow);
 	}
 
 	hasActive(type: PipelineJobType): boolean {
