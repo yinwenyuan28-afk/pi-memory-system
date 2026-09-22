@@ -196,8 +196,99 @@ async function main(): Promise<void> {
 	check("最终 3 块，且未出现 overLimit warning", dirCount() === 3 && afterCreate.warning === undefined, `dir=${dirCount()} warning=${afterCreate.warning ?? "无"}`);
 	drop(p2);
 
+	// ════════════════════════════════════════════════════════════════════════
+	// 2026-09-21：目标块原有的正文也必须被保护（实测事故：目标 08-18 就存在、47 个成员，
+	// 子代理没读它就 consolidate 覆盖，而备份只备份源块、校验只看源块 ⇒ 丢了也查不出来）
+	console.log("\n=== 目标已存在时：combinedRatio 硬闸 + 目标改动前副本入备份 ===");
+	{
+		const pt = mkdtempSync(join(tmpdir(), "l2-consolidate-target-"));
+		const tScene = join(pt, "memoryDB", "l2", "scene-blocks");
+		const tMeta = join(pt, "memoryDB", "l2", "index");
+		mkdirSync(tScene, { recursive: true });
+		mkdirSync(tMeta, { recursive: true });
+		mkdirSync(join(pt, "memoryDB", "config"), { recursive: true });
+		writeFileSync(join(pt, "memoryDB", "config", "application-propertis.json"), JSON.stringify({ l2: { maxScenes: 20 } }), "utf-8");
+
+		const tLines = Array.from({ length: 20 }, (_, i) => `- 目标原有事实 T-${i}`);
+		const s1 = Array.from({ length: 8 }, (_, i) => `- 源一 S1-${i}`);
+		const s2 = Array.from({ length: 8 }, (_, i) => `- 源二 S2-${i}`);
+		writeFileSync(join(tScene, "t.md"), block("目标摘要", 5, "2026-08-18T00:00:00.000Z", tLines), "utf-8");
+		writeFileSync(join(tScene, "s1.md"), block("源一", 2, "2026-09-01T00:00:00.000Z", s1), "utf-8");
+		writeFileSync(join(tScene, "s2.md"), block("源二", 1, "2026-09-02T00:00:00.000Z", s2), "utf-8");
+		writeFileSync(join(tMeta, "scene_members.json"), JSON.stringify({ "t.md": ["tm1"], "s1.md": ["sm1"], "s2.md": ["sm2"] }), "utf-8");
+
+		const capturedT: Array<{ execute: (...args: unknown[]) => Promise<ToolResult> }> = [];
+		registerL2CommitTool({ registerTool: (t: unknown) => capturedT.push(t as never) } as never, () => pt);
+		const call = async (id: string, args: unknown) => {
+			const res = await capturedT[0].execute(id, args);
+			return JSON.parse(res.content[0].text) as Record<string, unknown>;
+		};
+
+		// ① 没读目标、只把源块拼起来 ⇒ 覆盖率 16/36 = 44% < 50% → 整批拒绝
+		const dropped = await call("t-drop", {
+			sceneWrites: [{ action: "consolidate", filename: "t.md", sources: ["s1.md", "s2.md"], content: [...s1, ...s2].join("\n") }],
+			cursor: "l1_1787277400002_c3d4",
+		});
+		check("目标原有内容被丢 → 整批拒绝", dropped.success === false, String(dropped.error ?? "").slice(0, 60));
+		check("拒绝理由点名「目标块原本已有」", String(dropped.error ?? "").includes("原本已有"));
+		const consReport = dropped.consolidation as Record<string, unknown> | undefined;
+		check("回报里给出 targetBefore（校验口径可见）", (consReport?.lines as { targetBefore?: number } | undefined)?.targetBefore === 20);
+		check("拒绝后目标块未被改写", readFileSync(join(tScene, "t.md"), "utf-8").includes("T-0"));
+
+		// ② 目标不存在时不该触发新闸（combinedRatio 等于 ratio）
+		{
+			writeFileSync(join(tScene, "n1.md"), block("n1", 1, "2026-09-03T00:00:00.000Z", s1), "utf-8");
+			writeFileSync(join(tScene, "n2.md"), block("n2", 1, "2026-09-03T00:00:00.000Z", s2), "utf-8");
+			const fresh = await call("t-fresh", {
+				sceneWrites: [{ action: "consolidate", filename: "brand-new.md", sources: ["n1.md", "n2.md"], content: [...s1, ...s2].join("\n") }],
+				cursor: "l1_1787277400003_d5e6",
+			});
+			check("目标不存在 → 放行", fresh.success === true, String(fresh.error ?? ""));
+			const r0 = (fresh.consolidations as Array<Record<string, unknown>> | undefined)?.[0];
+			check("目标不存在时 targetBefore=0", (r0?.lines as { targetBefore?: number } | undefined)?.targetBefore === 0);
+			check("目标不存在时不留 target-before 副本", r0?.backupTargetFile === undefined);
+		}
+
+		// ③ 读过目标、正文覆盖双方（≥50% 覆盖率）⇒ 放行，且**目标改动前的副本进备份**
+		const merged = [...tLines, ...s1, ...s2].join("\n");
+		const okRes = await call("t-ok", {
+			sceneWrites: [{ action: "consolidate", filename: "t.md", sources: ["s1.md", "s2.md"], content: merged }],
+			cursor: "l1_1787277400004_e7f8",
+		});
+		check("覆盖双方 → 放行", okRes.success === true, String(okRes.error ?? ""));
+		const rep = (okRes.consolidations as Array<Record<string, unknown>> | undefined)?.[0];
+		check(
+			"回报 combinedRatio ≈ 1",
+			Math.abs(((rep?.lines as { combinedRatio?: number })?.combinedRatio ?? 0) - 1) < 0.01,
+			String((rep?.lines as { combinedRatio?: number })?.combinedRatio),
+		);
+		check("回报里给出目标改动前副本文件名", typeof rep?.backupTargetFile === "string", String(rep?.backupTargetFile ?? ""));
+		const backupDir = join(pt, "memoryDB", String(rep?.backupDir ?? ""));
+		const backupFiles = existsSync(backupDir) ? readdirSync(backupDir) : [];
+		check("备份目录里目标副本确实存在", backupFiles.includes(String(rep?.backupTargetFile)), backupFiles.join(","));
+		check("副本内容是改动前的正文（含 T-0）", readFileSync(join(backupDir, String(rep?.backupTargetFile)), "utf-8").includes("T-0"));
+		check("源块也仍在备份里（原有行为不变）", backupFiles.includes("s1.md") && backupFiles.includes("s2.md"));
+		const manifest = JSON.parse(readFileSync(join(backupDir, "_manifest.json"), "utf-8")) as { targetFile?: string };
+		check("manifest 记录了 targetFile", manifest.targetFile === rep?.backupTargetFile);
+		// ② 那组建过 brand-new.md，所以不能断言"目录里只剩 t.md"，只断言源块已删、目标块在
+		const leftAfter = readdirSync(tScene).filter((f) => f.endsWith(".md"));
+		check(
+			"合并后源块已删、目标块在（② 建的 brand-new.md 另算）",
+			leftAfter.includes("t.md") && !leftAfter.includes("s1.md") && !leftAfter.includes("s2.md"),
+			leftAfter.join(","),
+		);
+
+		// ④ sources 含目标自身仍是硬拒绝（原有约束不变）
+		const selfSrc = await call("t-self", {
+			sceneWrites: [{ action: "consolidate", filename: "t.md", sources: ["t.md", "s1.md"], content: merged }],
+			cursor: "l1_1787277400005_f9a0",
+		});
+		check("sources 含目标自身 → 拒绝", selfSrc.success === false);
+		drop(pt);
+	}
 	drop(p);
 }
+
 
 main()
 	.then(() => {

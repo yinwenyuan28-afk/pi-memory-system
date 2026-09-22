@@ -73,8 +73,12 @@ export interface ConsolidationReport {
 	backupDir: string;
 	/** members 来源：explicit = 子代理显式传入并通过了覆盖校验；auto-union = 代码取源并集兜底。 */
 	membersSource: "explicit" | "auto-union";
-	lines: { sourceTotal: number; target: number; ratio: number };
+	lines: { sourceTotal: number; targetBefore: number; target: number; ratio: number; combinedRatio: number };
 	warnings: string[];
+	/** 目标块改动前引用的 record id 在新正文里找不到的（目标原有事实丢失信号；2026-09-21 新增）。 */
+	targetDroppedIdRefs?: string[];
+	/** 备份目录里目标块改动前副本的文件名（有则说明"把已有块当目标"且已留档）。 */
+	backupTargetFile?: string;
 }
 
 /** l2_commit 返回。 */
@@ -225,8 +229,16 @@ export interface ConsolidationCheck {
 	memberGaps: string[];
 	/** 源块正文引用的 record id，在目标正文与目标 members 中都找不到的（丢条目信号，只警告）。 */
 	droppedIdRefs: string[];
-	/** 正文非空行数统计。 */
-	lines: { sourceTotal: number; target: number; ratio: number };
+	/**
+	 * **目标块改动前**正文引用的 record id，在新正文里找不到的（2026-09-21 新增）。
+	 *
+	 * 为什么需要：`consolidate` 允许"目标块已存在"（把 A 并入 B），但此前**只校验源块** ——
+	 * 目标原本的事实既没被要求读、也没有备份、校验也不看它。实测就出现过"目标块 08-18 就有 47 个
+	 * 成员、子代理没读它就直接覆盖"的情形，丢了也查不出来。这条把它纳入比对（只警告，硬闸在 combinedRatio）。
+	 */
+	targetDroppedIdRefs: string[];
+	/** 正文非空行数统计；`combinedRatio` 把**目标改动前的正文**也算进分母（目标不存在时等于 ratio）。 */
+	lines: { sourceTotal: number; targetBefore: number; target: number; ratio: number; combinedRatio: number };
 }
 
 function idTokensOf(text: string): Set<string> {
@@ -260,7 +272,7 @@ function bodyLineCount(text: string): number {
  */
 export function checkConsolidation(
 	sources: Array<{ filename: string; content: string; members: string[] }>,
-	target: { filename: string; content: string; members?: string[] },
+	target: { filename: string; content: string; members?: string[]; before?: string },
 ): ConsolidationCheck {
 	const warnings: string[] = [];
 
@@ -274,15 +286,23 @@ export function checkConsolidation(
 	const targetRefs = idTokensOf(target.content);
 	// 只与**目标正文**比对，不把 members 算作"已覆盖"——否则由于 members 兜底会取源并集，
 	// 这条检查将永不触发。宽松口径：数字部分（块内常写去后缀形式）命中即算保留。
-	const droppedIdRefs = [...srcRefs].filter((t) => {
-		if (targetRefs.has(t)) return false;
-		const num = /\d{10,13}/.exec(t)?.[0];
-		return num ? !target.content.includes(num) : true;
-	});
+	const looseMissing = (refs: Iterable<string>) =>
+		[...refs].filter((t) => {
+			if (targetRefs.has(t)) return false;
+			const num = /\d{10,13}/.exec(t)?.[0];
+			return num ? !target.content.includes(num) : true;
+		});
+	const droppedIdRefs = looseMissing(srcRefs);
+	// 目标**改动前**的事实也要有落点（2026-09-21）：只警告 —— 硬闸交给 combinedRatio，
+	// 因为"把 A 并入 B"时 B 的旧条目允许被重写/去重，逐个 id 卡死会误伤。
+	const targetDroppedIdRefs = target.before ? looseMissing(idTokensOf(target.before)) : [];
 
 	const sourceTotal = sources.reduce((n, s) => n + bodyLineCount(s.content), 0);
 	const targetLines = bodyLineCount(target.content);
+	const targetBeforeLines = target.before ? bodyLineCount(target.before) : 0;
 	const ratio = sourceTotal > 0 ? targetLines / sourceTotal : 1;
+	const combinedTotal = targetBeforeLines + sourceTotal;
+	const combinedRatio = combinedTotal > 0 ? targetLines / combinedTotal : 1;
 
 	if (srcUnion.size === 0) {
 		warnings.push("源块没有任何 members 数据（历史块常见），成员覆盖校验已跳过，仅依赖行数比与 id 引用覆盖");
@@ -294,11 +314,25 @@ export function checkConsolidation(
 				.join("、")}）——请确认这些条目已安置进目标块，或已并入 members`,
 		);
 	}
+	if (targetDroppedIdRefs.length > 0) {
+		warnings.push(
+			`**目标块改动前**引用的 ${targetDroppedIdRefs.length} 个 record id 在新正文里找不到（例：${targetDroppedIdRefs
+				.slice(0, 3)
+				.join("、")}）——目标块原有的事实也必须保留（你没读它就把内容换了？）`,
+		);
+	}
 	if (ratio < WARN_CONSOLIDATION_LINE_RATIO) {
 		warnings.push(
 			`目标正文行数（${targetLines}）仅为源块合计（${sourceTotal}）的 ${Math.round(ratio * 100)}%，低于 ${Math.round(
 				WARN_CONSOLIDATION_LINE_RATIO * 100,
 			)}% 警戒线——请确认缩短来自去重而不是丢条目`,
+		);
+	}
+	if (targetBeforeLines > 0 && combinedRatio < WARN_CONSOLIDATION_LINE_RATIO) {
+		warnings.push(
+			`把**目标块原有正文**（${targetBeforeLines} 行）也算进来后，新正文覆盖率只有 ${Math.round(
+				combinedRatio * 100,
+			)}%（新 ${targetLines} 行 / 目标旧 ${targetBeforeLines} + 源 ${sourceTotal} 行）`,
 		);
 	}
 
@@ -311,6 +345,16 @@ export function checkConsolidation(
 				.slice(0, 3)
 				.join("、")}）。` +
 			"请把各源块 members 的并集传给 members 字段，或省略该字段让代码自动取并集。";
+	} else if (targetBeforeLines > 0 && combinedRatio < MIN_CONSOLIDATION_LINE_RATIO) {
+		// 2026-09-21 新增硬闸：目标块本来就存在，而新正文连「目标旧正文 + 源块正文」的一半都不到
+		// ⇒ 极可能是"没读目标就重写"。此前这条路径上规则、备份、校验三处都不保护目标（实测事故）。
+		ok = false;
+		error =
+			`合并完整性校验失败：目标块「${target.filename}」原本已有 ${targetBeforeLines} 行正文，` +
+			`加上源块合计 ${sourceTotal} 行，新正文只有 ${targetLines} 行（覆盖率 ${Math.round(combinedRatio * 100)}%，` +
+			`低于 ${Math.round(MIN_CONSOLIDATION_LINE_RATIO * 100)}%）。` +
+			"请**先 `read` 目标块**、把它的既有事实一并安置进新正文（旧结论可放进「演化记录」）再提交；" +
+			"若目标块本不该被合并覆盖，改走 update（它天然要求读全文）。备份已保留目标块改动前的副本，可回退。";
 	} else if (sources.length >= 3 && ratio < MIN_CONSOLIDATION_LINE_RATIO) {
 		ok = false;
 		error =
@@ -320,7 +364,15 @@ export function checkConsolidation(
 			"请把源块每条结论都安置到目标块（被推翻的旧结论放进「演化记录」）后再提交。";
 	}
 
-	return { ok, error, warnings, memberGaps, droppedIdRefs, lines: { sourceTotal, target: targetLines, ratio } };
+	return {
+		ok,
+		error,
+		warnings,
+		memberGaps,
+		droppedIdRefs,
+		targetDroppedIdRefs,
+		lines: { sourceTotal, targetBefore: targetBeforeLines, target: targetLines, ratio, combinedRatio },
+	};
 }
 
 /**
@@ -513,8 +565,16 @@ function saveSceneMembers(profilePath: string, members: Record<string, string[]>
 export interface ConsolidateBackup {
 	/** 备份目录（相对 `{profilePath}/memoryDB/`）。 */
 	dir: string;
-	/** 实际写入备份的文件名。 */
+	/** 实际写入备份的文件名（被删除的源块 + 目标块的改动前副本）。 */
 	files: string[];
+	/**
+	 * 目标块改动前是否也留了副本（2026-09-21 新增）。
+	 *
+	 * 此前只备份"即将被删除的源块"，而 `consolidate` 允许目标是**已存在**的块（"把 A 并入 B"）——
+	 * 目标被覆盖却没副本。实测事故：目标块 08-18 就在（47 个成员），子代理没读它就直接覆盖，
+	 * 事后连"有没有丢内容"都无法验证。现在目标的改动前正文与源块一起进同一个备份目录。
+	 */
+	targetFile?: string;
 }
 
 /**
@@ -531,6 +591,8 @@ export function backupSceneBlocks(
 	files: Array<{ filename: string; raw: string }>,
 	tag: string,
 	manifest: Record<string, unknown>,
+	/** 目标块的改动前副本（可选）。与源块写进**同一个**备份目录，且记在 `_manifest.json` 里。 */
+	targetBefore?: { filename: string; raw: string },
 ): ConsolidateBackup {
 	const backupRoot = join(profilePath, MEMORY_DB_DIR, BACKUP_DIR);
 	const dirName = `l2-consolidate-${tag}`;
@@ -545,13 +607,25 @@ export function backupSceneBlocks(
 			// 单个文件失败不阻断整体（manifest 会如实记录实际写入清单）
 		}
 	}
+	// 目标块改动前副本：用 `.target-before.md` 后缀，避免与源块同名覆盖（理论上不会同名，但不赌）
+	let targetFile: string | undefined;
+	if (targetBefore) {
+		const name = `${targetBefore.filename}.target-before.md`;
+		try {
+			writeFileSync(join(dir, name), targetBefore.raw, "utf-8");
+			written.push(name);
+			targetFile = name;
+		} catch {
+			// 同上：不阻断，但会在 manifest 里缺这一项
+		}
+	}
 	try {
-		writeFileSync(join(dir, "_manifest.json"), JSON.stringify({ ...manifest, files: written }, null, 2), "utf-8");
+		writeFileSync(join(dir, "_manifest.json"), JSON.stringify({ ...manifest, files: written, targetFile: targetFile ?? null }, null, 2), "utf-8");
 	} catch {
 		// ignore
 	}
 	pruneConsolidateBackups(backupRoot);
-	return { dir: join(BACKUP_DIR, dirName), files: written };
+	return { dir: join(BACKUP_DIR, dirName), files: written, ...(targetFile ? { targetFile } : {}) };
 }
 
 /** 只保留最近 `CONSOLIDATE_BACKUP_KEEP` 份 consolidate 备份。 */
@@ -747,10 +821,28 @@ export function registerL2CommitTool(
 						return { filename: s, raw, meta: parsed.meta, content: parsed.content, members: memberMapBefore[s] ?? [] };
 					});
 
+					// 目标块**改动前**的正文（2026-09-21）：既给完整性校验用（目标原有事实必须有落点，
+					// 且 combinedRatio 硬闸防止"没读目标就覆盖"），也给备份用。读一次、后面复用，避免二次读盘。
+					const targetPath = join(sceneDir, w.filename);
+					let targetRawBefore: string | undefined;
+					let existingMeta: SceneMeta | null = null;
+					if (existsSync(targetPath)) {
+						try {
+							targetRawBefore = readFileSync(targetPath, "utf-8");
+							existingMeta = parseSceneBlock(targetRawBefore).meta;
+						} catch {
+							targetRawBefore = undefined;
+							existingMeta = null;
+						}
+					}
+
 					const check = checkConsolidation(srcData, {
 						filename: w.filename,
 						content: typeof w.content === "string" ? w.content : "",
 						members: w.members,
+						// 传**解析后的正文**（不是含 META 头的 raw）——口径必须与 sources 一致，
+						// 否则 bodyLineCount 会把 META 的 6 行算进目标旧正文、combinedRatio 虚高（实测抓到）。
+						before: targetRawBefore !== undefined ? parseSceneBlock(targetRawBefore).content : undefined,
 					});
 					if (!check.ok) {
 						return {
@@ -767,6 +859,9 @@ export function registerL2CommitTool(
 											ok: false,
 											memberGaps: check.memberGaps.slice(0, 10),
 											lines: check.lines,
+											...(check.targetDroppedIdRefs.length > 0
+												? { targetDroppedIdRefs: check.targetDroppedIdRefs.slice(0, 10) }
+												: {}),
 											warnings: check.warnings,
 										},
 									} satisfies Partial<L2CommitResult>),
@@ -776,17 +871,8 @@ export function registerL2CommitTool(
 						};
 					}
 
-					// 目标可能已存在（"把 A 并入 B"）——取其原 META，让 created 保留、heat 参与取最大
-					const targetPath = join(sceneDir, w.filename);
-					let existingMeta: SceneMeta | null = null;
-					if (existsSync(targetPath)) {
-						try {
-							existingMeta = parseSceneBlock(readFileSync(targetPath, "utf-8")).meta;
-						} catch {
-							existingMeta = null;
-						}
-					}
-
+					// 目标可能已存在（"把 A 并入 B"）——`existingMeta`/`targetRawBefore` 已在上面读一次并复用
+					// （created 保留、heat 参与取最大；改动前正文进备份）。
 					const backup = backupSceneBlocks(
 						profilePath,
 						srcData.map((s) => ({ filename: s.filename, raw: s.raw })),
@@ -798,6 +884,8 @@ export function registerL2CommitTool(
 							sourceMembers: Object.fromEntries(srcData.map((s) => [s.filename, s.members])),
 							check: { lines: check.lines, warnings: check.warnings },
 						},
+						// 目标块改动前的事实也要可回退：此前只备份源块，目标是"覆盖了就没了"（实测事故）
+						targetRawBefore !== undefined ? { filename: w.filename, raw: targetRawBefore } : undefined,
 					);
 
 					consolidations.push({
@@ -943,6 +1031,10 @@ export function registerL2CommitTool(
 													membersSource: Array.isArray(c.write.members) ? "explicit" : "auto-union",
 													lines: c.check.lines,
 													warnings: c.check.warnings,
+													...(c.check.targetDroppedIdRefs.length > 0
+														? { targetDroppedIdRefs: c.check.targetDroppedIdRefs.slice(0, 10) }
+														: {}),
+													...(c.backup.targetFile ? { backupTargetFile: c.backup.targetFile } : {}),
 												}),
 											),
 										}
