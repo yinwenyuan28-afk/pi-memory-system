@@ -15,7 +15,8 @@ import { loadFailureState, saveFailureState, type LayerFailureState } from "../f
 import { evaluateTrigger } from "./trigger.ts";
 import { consumePendingTrigger } from "./signal.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { waitWhileRunning, decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { waitJobWithLiveness, locateSubagentSession, startHeartbeat } from "../pipeline/subagent-liveness.ts";
+import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { parseUserFile } from "./entries.ts";
 import { readUserFile } from "./user-file.ts";
@@ -226,7 +227,26 @@ export function setupL3Persona(
 		// 与 L1/L2 同款：真完成信号来自子代理的 `l3_commit`（completeRunningL3），
 		// **不是** `await runPiSubagent` 的返回 —— 那是 async:true 的 fire-and-forget，毫秒级返回。
 		// 多给 30s 宽限：子代理在最后时刻提交时，落盘 + 写游标仍需时间。
-		const waitP = waitWhileRunning(() => db.getJob(job.id), L3_SUBAGENT_TIMEOUT_MS + 30_000);
+		// 2026-09-21 起再叠一层**活性判定**：到点先看子代理会话是否还在长（最多续期到 2×）。
+		const locate = () => locateSubagentSession(ctx.sessionManager?.getSessionFile());
+		const stopHeartbeat = startHeartbeat({
+			layer: "l3",
+			jobId: job.id,
+			profilePath,
+			locate,
+			onTick: (info) =>
+				ctx.ui.setStatus(
+					"memory",
+					`Memory ⚙L3 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.grewBytes >= 0 ? `+${info.grewBytes}B/30s` : "静默?"}）`,
+				),
+		});
+		const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
+			baseMs: L3_SUBAGENT_TIMEOUT_MS + 30_000,
+			locate,
+			profilePath,
+			layer: "l3",
+			jobId: job.id,
+		});
 		try {
 			const spawnP = runPiSubagent("l3-persona-generator", task, ctx, L3_SUBAGENT_TIMEOUT_MS, abortCtl.signal);
 			void spawnP.catch((err) => {
@@ -262,6 +282,7 @@ export function setupL3Persona(
 			if (still?.status === "running") db.complete(job.id, "failed", err instanceof Error ? err.message : String(err));
 			return "failed";
 		} finally {
+			stopHeartbeat();
 			ctx.ui.setStatus("memory", "Memory");
 		}
 	}

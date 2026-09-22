@@ -3,7 +3,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.ts";
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { decideManualTrigger, waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { waitJobWithLiveness, locateSubagentSession, startHeartbeat } from "../pipeline/subagent-liveness.ts";
+import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
@@ -51,6 +52,20 @@ export function setupL2Organizer(
 		}
 		ctx.ui.setStatus("memory", job.source === "manual" ? `Memory ⚙L2 (manual, ${staged.length} records)...` : "Memory ⚙L2...");
 		const abortCtl = new AbortController();
+		// 2026-09-21：改走活性判定（到点先看子代理会话是否还在写，还在写就续期，最多 2×）。
+		// L2 曾经的 3 分钟超时把"跑了 13 分钟、还在改场景块"的子代理掐死了四次（jobs 55/61/64/68）。
+		const locate = () => locateSubagentSession(ctx.sessionManager?.getSessionFile());
+		const stopHeartbeat = startHeartbeat({
+			layer: "l2",
+			jobId: job.id,
+			profilePath,
+			locate,
+			onTick: (info) =>
+				ctx.ui.setStatus(
+					"memory",
+					`Memory ⚙L2 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.grewBytes >= 0 ? `+${info.grewBytes}B/30s` : "静默?"}）`,
+				),
+		});
 		try {
 			const task = buildL2Task(profilePath, undefined, true);
 			// 真完成信号 = 子代理里的 l2_commit 调 completeRunningL2()（把本 job 标 done）。
@@ -58,7 +73,13 @@ export function setupL2Organizer(
 			// 毫秒级返回，此刻"游标没推进"只说明子代理还没干完，不代表失败
 			//（2026-09-19 实测：旧写法把 job 在 0 秒标 done → 队列以为空闲 → 两个 L2 并发改场景块）。
 			const db = getPipelineJobsDB(profilePath);
-			const waitP = waitWhileRunning(() => db.getJob(job.id), L2_SUBAGENT_TIMEOUT_MS + 30_000);
+			const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
+				baseMs: L2_SUBAGENT_TIMEOUT_MS + 30_000,
+				locate,
+				profilePath,
+				layer: "l2",
+				jobId: job.id,
+			});
 			const spawnP = runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS, abortCtl.signal);
 			void spawnP.catch((err) => {
 				logEvent("l2", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
@@ -119,6 +140,8 @@ export function setupL2Organizer(
 			}
 			saveL2State(st);
 			return "failed";
+		} finally {
+			stopHeartbeat();
 		}
 	}
 

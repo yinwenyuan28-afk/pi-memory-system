@@ -13,6 +13,8 @@ import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, rec
 import { BACKUP_DIR, L2_INDEX_DIR, MEMORY_DB_DIR } from "../paths.ts";
 import { writePendingTrigger } from "../l3/signal.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
+import { loadFailureState, saveFailureState } from "../failure-state.ts";
+import { logEvent } from "../../util/notice.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 // ══════════════════════════════════════════════════════════════
@@ -88,6 +90,17 @@ export interface L2CommitResult {
 	warning?: string;
 	/** 本批执行的 consolidate 动作回报。 */
 	consolidations?: ConsolidationReport[];
+	/**
+	 * 本次子代理进程里的第几次成功提交（从 1 开始）。
+	 *
+	 * 为什么记它（2026-09-21 实测）：一次 L2 运行里模型自选了 **5 次** `l2_commit` —— 而每次提交
+	 * 都要再走一轮"大 payload 生成"（实测 L2 单次生成中位 42s、最长 348s）。规则文件已改为
+	 * "一轮一次提交"，这个字段只用于**观测与提示**：第 2 次起附 `commitHint`，并在 `logs/l2.log`
+	 * 记一行。不拒绝 —— 确有必须分次的场景（例如先 create 再 consolidate 才不受上限拒绝），堵死会更糟。
+	 */
+	commitSeq?: number;
+	/** 第 2 次起给出的提示文案（只提示，不阻断）。 */
+	commitHint?: string;
 }
 
 /** 合法场景文件名（对齐腾讯命名规范）。 */
@@ -187,6 +200,18 @@ function limitReachedError(maxScenes: number, count: number): string {
 		'{"action":"consolidate", "filename":"<目标块.md>", "sources":["<源1.md>","<源2.md>"], "content":"<合并后的完整正文>", "meta":{"summary":"…"}}，' +
 		"主进程会原子完成（备份源块 → 完整性校验 → 写目标块 → 删源块），一次提交即可。腾出空位后重试。 " +
 		"若确实没有满足判据、不该合并的块，就把内容并入最相关的现有块（update），不要新建。"
+	);
+}
+
+/**
+ * 第 2 次起提交时附的提示（只提示不阻断）。文案里给出"为什么慢"的量化依据，
+ * 否则模型看不出"多提交一次"的代价 —— 它每轮只看得到自己的任务，看不到墙钟。
+ */
+function commitHintText(seq: number): string {
+	return (
+		`这是本轮第 ${seq} 次 l2_commit。每多提交一次就多一整轮模型生成` +
+		`（实测单次 40s–350s），规则要求**把本轮所有 sceneWrites 攒好、只提交一次**。` +
+		`确有必须分次的情况（例如先 create 腾位、再 consolidate）可以继续，否则请下次一次性提交。`
 	);
 }
 
@@ -601,6 +626,9 @@ export function registerL2CommitTool(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
 ): void {
+	// 本进程（= 一次子代理运行）内成功提交的次数。子代理每次运行都是新进程，所以它天然是"本轮第几次"。
+	// 只用于观测与提示，见 L2CommitResult.commitSeq 的注释。
+	let commitSeq = 0;
 	pi.registerTool({
 		name: "l2_commit",
 		label: "L2 Commit Scene Writes",
@@ -855,9 +883,39 @@ export function registerL2CommitTool(
 			// 主进程 worker 靠轮询这张表判断"L2 跑完了"，不再信 `await runPiSubagent` 的返回
 			// （async:true 下它只代表"派出去了"）—— 那是两个 L2 并发改场景块的根因。
 			try {
-				getPipelineJobsDB(profilePath).completeRunningL2();
+				const jobs = getPipelineJobsDB(profilePath);
+				const doneNow = jobs.completeRunningL2();
+				// 2026-09-21：与 L1 同款的「超时误判」认领。L2 的超时曾只有 180s，连续四次
+				// （jobs 55/61/64/68）都是"主进程标 failed、子代理还在跑、最后照样提交" ——
+				// 活与场景都落了盘，账上却记失败，三次即熔断（那是 L2 停摆的直接原因）。
+				// 这里把刚被误判的 job 纠正为 done，并清零失败计数。
+				const reclaimed = jobs.reclaimTimedOutL2();
+				if (doneNow + reclaimed > 0) {
+					try {
+						const fs = loadFailureState(profilePath);
+						if (fs.l2.consecutiveFailures > 0 || fs.l2.cooledDown) {
+							fs.l2.consecutiveFailures = 0;
+							fs.l2.cooledDown = false;
+							saveFailureState(profilePath, fs);
+							logEvent(
+								"l2",
+								`纠正超时误判：job done=${doneNow} reclaimed=${reclaimed}，L2 失败计数已重置`,
+								profilePath,
+							);
+						}
+					} catch {
+						// 熔断状态写失败不影响提交
+					}
+				}
 			} catch {
 				// 队列不可用不影响写盘（记录/场景已落盘）
+			}
+
+			// 本轮第几次成功提交（见 L2CommitResult.commitSeq）。计数在**成功路径**上自增，
+				// 第 2 次起落一行日志 —— 这一条是"L2 为什么慢"的可观测锚点（每次提交 = 一整轮大生成）。
+			commitSeq += 1;
+			if (commitSeq > 1) {
+				logEvent("l2", `第 ${commitSeq} 次 l2_commit（本轮多次提交会多走 ${commitSeq - 1} 轮模型生成）`, profilePath);
 			}
 
 				return {
@@ -868,6 +926,8 @@ export function registerL2CommitTool(
 								success: true,
 								sceneCount: entries.length,
 								cursor,
+								commitSeq,
+								...(commitSeq > 1 ? { commitHint: commitHintText(commitSeq) } : {}),
 								// 未上报 members 的目标文件（可观测：便于判断子代理是否如实填写）
 								...(memberUpdate.missing.length > 0 ? { membersMissing: memberUpdate.missing } : {}),
 								// 上限不变量被破坏的信号（正常不出现）

@@ -15,8 +15,20 @@ import { render as renderPrompt } from "../../prompts/registry.ts";
  * 保留常量以免外部引用断裂。
  */
 export const L2_BATCH = 1;
-/** 子代理超时（增量后每批只处理游标之后的新记录，3 分钟足够；原 10 分钟过长，hung 子代理会长期占锁）。 */
-export const L2_SUBAGENT_TIMEOUT_MS = 180_000;
+/**
+ * 子代理超时。
+ *
+ * **2026-09-21：180s → 600s**（与 L1/L3 对齐）。旧的 3 分钟建立在一个被实测否掉的假设上
+ * ——「增量后每批只处理游标之后的新记录，3 分钟足够」。实测：
+ *   · jobs 55 / 61 / 64 / 68 连续四次全是 `timeout without l2_commit`（每轮 3.5 分钟即判失败）；
+ *   · 68 那次的子代理在被判失败之后**仍在干活**（会话 485 KB、9 次 `read_l1_increment`、正在调
+ *     `l2_commit`），到第 6.5 分钟还活着 —— 3 分钟不是"够"，是"必然误杀"；
+ *   · 同一晚 L1 的实测生成延迟是 60s–568s 的单次波动（§11.13），10 分钟档才留得出余量。
+ *
+ * 旧注释担心的"hung 子代理长期占锁"由两件事兜住：`waitWhileRunning` 到点会 abort 子代理；
+ * 提交侧现在也有 `reclaimTimedOutL2()` 认领超时误判（见 jobs-db.ts）。
+ */
+export const L2_SUBAGENT_TIMEOUT_MS = 600_000;
 /** 连续失败多少次后熔断（暂停自动提取并通知用户）。 */
 export const L2_FAILURE_THRESHOLD = 3;
 /**

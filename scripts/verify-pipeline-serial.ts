@@ -7,11 +7,12 @@
 //   ③ 下一步编排：`decideNextAfterL1` —— 还有 L0 积压就继续排 L1，排空了才排 L2
 //
 // 用 tsx 跑：tsx scripts/verify-pipeline-serial.ts
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { decideManualTrigger, decideNextAfterL1, pickNextClaimable } from "../memory/pipeline/worker.ts";
+import { decideTimeoutAction, locateSubagentSession, sampleSession } from "../memory/pipeline/subagent-liveness.ts";
 
 let pass = 0;
 let fail = 0;
@@ -227,6 +228,98 @@ console.log("\n=== 8. 来源即意图：l3 的 signal 必须与 trigger 分开�
 	check("signal 可作为 l3 的来源入库", db.getJob(sig.id)?.source === "signal");
 	check("signal 与 trigger 不互相去重（都能入队，type 去重只按 type）", db.enqueue("l3", "trigger").duplicate === true);
 	db.close();
+}
+
+console.log("\n=== 9. 超时误判认领：跑得晚但真提交了，账必须纠回来（L1/L2 同款） ===");
+{
+	const db = makeDb();
+	// 造一个"主进程标 failed、子代理随后提交"的 l2 job（jobs 55/61/64/68 那次四连超时的形状）
+	const timedOut = db.enqueue("l2", "l1_commit");
+	db.claim(timedOut.id);
+	db.complete(timedOut.id, "failed", "timeout without l2_commit");
+	check("先确认它确实被标成 failed", db.getJob(timedOut.id)?.status === "failed");
+
+	// 时间窗测试用一条**不同错误文案**的 job，免得它也被后面的 reclaimTimedOutL1() 数进去
+	const probe = db.enqueue("l1", "interval");
+	db.claim(probe.id);
+	db.complete(probe.id, "failed", "reclaim-window probe");
+	db.reclaimTimedOutL2(0); // withinMs=0 ⇒ 不认领任何"此刻之前完成"的
+	check("withinMs=0 时不认领（时间窗外不动手）", db.getJob(timedOut.id)?.status === "failed");
+
+	const n = db.reclaimTimedOutL2();
+	check("reclaimTimedOutL2 把超时的 l2 纠回 done", n === 1 && db.getJob(timedOut.id)?.status === "done");
+	check("error 被清空（不再是失败态）", db.getJob(timedOut.id)?.error === null);
+	check("再调一次幂等（0）", db.reclaimTimedOutL2() === 0);
+
+	// 类型隔离 + 文案隔离：别把 l1 的、或别的错误文案的 failed 洗成成功
+	const l1TimedOut = db.enqueue("l1", "interval");
+	db.claim(l1TimedOut.id);
+	db.complete(l1TimedOut.id, "failed", "timeout without l1_commit");
+	check("reclaimTimedOutL2 不认领 l1 的超时", db.reclaimTimedOutL2() === 0 && db.getJob(l1TimedOut.id)?.status === "failed");
+	check("reclaimTimedOutL1 才认领它", db.reclaimTimedOutL1() === 1 && db.getJob(l1TimedOut.id)?.status === "done");
+
+	const otherErr = db.enqueue("l2", "manual");
+	db.claim(otherErr.id);
+	db.complete(otherErr.id, "failed", "recovered: leftover running");
+	check("别的错误文案不被洗成成功", db.reclaimTimedOutL2() === 0 && db.getJob(otherErr.id)?.status === "failed");
+	db.close();
+}
+
+console.log("\n=== 10. 子代理活性判定：到点先看它还在不在写（2026-09-21 T1） ===");
+{
+	// 现场：L1 job 70 被标 failed 后 7 分钟才提交、L2 job 68 被标 failed 后 10 分钟还在写场景块。
+	// 所以"到点"不等于"死了" —— 判据换成"子代理会话是否还在长"。
+	const base = { deadlineMs: 630_000, extendedMs: 0, maxExtendMs: 630_000, silentThresholdMs: 120_000 };
+	check("未到点 → continue", decideTimeoutAction({ ...base, elapsedMs: 100_000, silentMs: 0 }) === "continue");
+	check(
+		"到点 + 仍在写（静默 30s）→ extend",
+		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: 30_000 }) === "extend",
+	);
+	check(
+		"到点 + 真静默（静默 5 分钟）→ abort",
+		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: 300_000 }) === "abort",
+	);
+	check(
+		"静默恰好等于阈值 → 不算还在写（abort）",
+		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: 120_000 }) === "abort",
+	);
+	check(
+		"延长额度用完 → abort（哪怕它还在写）",
+		decideTimeoutAction({ ...base, elapsedMs: 1_260_001, silentMs: 1_000, extendedMs: 630_000 }) === "abort",
+	);
+	check(
+		"会话定位不到（silentMs=-1）→ 不延长，按时失败",
+		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: -1 }) === "abort",
+	);
+	check(
+		"延长后仍未到新 deadline（deadline 被 +180s 抬到 810s）→ continue",
+		decideTimeoutAction({ ...base, deadlineMs: 810_000, elapsedMs: 700_000, silentMs: 1_000 }) === "continue",
+	);
+
+	// 会话采样：读不到文件必须是 -1（未知），不能是 0（0 会被误判成"刚刚在写"）
+	check("不存在的文件 → size/silent 都是 -1", sampleSession("C:/temp/pi/script/__no_such_session__.jsonl").size === -1);
+	check("file=undefined → -1", sampleSession(undefined).silentMs === -1);
+
+	// 定位子代理会话：父会话目录下按 mtime 取最新 run
+	{
+		const root = mkdtempSync(join(tmpdir(), "liveness-"));
+		roots.push(root);
+		const parent = join(root, "2026-09-22T00-00-00-000Z_abc.jsonl");
+		writeFileSync(parent, "{}\n", "utf-8");
+		const sessionDir = join(root, "2026-09-22T00-00-00-000Z_abc");
+		// 早的一个子代理 + 晚的一个（晚的才是当前这轮）
+		mkdirSync(join(sessionDir, "aaaa1111", "run-0"), { recursive: true });
+		mkdirSync(join(sessionDir, "bbbb2222", "run-0"), { recursive: true });
+		writeFileSync(join(sessionDir, "aaaa1111", "run-0", "session.jsonl"), "old", "utf-8");
+		writeFileSync(join(sessionDir, "bbbb2222", "run-0", "session.jsonl"), "new", "utf-8");
+		// 显式错开 mtime：同毫秒写入时"按 mtime 取最新"会并列，夹具必须确定（否则测试本身假红）
+		utimesSync(join(sessionDir, "aaaa1111", "run-0", "session.jsonl"), new Date(1000), new Date(1000));
+		utimesSync(join(sessionDir, "bbbb2222", "run-0", "session.jsonl"), new Date(2000), new Date(2000));
+		const found = locateSubagentSession(parent);
+		check("定位到最新的 run 会话", found === join(sessionDir, "bbbb2222", "run-0", "session.jsonl"), String(found));
+		check("父会话不存在时返回 undefined", locateSubagentSession(join(root, "nope.jsonl")) === undefined);
+		check("空参数返回 undefined", locateSubagentSession(undefined) === undefined);
+	}
 }
 
 for (const r of roots) {

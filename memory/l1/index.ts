@@ -11,7 +11,8 @@ import {
 import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { decideManualTrigger, waitWhileRunning, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { waitJobWithLiveness, locateSubagentSession, startHeartbeat } from "../pipeline/subagent-liveness.ts";
+import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l1CoolDownMessage(failures: number): string {
@@ -90,9 +91,26 @@ export function setupL1Extractor(
 		const db = getPipelineJobsDB(profilePath);
 		ctx.ui.setStatus("memory", job.source === "manual" ? "Memory ⚙L1 (manual)..." : "Memory ⚙L1...");
 		const abortCtl = new AbortController();
-		// waitWhileRunning 比子代理超时多给 30s 宽限：子代理在最后时刻调 l1_commit 时，
-		// 落盘 + 写游标 + 入队 L2 仍需时间，同值会在这条尾巴上误判超时（2026-09-15）。
-		const waitP = waitWhileRunning(() => db.getJob(job.id), SUBAGENT_TIMEOUT_MS + 30_000);
+		// 比子代理超时多给 30s 宽限：子代理在最后时刻调 l1_commit 时，落盘 + 写游标 + 入队 L2
+		// 仍需时间，同值会在这条尾巴上误判超时（2026-09-15）。
+		// 2026-09-21 起改走**活性判定**：到点先看子代理会话是否还在长，还在写就续期（最多 2×），
+		// 免得把"跑了 10 分钟、只差最后一步提交"的批次掐死（job 70 实测：标 failed 后 7 分钟才提交）。
+		const locate = () => locateSubagentSession(ctx.sessionManager?.getSessionFile());
+		const stopHeartbeat = startHeartbeat({
+			layer: "l1",
+			jobId: job.id,
+			profilePath,
+			locate,
+			onTick: (info) =>
+				ctx.ui.setStatus("memory", `Memory ⚙L1 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.grewBytes >= 0 ? `+${info.grewBytes}B/30s` : "静默?"}）`),
+		});
+		const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
+			baseMs: SUBAGENT_TIMEOUT_MS + 30_000,
+			locate,
+			profilePath,
+			layer: "l1",
+			jobId: job.id,
+		});
 		try {
 			const spawnP = runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS, abortCtl.signal);
 			void spawnP.catch((err) => {
@@ -158,6 +176,7 @@ export function setupL1Extractor(
 			if (still?.status === "running") db.complete(job.id, "failed", err instanceof Error ? err.message : String(err));
 			return "failed";
 		} finally {
+			stopHeartbeat();
 			ctx.ui.setStatus("memory", "Memory");
 		}
 	}
