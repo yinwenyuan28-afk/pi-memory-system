@@ -67,7 +67,11 @@ Mark L1 atomic memories as INVALID (agent judged them irrelevant after recall). 
 
 ## embed_and_search
 
-Embed queryText into vector, then cosine search top-K similar L1 records. Returns record_id + content + type + priority + score. Used by l1-extractor to find candidates for dedup (replaces 30-day full read).
+Embed query text(s) into vectors, then cosine search top-K similar L1 records. Returns record_id + content + type + priority + score. Used by l1-extractor to find candidates for dedup (replaces 30-day full read). BATCH IS THE DEFAULT for a whole extraction batch: pass queries (string[], one entry per new memory) and get results: [{index, queryText, queryVector, candidates}] in ONE call — do NOT loop one query at a time (each round trip costs a full model turn). In batch mode each candidate's content is trimmed to a ~200-char preview (record_id stays intact) because dedup only needs to judge similarity; every result also carries its own queryVector, which must be copied into the record's embedding field so l1_commit reuses it instead of re-embedding. Single queryText is still supported for one-off lookups.
+
+## read_scene_blocks
+
+Read several scene blocks in ONE call (the batch replacement for reading scene files one by one). Params: filenames (array of bare .md names taken from the scene index). Returns { blocks: [{filename, ok, meta, content, truncated?, omitted?, error?}], returned, omitted, truncated, totalChars }. Limits: one block is truncated at 24000 chars; a single call returns at most 96000 chars and marks the rest omitted (call again with fewer names, or read that block alone). Called by the l2-scene-organizer subagent — it must use this instead of per-block reads, because every extra tool call costs a full model turn and the whole L2 run has a wall-clock budget.
 
 ## read_skill_feed_increment
 

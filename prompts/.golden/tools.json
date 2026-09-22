@@ -53,10 +53,14 @@
   },
   "embed_and_search": {
     "file": "memory/search/embedding/tool.ts",
-    "value": "Embed queryText into vector, then cosine search top-K similar L1 records. Returns record_id + content + type + priority + score. Used by l1-extractor to find candidates for dedup (replaces 30-day full read)."
+    "value": "Embed query text(s) into vectors, then cosine search top-K similar L1 records. Returns record_id + content + type + priority + score. Used by l1-extractor to find candidates for dedup (replaces 30-day full read). BATCH IS THE DEFAULT for a whole extraction batch: pass queries (string[], one entry per new memory) and get results: [{index, queryText, queryVector, candidates}] in ONE call — do NOT loop one query at a time (each round trip costs a full model turn). In batch mode each candidate's content is trimmed to a ~200-char preview (record_id stays intact) because dedup only needs to judge similarity; every result also carries its own queryVector, which must be copied into the record's embedding field so l1_commit reuses it instead of re-embedding. Single queryText is still supported for one-off lookups."
   },
   "read_skill_feed_increment": {
     "file": "skill/feed-reader.ts",
     "value": "Read skill-feed (5-role sanitized conversation with tool_call/tool_result) increment after a cursor in one call. Called by the skill-reviewer subagent. Params: feedFiles (comma-separated absolute paths of skill-feed files), cursor (lastRecordedAt ISO string, empty for full scan). Returns { messages (new entries with role/content/tool_name/tool_call_id/is_error, time ascending), background (first 5 as context only, never extract from them), nextCursor, truncated }."
+  },
+  "read_scene_blocks": {
+    "file": "memory/l2/scene-read-tool.ts",
+    "value": "Read several scene blocks in ONE call (the batch replacement for reading scene files one by one). Params: filenames (array of bare .md names taken from the scene index). Returns { blocks: [{filename, ok, meta, content, truncated?, omitted?, error?}], returned, omitted, truncated, totalChars }. Limits: one block is truncated at 24000 chars; a single call returns at most 96000 chars and marks the rest omitted (call again with fewer names, or read that block alone). Called by the l2-scene-organizer subagent — it must use this instead of per-block reads, because every extra tool call costs a full model turn and the whole L2 run has a wall-clock budget."
   }
 }

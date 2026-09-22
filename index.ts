@@ -21,6 +21,7 @@ import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
 import { registerReadL0IncrementTool, readL0Increment } from "./memory/l1/read-tool.ts";
 import { countNewRecords, loadL2Cursor } from "./memory/l2/config.ts";
 import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
+import { registerReadSceneBlocksTool } from "./memory/l2/scene-read-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
 import { setupPipelineWorker, type PipelineExecutors, type PipelineJobResult, type PipelineWorker } from "./memory/pipeline/worker.ts";
@@ -325,6 +326,9 @@ export default function (pi: ExtensionAPI) {
   // 原注册点 setupL2Organizer 在 session_start 回调内、位于 PI_SUBAGENT_CHILD return 之后，
   // 子代理进程加载扩展时永远执行不到 → 工具从未在子代理注册（L2 管线死线，实测触发）。
   registerReadL1IncrementTool(pi, () => manager?.getProfileManager()?.getActiveProfile()?.path);
+  // read_scene_blocks 工具：l2-scene-organizer 子代理**一次**读完候选场景块（T2，2026-09-21）
+  // 注册点必须在这里（模块顶层）——子代理进程不会执行 session_start 之后的代码（read_l1_increment 踩过这个死线）
+  registerReadSceneBlocksTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
   // l3_edit 工具：l3-persona-generator 子代理的**条目级**写入（用户裁定：一次调用只动一条记忆）
   registerL3EditTool(
     pi,

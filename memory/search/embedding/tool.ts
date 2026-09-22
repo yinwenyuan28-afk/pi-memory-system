@@ -32,9 +32,17 @@ import { getVectorStore } from "../vector-store/store.ts";
 
 /** 工具参数 */
 interface EmbedAndSearchArgs {
-  queryText: string;
+  /** 单条查询（向后兼容） */
+  queryText?: string;
+  /** 批量查询（2026-09-21 新增，T4）：一次嵌入 + 一次返回多组候选，把 N 次往返压成 1 次 */
+  queries?: string[];
   topK?: number;
 }
+
+/** 批量模式下一次最多几条查询（防参数滥用）。 */
+const MAX_BATCH_QUERIES = 50;
+/** 批量模式下候选正文的预览上限（字符）：裁决只需判"像不像"，不需要全文。 */
+const BATCH_CANDIDATE_PREVIEW_CHARS = 200;
 
 /**
  * 注册 embed_and_search 工具
@@ -49,19 +57,90 @@ export function registerEmbedAndSearchTool(pi: { registerTool: (tool: any) => vo
     parameters: {
       queryText: {
         type: "string",
-        description: "查询文本（一般是 L1 提取出的新记忆 content）",
+        description: "单条查询文本（一般是 L1 提取出的新记忆 content）。与 queries 二选一；两者都给时优先 queries",
+      },
+      queries: {
+        type: "array",
+        items: { type: "string" },
+        description: "批量查询文本数组：一次嵌入 + 一次返回多组候选（推荐对整批新记忆一次调用，别逐条来回）",
       },
       topK: {
         type: "number",
-        description: "返回 top-K 候选（默认 5）",
+        description: "每条查询返回 top-K 候选（默认 5）",
       },
     },
     execute: async (toolCallId: string, params: EmbedAndSearchArgs) => {
-      const { queryText, topK = 5 } = params;
+      const { topK = 5 } = params;
+      const batch = Array.isArray(params?.queries) ? params.queries.filter((q): q is string => typeof q === "string" && q.trim().length > 0) : [];
+
+      // ── 批量分支（2026-09-21，T4）────────────────────────────────────────
+      // 为什么：实测一轮 L1 有 7–13 次 embed_and_search，每次后面都跟一整轮模型生成
+      // （中位 18s）。裁决本来就是"批量判定"一次完成的，所以那十几次往返全花在"逐条检索"上 ——
+      // 把检索并成一次，往返数直接降到 1，判定逻辑一个字都不用改。
+      // 返回体保留每条查询自己的 queryVector（记录里的 embedding 字段要复用，避免 l1_commit 重复 embed）。
+      if (batch.length > 0) {
+        if (batch.length > MAX_BATCH_QUERIES) {
+          return { results: [], error: `一次最多批量 ${MAX_BATCH_QUERIES} 条查询（收到 ${batch.length}）` };
+        }
+        try {
+          const embeddingService = await getEmbeddingService();
+          const vectorStore = await getVectorStore();
+          if (!(await vectorStore.isAvailable())) {
+            return { results: [], fallback: true, reason: "vector store 不可用" };
+          }
+          const vectors = await embeddingService.embedBatch(batch);
+          const results = [];
+          for (let i = 0; i < batch.length; i++) {
+            const queryVector = vectors[i];
+            const hits = await vectorStore.search(queryVector, topK);
+            const candidates = await Promise.all(
+              hits.map(async (hit) => {
+                const profilePath = process.env.PI_PROFILE_PATH ?? "";
+                const record = await loadL1RecordById(hit.recordId, profilePath);
+                const full = record ?? { content: "(record not found)", type: "unknown", priority: 0 };
+                // 批量模式裁剪正文预览：N 条 × topK 条完整记录会很大，而裁决只需判"像不像"。
+                // **只裁剪预览，record_id 原样保留**（落盘/去重都靠 id）。
+                const content = typeof (full as { content?: unknown }).content === "string" ? String((full as { content: string }).content) : "";
+                return {
+                  ...full,
+                  ...(content.length > BATCH_CANDIDATE_PREVIEW_CHARS
+                    ? { content: `${content.slice(0, BATCH_CANDIDATE_PREVIEW_CHARS)}…`, contentTruncated: true }
+                    : {}),
+                  record_id: hit.recordId,
+                  score: hit.score,
+                };
+              }),
+            );
+            results.push({ index: i, queryText: batch[i], queryVector, candidates });
+          }
+          return {
+            results,
+            stats: {
+              queries: batch.length,
+              embedding_model: embeddingService.getModelId(),
+              dimensions: embeddingService.getDimensions(),
+              candidate_preview_chars: BATCH_CANDIDATE_PREVIEW_CHARS,
+            },
+          };
+        } catch (e: any) {
+          const stack =
+            typeof e?.stack === "string"
+              ? e.stack
+                  .split("\n")
+                  .slice(0, 7)
+                  .map((s: string) => s.trim())
+                  .join(" | ")
+              : "";
+          return { results: [], fallback: true, reason: `embed_and_search(批量) 失败: ${e.message}`, stack };
+        }
+      }
+
+      // ── 单条分支（原有行为，未改）──────────────────────────────────────
+      const queryText = params?.queryText;
 
       // 防御：空输入
       if (!queryText || queryText.trim().length === 0) {
-        return { candidates: [], error: "queryText 为空" };
+        return { candidates: [], error: "queryText 为空（批量请用 queries 数组）" };
       }
 
       try {
