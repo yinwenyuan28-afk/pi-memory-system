@@ -121,6 +121,21 @@ export const VECTORS_DIR = join("search", "vectors");
 export const PIPELINE_JOBS_FILE = join("pipeline", "jobs.sqlite");
 /** 各层失败状态（{memoryDB}/state/failure-state.json）。 */
 export const FAILURE_STATE_FILE = join("state", "failure-state.json");
+/**
+ * 子代理停止请求标记的前缀（`{memoryDB}/state/stop-request-<layer>.json`，2026-09-26）。
+ *
+ * 用途：硬上限要停掉子代理时，主进程先落这个标记，该层的写工具在**入口**检查它 ——
+ * Windows 上进程没有可捕获的优雅信号（SIGTERM 即 TerminateProcess），
+ * 所以"让它体面停下"只能靠这种协作式停止（详见 `memory/pipeline/stop-request.ts`）。
+ */
+export const STOP_REQUEST_FILE_PREFIX = join("state", "stop-request-");
+/**
+ * 子代理**运行级锁**目录前缀（`{memoryDB}/state/run-lock-<layer>.lock/`，2026-09-26）。
+ *
+ * 用途：让"谁在写这一层"由写者自己持有（`mkdir` 占位 + `owner.json`），
+ * 从而不再依赖监督者判断"子代理何时算结束"（详见 `memory/pipeline/run-lock.ts`）。
+ */
+export const RUN_LOCK_FILE_PREFIX = join("state", "run-lock-");
 
 // ── 运行日志与跨进程通知 ────────────────────────────────────
 /**

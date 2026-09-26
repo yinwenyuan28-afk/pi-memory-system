@@ -17,6 +17,8 @@ import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
 import { MEMORY_DB_DIR, L1_VALUE_CHECK_LOG } from "../paths.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
+import { isStopRequested, stopRequestedMessage } from "../pipeline/stop-request.ts";
+import { acquireRunLock, runLockBusyMessage } from "../pipeline/run-lock.ts";
 import { loadFailureState, saveFailureState } from "../failure-state.ts";
 import { acquireWriteLock } from "./write-lock.ts";
 import { loadEmbeddingConfig } from "../search/embedding/config.ts";
@@ -164,6 +166,27 @@ export function registerL1CommitTool(
 				const profilePath = getProfilePath();
 				if (!profilePath) {
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "No active profile" }) }], details: {} };
+				}
+				// 停止请求（2026-09-26）：硬上限要停掉 L1 子代理时，主进程先落标记，这里在**入口**拒写，
+				// 把"被杀点"推到操作边界（而不是一次多步写入的中间）。
+				// **不拦 main-agent**：标记针对的是那个卡住的子代理；主代理的记录来自用户，不该被连带拒掉。
+				if (params?.source !== "main-agent" && isStopRequested(profilePath, "l1")) {
+					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: stopRequestedMessage("l1") }) }], details: {} };
+				}
+				// 运行级锁（2026-09-26）：谁写谁持锁 —— 防"监督者误判提前放锁"导致的两个同层写者。
+				// 存在的理由不是文件写冲突（那由提交级写锁串行化），而是**读-改-写的交错**：
+				// 两个子代理各自基于旧快照提交，后提交的那个会覆盖前者的改动。
+				// **不拦 main-agent**：用户触发的记录不该被后台子代理的锁挡住（同停止标记的取舍）。
+				if (params?.source !== "main-agent") {
+					const runLock = acquireRunLock(profilePath, "l1");
+					if (!runLock.acquired) {
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify({ success: false, error: runLockBusyMessage("l1", runLock.owner) }) },
+							],
+							details: {},
+						};
+					}
 				}
 				const source = params?.source === "main-agent" ? "main-agent" : "subagent";
 				const isMainAgent = source === "main-agent";

@@ -13,6 +13,8 @@ import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, rec
 import { BACKUP_DIR, L2_INDEX_DIR, MEMORY_DB_DIR } from "../paths.ts";
 import { writePendingTrigger } from "../l3/signal.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
+import { isStopRequested, stopRequestedMessage } from "../pipeline/stop-request.ts";
+import { acquireRunLock, runLockBusyMessage } from "../pipeline/run-lock.ts";
 import { loadFailureState, saveFailureState } from "../failure-state.ts";
 import { logEvent } from "../../util/notice.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
@@ -561,6 +563,44 @@ function saveSceneMembers(profilePath: string, members: Record<string, string[]>
 	}
 }
 
+/**
+ * 补成员 sidecar 的**缺失部分**（2026-09-26，杀后修复 5d）。
+ *
+ * 为什么需要：`l2_commit` 的顺序是"写块 → 更新 sidecar → 重建索引"，子代理若在中间被杀，
+ * sidecar 就缺本次写入的记录 id（"哪些记录属于这块"不全，影响合并判据与索引 members 字段）。
+ * 而块正文里本来就写着那些 id（`ID_TOKEN_RE`），可以**确定性**补回来，不需要 LLM。
+ *
+ * 只做并集（只加不减）：不做删除，避免把合法的历史 id 误删。
+ *
+ * @returns 被补齐的块数
+ */
+export function repairSceneMembers(profilePath: string): number {
+	const sceneDir = join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME);
+	if (!existsSync(sceneDir)) return 0;
+	const members = loadSceneMembers(profilePath);
+	let fixed = 0;
+	for (const f of readdirSync(sceneDir)) {
+		if (!f.endsWith(".md")) continue;
+		let raw: string;
+		try {
+			raw = readFileSync(join(sceneDir, f), "utf-8");
+		} catch {
+			continue;
+		}
+		const found = raw.match(ID_TOKEN_RE) ?? [];
+		if (found.length === 0) continue;
+		const cur = new Set(members[f] ?? []);
+		const before = cur.size;
+		for (const id of found) cur.add(id);
+		if (cur.size !== before) {
+			members[f] = [...cur];
+			fixed++;
+		}
+	}
+	if (fixed > 0) saveSceneMembers(profilePath, members);
+	return fixed;
+}
+
 /** consolidate 自动备份结果。 */
 export interface ConsolidateBackup {
 	/** 备份目录（相对 `{profilePath}/memoryDB/`）。 */
@@ -747,6 +787,27 @@ export function registerL2CommitTool(
 				const profilePath = getProfilePath();
 				if (!profilePath) {
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "No active profile" }) }], details: {} };
+				}
+				// 停止请求（2026-09-26）：硬上限要停掉本子代理时，主进程先落标记，这里在**入口**拒写。
+				// 这样"被杀点"被推到操作边界，而不是一次多步写入（校验→备份→写块→删源→成员→索引→游标）的中间。
+				if (isStopRequested(profilePath, "l2")) {
+					return {
+						content: [{ type: "text", text: JSON.stringify({ success: false, error: stopRequestedMessage("l2") } satisfies Partial<L2CommitResult>) }],
+						details: {},
+					};
+				}
+				// 运行级锁（2026-09-26）：谁写谁持锁 —— 防两个 L2 子代理交错提交（后提交者覆盖前者）。
+				// 场景块/索引/成员 sidecar 全是"读旧快照 → 整块重写"，交错提交会静默丢改动。
+				{
+					const runLock = acquireRunLock(profilePath, "l2");
+					if (!runLock.acquired) {
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify({ success: false, error: runLockBusyMessage("l2", runLock.owner) } satisfies Partial<L2CommitResult>) },
+							],
+							details: {},
+						};
+					}
 				}
 				const writes = params?.sceneWrites as SceneWrite[] | undefined;
 				const cursor = typeof params?.cursor === "string" ? params.cursor : "";

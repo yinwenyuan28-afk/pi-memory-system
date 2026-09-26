@@ -11,11 +11,13 @@ import {
 	saveL3Cursor,
 } from "./config.ts";
 import { MEMORY_DB_DIR } from "../paths.ts";
-import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
+import { holdUntilFrom, loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { evaluateTrigger } from "./trigger.ts";
 import { consumePendingTrigger } from "./signal.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { waitJobWithLiveness, locateSubagentSession, startHeartbeat } from "../pipeline/subagent-liveness.ts";
+import { resolveSubagentSession, startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
+import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
+import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { parseUserFile } from "./entries.ts";
@@ -226,9 +228,9 @@ export function setupL3Persona(
 		const abortCtl = new AbortController();
 		// 与 L1/L2 同款：真完成信号来自子代理的 `l3_commit`（completeRunningL3），
 		// **不是** `await runPiSubagent` 的返回 —— 那是 async:true 的 fire-and-forget，毫秒级返回。
-		// 多给 30s 宽限：子代理在最后时刻提交时，落盘 + 写游标仍需时间。
-		// 2026-09-21 起再叠一层**活性判定**：到点先看子代理会话是否还在长（最多续期到 2×）。
-		const locate = () => locateSubagentSession(ctx.sessionManager?.getSessionFile());
+		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：软阈值只提示、硬上限**停掉子代理**（旧实现到点判死 + abort 会误判）。
+		const parentSessionFile = ctx.sessionManager?.getSessionFile();
+		const locate = () => resolveSubagentSession(parentSessionFile).file;
 		const stopHeartbeat = startHeartbeat({
 			layer: "l3",
 			jobId: job.id,
@@ -240,8 +242,12 @@ export function setupL3Persona(
 					`Memory ⚙L3 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.grewBytes >= 0 ? `+${info.grewBytes}B/30s` : "静默?"}）`,
 				),
 		});
+		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
+
+		const to = loadSubagentTimeouts(profilePath);
 		const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
-			baseMs: L3_SUBAGENT_TIMEOUT_MS + 30_000,
+				softMs: to.softMs,
+				hardMs: to.hardMs,
 			locate,
 			profilePath,
 			layer: "l3",
@@ -252,13 +258,17 @@ export function setupL3Persona(
 			void spawnP.catch((err) => {
 				logEvent("l3", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
 			});
-			await Promise.race([spawnP, waitP]);
-			if (db.getJob(job.id)?.status === "running") await waitP;
+			const outcome = await waitP;
 
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
 				recordSuccess();
-				logEvent("l3", `本轮完成（job ${job.id}，${gate.reason}）`, profilePath);
+				logEvent(
+					"l3",
+					`本轮完成（job ${job.id}，${gate.reason}，${(outcome.elapsedMs / 1000).toFixed(0)}s` +
+						`${outcome.longestTurnMs !== undefined ? `，最长单轮 ${(outcome.longestTurnMs / 1000).toFixed(0)}s` : ""}）`,
+					profilePath,
+				);
 				// 画像变更卡片：这是本系统唯一会改用户画像的层，改了什么必须可见
 				//（2026-09-19 之前完全静默：连“跑完了没改任何东西”都无从得知）。
 				reportUserFileDiff(userEntriesBefore, readUserEntries(profilePath));
@@ -269,11 +279,35 @@ export function setupL3Persona(
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
-			// 仍在 running = 超过等待窗口仍没提交 → failed（并真的掐掉挂死的子代理进程）
-			if (after?.status === "running") db.complete(job.id, "failed", "timeout without l3_commit");
-			abortCtl.abort();
+			// 到硬上限仍是 running ⇒ 停掉子代理（先拦 → 宽限 → 杀进程树 → 杀后修复）
+			const stop = await stopSubagent({
+				graceMs: to.killGraceMs,
+				profilePath,
+				layer: "l3",
+				jobId: job.id,
+				reason: `L3 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
+				parentSessionFile,
+			});
+			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
 			await spawnP.catch(() => {});
-			recordFailure(ctx, `子代理在时限内未提交（job ${job.id}）`);
+			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
+			recordFailure(ctx, `子代理超过硬上限被停掉（job ${job.id}）`);
+			if (!stop.killConfirmed) {
+				// 停不下来就不能放新 L3 进来（它会改 USER.md —— 受保护数据）⇒ 持有该层
+				const st3 = loadFailureState(profilePath);
+				st3.l3.holdUntil = holdUntilFrom(Date.now(), to.holdMsUnconfirmed);
+				saveFailureState(profilePath, st3);
+			}
+			logEvent("l3", `round stopped at hard cap (job ${job.id}，${stop.note})`, profilePath);
+			noticeCard({
+				level: "warning",
+				title: "L3 画像更新已在硬上限被停掉",
+				lines: [
+					`job ${job.id}（来源 ${job.source}）超过 ${(to.hardMs / 60000).toFixed(0)} 分钟未提交，已停止子代理`,
+					stop.killConfirmed ? "USER.md 已核（原子写 + 每轮备份，未被破坏）" : "**未能确认停止**，本层已持有，暂不接受新任务",
+				],
+				detail: `${stop.note}\n进程内日志：memoryDB/logs/l3.log`,
+			});
 			return "failed";
 		} catch (err) {
 			abortCtl.abort();

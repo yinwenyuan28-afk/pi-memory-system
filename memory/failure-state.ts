@@ -13,6 +13,14 @@ import { FAILURE_STATE_FILE, MEMORY_DB_DIR } from "./paths.ts";
 export interface LayerFailureState {
 	consecutiveFailures: number;
 	cooledDown: boolean;
+	/**
+	 * 层持有到什么时候（ISO 时间；可选，2026-09-26 新增）。
+	 *
+	 * 用途：硬上限停掉子代理时，若**无法确认进程已死**（拿不到 pid / 杀完仍存活），
+	 * 就不能让新的同层 job 起来（两个写者会同时改场景块）⇒ 持有该层到 `holdUntil`。
+	 * 确认已死的情形**不写这个字段** —— 那种情况下该层立刻可跑（这正是"直接停掉"的收益）。
+	 */
+	holdUntil?: string;
 }
 
 export interface FailureState {
@@ -31,26 +39,34 @@ export interface FailureState {
 
 const EMPTY: LayerFailureState = { consecutiveFailures: 0, cooledDown: false };
 
+/** 取一层（含可选的 holdUntil，缺字段则省略）。 */
+function pickLayer(d: Partial<LayerFailureState> | undefined): LayerFailureState {
+	const layer: LayerFailureState = {
+		consecutiveFailures: Number(d?.consecutiveFailures) || 0,
+		cooledDown: Boolean(d?.cooledDown),
+	};
+	if (typeof d?.holdUntil === "string" && d.holdUntil) layer.holdUntil = d.holdUntil;
+	return layer;
+}
+
+/** 该层是否被持有（`holdUntil` 未过期）。纯函数，可离线测。 */
+export function isLayerHeld(state: LayerFailureState | undefined, nowMs = Date.now()): boolean {
+	const t = state?.holdUntil ? Date.parse(state.holdUntil) : Number.NaN;
+	return Number.isFinite(t) && t > nowMs;
+}
+
+/** 生成"持有到 `ms` 毫秒后"的 ISO 时间戳。 */
+export function holdUntilFrom(nowMs: number, ms: number): string {
+	return new Date(nowMs + ms).toISOString();
+}
+
 /** 读取熔断状态（跨重启持久）。无文件 / 损坏返回全零。 */
 export function loadFailureState(profilePath: string): FailureState {
 	const p = join(profilePath, MEMORY_DB_DIR, FAILURE_STATE_FILE);
 	if (!existsSync(p)) return { l1: { ...EMPTY }, l2: { ...EMPTY }, l3: { ...EMPTY } };
 	try {
 		const d = JSON.parse(readFileSync(p, "utf-8")) as Partial<FailureState>;
-		return {
-			l1: {
-				consecutiveFailures: Number(d?.l1?.consecutiveFailures) || 0,
-				cooledDown: Boolean(d?.l1?.cooledDown),
-			},
-			l2: {
-				consecutiveFailures: Number(d?.l2?.consecutiveFailures) || 0,
-				cooledDown: Boolean(d?.l2?.cooledDown),
-			},
-			l3: {
-				consecutiveFailures: Number(d?.l3?.consecutiveFailures) || 0,
-				cooledDown: Boolean(d?.l3?.cooledDown),
-			},
-		};
+		return { l1: pickLayer(d?.l1), l2: pickLayer(d?.l2), l3: pickLayer(d?.l3) };
 	} catch {
 		return { l1: { ...EMPTY }, l2: { ...EMPTY }, l3: { ...EMPTY } };
 	}

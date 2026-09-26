@@ -11,6 +11,8 @@ import {
 	type EntryOpResult,
 } from "./entries.ts";
 import { ensureRunBackup, readUserFile, writeUserFile } from "./user-file.ts";
+import { isStopRequested, stopRequestedMessage } from "../pipeline/stop-request.ts";
+import { acquireRunLock, runLockBusyMessage } from "../pipeline/run-lock.ts";
 
 /**
  * 注册 `l3_edit` 工具（扩展加载时调用一次）。
@@ -60,6 +62,12 @@ export function registerL3EditTool(
 			try {
 				const profilePath = getProfilePath();
 				if (!profilePath) return reply({ success: false, error: "No active profile" });
+				// 停止请求（2026-09-26）：硬上限停掉 L3 子代理时，入口拒写（USER.md 是受保护数据，
+				// "把被杀点推到操作边界"在这里尤其重要）
+				if (isStopRequested(profilePath, "l3")) return reply({ success: false, error: stopRequestedMessage("l3") });
+				// 运行级锁（2026-09-26）：谁写谁持锁 —— USER.md 是受保护数据，两个 L3 交错提交会互相覆盖
+				const runLock = acquireRunLock(profilePath, "l3");
+				if (!runLock.acquired) return reply({ success: false, error: runLockBusyMessage("l3", runLock.owner) });
 
 				const action = typeof params?.action === "string" ? params.action : "";
 				if (action !== "add" && action !== "update" && action !== "delete") {

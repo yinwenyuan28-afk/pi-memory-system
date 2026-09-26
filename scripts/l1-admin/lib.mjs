@@ -64,8 +64,42 @@ export function scanRecords(profileDir) {
   return { dir, rows, byId, alive, lww, lwwAlive };
 }
 
+/**
+ * 运行级锁检查（2026-09-26）：`{memoryDB}/state/run-lock-<layer>.lock/` 由**后台子代理进程**持有。
+ *
+ * 判据与 TS 侧 `memory/pipeline/run-lock.ts` 的 `runLockAcquirable` 同款、**顺序也一致**（改动要两边同步）：
+ *   ① 持有者 pid 已不存在 → 视为可抢（确定性）
+ *   ② 心跳不新鲜（默认 60s）→ 可抢（免疫 pid 复用）
+ *   ③ 超过 expiresAt → 可抢（兜底）
+ * 三者都不满足 ⇒ **抛错停手**。为什么 CLI 也要看这把锁：`atomicRewrite` 是整分片改写，
+ * 与子代理的 `l1_commit` **读-改-写交错**会静默丢改动（提交级写锁只保证单次写不交叠，管不住交错）。
+ *
+ * 读不出 `owner.json` → 不动（与 TS 侧同款保守取舍：误判"没锁"会导致丢改动，多等只是慢）。
+ */
+export function assertRunLockFree(profileDir, layer = 'l1') {
+  const ownerPath = join(memoryDbDir(profileDir), 'state', `run-lock-${layer}.lock`, 'owner.json');
+  if (!existsSync(ownerPath)) return;
+  let o = null;
+  try { o = JSON.parse(readFileSync(ownerPath, 'utf8')); } catch { return; }
+  if (!o || typeof o.pid !== 'number' || o.pid <= 0) return;
+  let alive = true;
+  try { process.kill(o.pid, 0); } catch (e) { alive = e?.code === 'EPERM'; }
+  if (!alive) return;                                    // ① 持有者已死 → 可抢
+  const now = Date.now();
+  const hb = typeof o.heartbeatAt === 'number' && o.heartbeatAt > 0 ? o.heartbeatAt : 0;
+  const expires = typeof o.expiresAt === 'number' && o.expiresAt > 0 ? o.expiresAt : 0;
+  if (hb > 0 && now - hb > 60000) return;                 // ② 心跳不新鲜 → 可抢
+  if (expires > 0 && now > expires) return;               // ③ 过期 → 可抢
+  throw new Error(
+    `L1 正在被后台子代理写入（pid=${o.pid}${hb > 0 ? `，最后心跳 ${Math.round((now - hb) / 1000)}s 前` : '，心跳缺失'}）：` +
+      `请稍后重试；若确认它卡住，用 /my-memory:subagent-kill l1 停掉后再试`,
+  );
+}
+
 /** 写操作前自动备份：copy L1 records 到 {memoryDB}/backups/l1-admin/{timestamp}/l1/records */
 export function autoBackup(profileDir, tag = 'op') {
+  // 备份本身也是写路径的第一步 ⇒ 先确认没有后台子代理在写这一层（2026-09-26）
+  assertRunLockFree(profileDir, 'l1');
   const db = memoryDbDir(profileDir);
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const dest = join(db, BACKUP_DIR_NAME, `${ts}-${tag}`);

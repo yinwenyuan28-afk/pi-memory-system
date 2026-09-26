@@ -8,10 +8,12 @@ import {
 	listL0Files,
 	loadL1Cursor,
 } from "./config.ts";
-import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
+import { holdUntilFrom, loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { waitJobWithLiveness, locateSubagentSession, startHeartbeat } from "../pipeline/subagent-liveness.ts";
+import { resolveSubagentSession, startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
+import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
+import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
@@ -93,9 +95,10 @@ export function setupL1Extractor(
 		const abortCtl = new AbortController();
 		// 比子代理超时多给 30s 宽限：子代理在最后时刻调 l1_commit 时，落盘 + 写游标 + 入队 L2
 		// 仍需时间，同值会在这条尾巴上误判超时（2026-09-15）。
-		// 2026-09-21 起改走**活性判定**：到点先看子代理会话是否还在长，还在写就续期（最多 2×），
-		// 免得把"跑了 10 分钟、只差最后一步提交"的批次掐死（job 70 实测：标 failed 后 7 分钟才提交）。
-		const locate = () => locateSubagentSession(ctx.sessionManager?.getSessionFile());
+		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：软阈值只提示、硬上限**停掉子代理**；
+		// 旧实现到点判死 + abort 实测会误判（job 70 标 failed 后 7 分钟才提交）。
+		const parentSessionFile = ctx.sessionManager?.getSessionFile();
+		const locate = () => resolveSubagentSession(parentSessionFile).file;
 		const stopHeartbeat = startHeartbeat({
 			layer: "l1",
 			jobId: job.id,
@@ -104,8 +107,12 @@ export function setupL1Extractor(
 			onTick: (info) =>
 				ctx.ui.setStatus("memory", `Memory ⚙L1 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.grewBytes >= 0 ? `+${info.grewBytes}B/30s` : "静默?"}）`),
 		});
+		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
+
+		const to = loadSubagentTimeouts(profilePath);
 		const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
-			baseMs: SUBAGENT_TIMEOUT_MS + 30_000,
+				softMs: to.softMs,
+				hardMs: to.hardMs,
 			locate,
 			profilePath,
 			layer: "l1",
@@ -116,13 +123,17 @@ export function setupL1Extractor(
 			void spawnP.catch((err) => {
 				logEvent("l1", `spawn later: ${err instanceof Error ? err.message : String(err)}`);
 			});
-			await Promise.race([spawnP, waitP]);
-			if (db.getJob(job.id)?.status === "running") await waitP;
+			const outcome = await waitP;
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
 				const s2 = loadL1State();
 				s2.consecutiveFailures = 0;
 				saveL1State(s2);
+				logEvent(
+					"l1",
+					`job ${job.id} 完成：${(outcome.elapsedMs / 1000).toFixed(0)}s` +
+						`${outcome.longestTurnMs !== undefined ? `，最长单轮 ${(outcome.longestTurnMs / 1000).toFixed(0)}s` : ""}`,
+				);
 				return "done";
 			}
 			if (after?.status === "skipped") {
@@ -130,24 +141,31 @@ export function setupL1Extractor(
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
-			if (after?.status === "running") {
-				db.complete(job.id, "failed", "timeout without l1_commit");
-			}
-			abortCtl.abort();
+			// 到硬上限仍是 running ⇒ 停掉子代理（先拦 → 宽限 → 杀进程树 → 杀后修复）
+			const stop = await stopSubagent({
+				graceMs: to.killGraceMs,
+				profilePath,
+				layer: "l1",
+				jobId: job.id,
+				reason: `L1 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
+				parentSessionFile,
+			});
+			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
 			await spawnP.catch(() => {});
+			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
 			const s2 = loadL1State();
 			s2.consecutiveFailures++;
-			// 子代理超时未提交 = “记忆没写成”的实锤（以前只有 console.warn，用户完全看不见）
-			const timeoutDetail = `job ${job.id}，status=${after?.status}`;
-			logEvent("l1", `extract ended without commit (${timeoutDetail})`);
+			if (!stop.killConfirmed) s2.holdUntil = holdUntilFrom(Date.now(), to.holdMsUnconfirmed);
+			logEvent("l1", `extract stopped at hard cap (job ${job.id}，${stop.note})`);
 			noticeCard({
 				level: "warning",
-				title: "L1 提取未提交（超时/无 l1_commit）",
+				title: "L1 提取已在硬上限被停掉",
 				lines: [
-					`job ${job.id}（来源 ${job.source}）在时限内未调入 l1_commit`,
-					`连续失败 ${s2.consecutiveFailures}/${L1_FAILURE_THRESHOLD}`,
+					`job ${job.id}（来源 ${job.source}）超过 ${(to.hardMs / 60000).toFixed(0)} 分钟未提交，已停止子代理`,
+					`本批未提交 ⇒ 游标未推进，下一轮重做；连续失败 ${s2.consecutiveFailures}/${L1_FAILURE_THRESHOLD}`,
+					stop.killConfirmed ? "杀后修复已完成（分片尾/写锁/游标已核）" : "**未能确认停止**，本层已持有，暂不接受新任务",
 				],
-				detail: `status=${after?.status}\n进程内日志：memoryDB/logs/l1.log`,
+				detail: `${stop.note}\n进程内日志：memoryDB/logs/l1.log`,
 			});
 			if (s2.consecutiveFailures >= L1_FAILURE_THRESHOLD && !s2.cooledDown) {
 				s2.cooledDown = true;

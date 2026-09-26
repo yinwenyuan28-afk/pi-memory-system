@@ -4,6 +4,8 @@ import { USER_CHAR_LIMIT, loadL3Cursor, saveL3Cursor } from "./config.ts";
 import { entryBudget, parseUserFile } from "./entries.ts";
 import { readUserFile } from "./user-file.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
+import { isStopRequested, stopRequestedMessage } from "../pipeline/stop-request.ts";
+import { acquireRunLock, runLockBusyMessage } from "../pipeline/run-lock.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 export interface L3CommitResult {
@@ -53,6 +55,11 @@ export function registerL3CommitTool(
 			try {
 				const profilePath = getProfilePath();
 				if (!profilePath) return reply({ success: false, error: "No active profile" });
+				// 停止请求（2026-09-26）：硬上限停掉 L3 子代理时，入口拒写（把被杀点推到操作边界）
+				if (isStopRequested(profilePath, "l3")) return reply({ success: false, error: stopRequestedMessage("l3") });
+				// 运行级锁（2026-09-26）：谁写谁持锁 —— 两个 L3 同时改 USER.md 会互相覆盖
+				const runLock = acquireRunLock(profilePath, "l3");
+				if (!runLock.acquired) return reply({ success: false, error: runLockBusyMessage("l3", runLock.owner) });
 
 				const cursor = typeof params?.cursor === "string" ? params.cursor.trim() : "";
 				if (!cursor) return reply({ success: false, error: "cursor is required" });

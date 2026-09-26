@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { decideManualTrigger, decideNextAfterL1, pickNextClaimable } from "../memory/pipeline/worker.ts";
-import { decideTimeoutAction, locateSubagentSession, sampleSession } from "../memory/pipeline/subagent-liveness.ts";
+import { decideWaitPhase, isRunActive, locateSubagentSession, longestEntryGapMs, readAsyncRunInfo, sampleSession } from "../memory/pipeline/subagent-liveness.ts";
+import { clearStopRequest, isStopRequested, stopRequestActive, stopRequestPath, writeStopRequest } from "../memory/pipeline/stop-request.ts";
+import { DEFAULT_HARD_MS, DEFAULT_HOLD_MS_UNCONFIRMED, DEFAULT_KILL_GRACE_MS, DEFAULT_RUN_LOCK_HEARTBEAT_MS, DEFAULT_RUN_LOCK_STALE_HEARTBEAT_MS, DEFAULT_SOFT_MS, DEFAULT_STOP_REQUEST_TTL_MS, loadSubagentTimeouts, resolveTimeoutSection } from "../memory/pipeline/timeout-config.ts";
+import { holdUntilFrom, isLayerHeld, loadFailureState, saveFailureState } from "../memory/failure-state.ts";
 
 let pass = 0;
 let fail = 0;
@@ -265,36 +268,65 @@ console.log("\n=== 9. 超时误判认领：跑得晚但真提交了，账必须�
 	db.close();
 }
 
-console.log("\n=== 10. 子代理活性判定：到点先看它还在不在写（2026-09-21 T1） ===");
+console.log("\n=== 10. 等待阶段：软阈值只提示、硬上限才交还控制权（2026-09-26 取代 mtime 判死） ===");
 {
-	// 现场：L1 job 70 被标 failed 后 7 分钟才提交、L2 job 68 被标 failed 后 10 分钟还在写场景块。
-	// 所以"到点"不等于"死了" —— 判据换成"子代理会话是否还在长"。
-	const base = { deadlineMs: 630_000, extendedMs: 0, maxExtendMs: 630_000, silentThresholdMs: 120_000 };
-	check("未到点 → continue", decideTimeoutAction({ ...base, elapsedMs: 100_000, silentMs: 0 }) === "continue");
+	// 现场（job 76）：单轮生成 987 秒期间会话文件 0 字节增长 ⇒ 旧的"静默=死"判据把一次**成功**判成失败，
+	// 还提前释放了队列槽位（子代理仍在写场景块）。现在墙钟只有两个里程碑，mtime 不再参与判定。
+	const soft = 630_000;
+	const hard = 30 * 60_000;
+	check("未到软阈值 → continue", decideWaitPhase({ elapsedMs: 100_000, softMs: soft, hardMs: hard }) === "continue");
+	check("软阈值到点 → suspect（只提示，不判死）", decideWaitPhase({ elapsedMs: soft, softMs: soft, hardMs: hard }) === "suspect");
 	check(
-		"到点 + 仍在写（静默 30s）→ extend",
-		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: 30_000 }) === "extend",
+		"job 76 的那一刻（987s）仍属 suspect ⇒ 不会被判死",
+		decideWaitPhase({ elapsedMs: 987_000, softMs: soft, hardMs: hard }) === "suspect",
 	);
-	check(
-		"到点 + 真静默（静默 5 分钟）→ abort",
-		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: 300_000 }) === "abort",
+	check("硬上限到点 → over", decideWaitPhase({ elapsedMs: hard, softMs: soft, hardMs: hard }) === "over");
+	check("超过硬上限 → over", decideWaitPhase({ elapsedMs: hard + 1, softMs: soft, hardMs: hard }) === "over");
+
+	// 最长单轮：把"在慢慢想"变成可读数字（本机 job 76 实测 987s）
+	const root = mkdtempSync(join(tmpdir(), "turngap-"));
+	roots.push(root);
+	const f = join(root, "session.jsonl");
+	const t0 = Date.parse("2026-09-25T15:20:53.000Z");
+	writeFileSync(
+		f,
+		[
+			JSON.stringify({ type: "session", timestamp: t0 }),
+			JSON.stringify({ type: "message", timestamp: t0 + 37_000 }),
+			JSON.stringify({ type: "message", timestamp: t0 + 37_000 + 987_000 }), // 这一跳就是那次单轮生成
+			JSON.stringify({ type: "message", timestamp: t0 + 37_000 + 987_000 + 200 }),
+		].join("\n") + "\n",
+		"utf-8",
 	);
-	check(
-		"静默恰好等于阈值 → 不算还在写（abort）",
-		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: 120_000 }) === "abort",
+	check("算出最长单轮 = 987s", longestEntryGapMs(f) === 987_000, String(longestEntryGapMs(f)));
+	writeFileSync(f, `{oops\n${JSON.stringify({ timestamp: t0 })}\n${JSON.stringify({ timestamp: t0 + 5000 })}\n`, "utf-8");
+	check("坏行跳过、不影响其余条目的间隔", longestEntryGapMs(f) === 5000, String(longestEntryGapMs(f)));
+	writeFileSync(f, `${JSON.stringify({ timestamp: t0 })}\n`, "utf-8");
+	check("条目 < 2 → undefined", longestEntryGapMs(f) === undefined);
+	check("文件不存在 → undefined", longestEntryGapMs(join(root, "nope.jsonl")) === undefined);
+
+	// 宿主 async run 的 status.json：确定性信号（state / pid / steps[].sessionFile）
+	const runDir = join(root, "async-subagent-runs", "run-abc");
+	mkdirSync(runDir, { recursive: true });
+	writeFileSync(
+		join(runDir, "status.json"),
+		JSON.stringify({
+			runId: "run-abc",
+			state: "running",
+			pid: 4242,
+			sessionId: "C:/p/session.jsonl",
+			lastActivityAt: t0,
+			steps: [{ sessionFile: "C:/p/session/sub/run-0/session.jsonl" }],
+		}),
+		"utf-8",
 	);
-	check(
-		"延长额度用完 → abort（哪怕它还在写）",
-		decideTimeoutAction({ ...base, elapsedMs: 1_260_001, silentMs: 1_000, extendedMs: 630_000 }) === "abort",
-	);
-	check(
-		"会话定位不到（silentMs=-1）→ 不延长，按时失败",
-		decideTimeoutAction({ ...base, elapsedMs: 630_001, silentMs: -1 }) === "abort",
-	);
-	check(
-		"延长后仍未到新 deadline（deadline 被 +180s 抬到 810s）→ continue",
-		decideTimeoutAction({ ...base, deadlineMs: 810_000, elapsedMs: 700_000, silentMs: 1_000 }) === "continue",
-	);
+	const info = readAsyncRunInfo(runDir);
+	check("读到 state", info?.state === "running");
+	check("读到 pid（停止序列要靠它杀进程树）", info?.pid === 4242, String(info?.pid));
+	check("读到子代理会话文件（比按 mtime 猜更确定）", info?.sessionFiles[0] === "C:/p/session/sub/run-0/session.jsonl");
+	check("running 视为活跃", isRunActive("running") && isRunActive("queued"));
+	check("complete 视为已结束", !isRunActive("complete"));
+	check("读不到 status.json → undefined（fail-soft，不抛）", readAsyncRunInfo(join(root, "nope")) === undefined);
 
 	// 会话采样：读不到文件必须是 -1（未知），不能是 0（0 会被误判成"刚刚在写"）
 	check("不存在的文件 → size/silent 都是 -1", sampleSession("C:/temp/pi/script/__no_such_session__.jsonl").size === -1);
@@ -320,6 +352,169 @@ console.log("\n=== 10. 子代理活性判定：到点先看它还在不在写（
 		check("父会话不存在时返回 undefined", locateSubagentSession(join(root, "nope.jsonl")) === undefined);
 		check("空参数返回 undefined", locateSubagentSession(undefined) === undefined);
 	}
+}
+
+console.log("\n=== 11. 停止请求标记：生效窗口 + 写工具入口判据（2026-09-26 T2 第 1–2 步） ===");
+{
+	// 标记是用来"先拦后杀"的：写工具在入口命中它就拒写，把被杀点推到操作边界。
+	// 但标记**必须有 TTL** —— 残留标记把该层所有写入永久堵死，比"漏停一次"严重得多。
+	check("TTL 内 → 生效", stopRequestActive(1000, 1000 + 60_000));
+	check("恰好等于 TTL → 生效（闭区间）", stopRequestActive(0, 5 * 60_000));
+	check("超过 TTL → 失效（残留标记不许永久堵写入）", !stopRequestActive(0, 5 * 60_000 + 1));
+	check("未来时间戳在容差内 → 生效（时钟被改）", stopRequestActive(10_000, 0));
+	check("未来太远（异常数据）→ 失效", !stopRequestActive(120_000, 0));
+	check("非数字 → 失效", !stopRequestActive(Number.NaN, 0));
+
+	const root = mkdtempSync(join(tmpdir(), "stopreq-"));
+	roots.push(root);
+	check("未落标记 → 不生效", !isStopRequested(root, "l2"));
+	writeStopRequest(root, "l2", 76, "测试");
+	check("落了标记 → 生效", isStopRequested(root, "l2"));
+	check("标记路径按层区分", stopRequestPath(root, "l2") !== stopRequestPath(root, "l1"));
+	check("别层不受影响", !isStopRequested(root, "l1"));
+	clearStopRequest(root, "l2");
+	check("清除后失效（必须在放行该层之前做）", !isStopRequested(root, "l2"));
+}
+
+console.log("\n=== 12. 层持有：只在「停不下来」时出现，且只拦该层（2026-09-26 T2 兜底） ===");
+{
+	const now = Date.now();
+	check("无 holdUntil → 未持有", !isLayerHeld({ consecutiveFailures: 0, cooledDown: false }, now));
+	check(
+		"holdUntil 在未来 → 持有",
+		isLayerHeld({ consecutiveFailures: 0, cooledDown: false, holdUntil: holdUntilFrom(now, 60_000) }, now),
+	);
+	check(
+		"holdUntil 已过期 → 不持有",
+		!isLayerHeld({ consecutiveFailures: 0, cooledDown: false, holdUntil: holdUntilFrom(now, -1) }, now),
+	);
+	check(
+		"坏时间戳 → 不持有（宁可放行，也不要永久堵）",
+		!isLayerHeld({ consecutiveFailures: 0, cooledDown: false, holdUntil: "not-a-date" }, now),
+	);
+
+	// 持有参与 pickNextClaimable：跳过被持有的层，但不许堵别层（2026-09-21 的教训）
+	const db = makeDb();
+	const l2j = db.enqueue("l2", "l1_commit");
+	const l1j = db.enqueue("l1", "interval");
+	const picked = pickNextClaimable(db.listQueued(), (t) => t === "l2");
+	check("持有 L2 时跳过它、取到后面的 L1（不堵别层）", picked?.id === l1j.id, `picked=${picked?.id} l2=${l2j.id}`);
+	check("三层都持有 → 无事可做", pickNextClaimable(db.listQueued(), () => true) === undefined);
+	db.close();
+
+	// 状态文件往返（且向后兼容：旧文件没有 holdUntil 字段）
+	const root = mkdtempSync(join(tmpdir(), "holdstate-"));
+	roots.push(root);
+	mkdirSync(join(root, "memoryDB", "state"), { recursive: true });
+	saveFailureState(root, {
+		l1: { consecutiveFailures: 0, cooledDown: false },
+		l2: { consecutiveFailures: 1, cooledDown: false, holdUntil: holdUntilFrom(now, 60_000) },
+		l3: { consecutiveFailures: 0, cooledDown: false },
+	});
+	const back = loadFailureState(root);
+	check("holdUntil 落盘并读回", isLayerHeld(back.l2, now));
+	check("别层不受影响", !isLayerHeld(back.l1, now) && !isLayerHeld(back.l3, now));
+	// 旧格式（无该字段）
+	writeFileSync(
+		join(root, "memoryDB", "state", "failure-state.json"),
+		JSON.stringify({ l1: { consecutiveFailures: 1, cooledDown: false }, l2: { consecutiveFailures: 0, cooledDown: false }, l3: { consecutiveFailures: 0, cooledDown: false } }),
+		"utf-8",
+	);
+	check("旧格式文件读入不报错、不持有", !isLayerHeld(loadFailureState(root).l1));
+}
+
+console.log("\n=== 13. 超时可配置：配置中心 subagent 节 → 阈值（2026-09-26） ===");
+{
+	// 这些阈值都是"按实测调"的量（用户实测单轮生成 987 秒），所以必须能从配置改，而不是改代码。
+	const d = resolveTimeoutSection(undefined);
+	check(
+		"无 subagent 节 → 全默认",
+		d.softMs === DEFAULT_SOFT_MS &&
+			d.hardMs === DEFAULT_HARD_MS &&
+			d.killGraceMs === DEFAULT_KILL_GRACE_MS &&
+			d.holdMsUnconfirmed === DEFAULT_HOLD_MS_UNCONFIRMED &&
+			d.stopRequestTtlMs === DEFAULT_STOP_REQUEST_TTL_MS,
+	);
+	const c = resolveTimeoutSection({ softMs: 60_000, hardMs: 120_000, killGraceMs: 1_000, holdMsUnconfirmed: 5_000, stopRequestTtlMs: 30_000, runLockHeartbeatMs: 3_000, runLockStaleHeartbeatMs: 7_000, runLockExpireMs: 9_000 });
+	check(
+		"整节可覆盖（含运行级锁三项）",
+		c.softMs === 60_000 &&
+			c.hardMs === 120_000 &&
+			c.killGraceMs === 1_000 &&
+			c.holdMsUnconfirmed === 5_000 &&
+			c.stopRequestTtlMs === 30_000 &&
+			c.runLockHeartbeatMs === 3_000 &&
+			c.runLockStaleHeartbeatMs === 7_000 &&
+			c.runLockExpireMs === 9_000,
+	);
+	check(
+		"运行级锁默认值：心跳 30s / 新鲜阈值 60s / 过期 = 2× hardMs",
+		(() => {
+			const x = resolveTimeoutSection({ softMs: 60_000, hardMs: 120_000 });
+			return x.runLockHeartbeatMs === 30_000 && x.runLockStaleHeartbeatMs === 60_000 && x.runLockExpireMs === 240_000;
+		})(),
+		`expire=${resolveTimeoutSection({ softMs: 60_000, hardMs: 120_000 }).runLockExpireMs}`,
+	);
+	check(
+		"非法值逐项回默认（字符串 / 0 / 负数 / NaN / null）",
+		(() => {
+			const x = resolveTimeoutSection({ softMs: "630000", hardMs: 0, killGraceMs: -5, holdMsUnconfirmed: Number.NaN, stopRequestTtlMs: null });
+			return (
+				x.softMs === DEFAULT_SOFT_MS &&
+				x.hardMs === DEFAULT_HARD_MS &&
+				x.killGraceMs === DEFAULT_KILL_GRACE_MS &&
+				x.holdMsUnconfirmed === DEFAULT_HOLD_MS_UNCONFIRMED &&
+				x.stopRequestTtlMs === DEFAULT_STOP_REQUEST_TTL_MS
+			);
+		})(),
+	);
+	check(
+		"hardMs < softMs 被钳到 ≥ softMs（否则等待逻辑要死循环）",
+		(() => {
+			const x = resolveTimeoutSection({ softMs: 900_000, hardMs: 60_000 });
+			return x.softMs === 900_000 && x.hardMs === 900_000;
+		})(),
+	);
+	check("小数取整", resolveTimeoutSection({ hardMs: 1_800_000.9 }).hardMs === 1_800_000);
+
+	// 从真文件读（JSONC 带注释）。两项一起配：只配 hardMs 且它小于默认 softMs 时会被钳（上一条已单独钉住）
+	const root = mkdtempSync(join(tmpdir(), "timeouts-"));
+	roots.push(root);
+	mkdirSync(join(root, "memoryDB", "config"), { recursive: true });
+	writeFileSync(
+		join(root, "memoryDB", "config", "application-propertis.json"),
+		'{ "subagent": { "softMs": 300000, "hardMs": 600000 } }',
+		"utf-8",
+	);
+	check(
+		"从文件取到覆盖值",
+		loadSubagentTimeouts(root).hardMs === 600_000 && loadSubagentTimeouts(root).softMs === 300_000,
+		`soft=${loadSubagentTimeouts(root).softMs} hard=${loadSubagentTimeouts(root).hardMs}`,
+	);
+	check("同文件里没给的项仍是默认", loadSubagentTimeouts(root).stopRequestTtlMs === DEFAULT_STOP_REQUEST_TTL_MS);
+
+	// 停止标记的 TTL 也走配置（写一个"10 分钟前"的标记，配置 TTL 1 分钟 ⇒ 应失效）
+	const markerPath = stopRequestPath(root, "l2");
+	mkdirSync(join(root, "memoryDB", "state"), { recursive: true });
+	writeFileSync(markerPath, JSON.stringify({ layer: "l2", jobId: 1, requestedAt: Date.now() - 600_000, reason: "test" }), "utf-8");
+	writeFileSync(
+		join(root, "memoryDB", "config", "application-propertis.json"),
+		'{ "subagent": { "stopRequestTtlMs": 60000 } }',
+		"utf-8",
+	);
+	check("配置 TTL=1 分钟 ⇒ 10 分钟前的标记已失效", !isStopRequested(root, "l2"));
+	writeFileSync(
+		join(root, "memoryDB", "config", "application-propertis.json"),
+		'{ "subagent": { "stopRequestTtlMs": 1800000 } }',
+		"utf-8",
+	);
+	check("配置 TTL=30 分钟 ⇒ 同一个标记仍生效", isStopRequested(root, "l2"));
+
+	// 生产 profile 只读核对
+	const real = "C:/Users/leaf/.pi/agent/profiles/default";
+	const t = loadSubagentTimeouts(real);
+	check("生产配置的 hardMs 为正整数", Number.isInteger(t.hardMs) && t.hardMs > 0, `hardMs=${t.hardMs}`);
+	check("生产配置满足 soft ≤ hard", t.softMs <= t.hardMs, `soft=${t.softMs} / hard=${t.hardMs}`);
 }
 
 for (const r of roots) {

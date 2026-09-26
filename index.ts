@@ -26,7 +26,11 @@ import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
 import { setupPipelineWorker, type PipelineExecutors, type PipelineJobResult, type PipelineWorker } from "./memory/pipeline/worker.ts";
 import { getPipelineJobsDB, type PipelineJob } from "./memory/pipeline/jobs-db.ts";
-import { registerL2CommitTool } from "./memory/l2/commit-tool.ts";
+import { findAsyncRun } from "./memory/pipeline/subagent-liveness.ts";
+import { stopSubagent } from "./memory/pipeline/subagent-kill.ts";
+import { loadSubagentTimeouts } from "./memory/pipeline/timeout-config.ts";
+import { holdUntilFrom, loadFailureState, saveFailureState } from "./memory/failure-state.ts";
+import { registerL2CommitTool, repairSceneMembers, syncSceneIndex } from "./memory/l2/commit-tool.ts";
 import { setupL3Persona } from "./memory/l3/index.ts";
 import { registerL3CommitTool } from "./memory/l3/commit-tool.ts";
 import { registerL3EditTool } from "./memory/l3/edit-tool.ts";
@@ -1094,6 +1098,56 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       await l2Controls.triggerManual(ctx);
+    },
+  });
+
+  // /my-memory:subagent-kill：手动"提前停"。
+  //
+  // 自动路径在硬上限（默认 30 分钟）就会停掉子代理（见 memory/pipeline/subagent-kill.ts 的停止序列）；
+  // 这条命令给"我已经确定它卡了，不想等满 30 分钟"的情形，复用同一套序列（跳过宽限）。
+  // 为什么必须留人工口子：自动判定分不清"一次超长生成"与"真卡死"（实测 987 秒的单轮生成），
+  // 而人知道上下文（网关刚挂了 / 我已经等了四十分钟）。
+  pi.registerCommand("my-memory:subagent-kill", {
+    description: "手动停掉某层的后台子代理（硬上限之外用）。用法：/my-memory:subagent-kill <l1|l2|l3> [jobId]",
+    handler: async (args, ctx) => {
+      const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
+      if (!profilePath) {
+        ctx.ui.notify("未取得 profile，无法停止", "error");
+        return;
+      }
+      const parts = (args || "").trim().split(/\s+/);
+      const layer = parts[0];
+      if (layer !== "l1" && layer !== "l2" && layer !== "l3") {
+        ctx.ui.notify("用法：/my-memory:subagent-kill <l1|l2|l3> [jobId]", "warning");
+        return;
+      }
+      const parentSessionFile = ctx.sessionManager?.getSessionFile();
+      const active = findAsyncRun({ parentSessionFile, activeOnly: true });
+      if (!active) {
+        ctx.ui.notify("没有正在运行的子代理（未找到 async run 的 status.json）", "info");
+        return;
+      }
+      const jobIdArg = Number(parts[1]);
+      const jobId = Number.isFinite(jobIdArg) && jobIdArg > 0 ? jobIdArg : 0;
+      const out = await stopSubagent({
+        profilePath,
+        layer,
+        jobId,
+        reason: "手动停止（/my-memory:subagent-kill）",
+        parentSessionFile,
+        skipGrace: true,
+        hooks: layer === "l2" ? { rebuildSceneIndex: syncSceneIndex, repairSceneMembers } : undefined,
+      });
+      if (!out.killConfirmed) {
+        const st = loadFailureState(profilePath);
+        st[layer].holdUntil = holdUntilFrom(Date.now(), loadSubagentTimeouts(profilePath).holdMsUnconfirmed);
+        saveFailureState(profilePath, st);
+      }
+      logEvent("pipeline", `手动停止 ${layer}（job ${jobId || "未指定"}）：${out.note}`, profilePath);
+      ctx.ui.notify(
+        out.killConfirmed ? `${layer} 子代理已停掉，杀后修复已完成` : `未能确认停止：${out.note}（该层已持有）`,
+        out.killConfirmed ? "info" : "warning",
+      );
     },
   });
 

@@ -1,9 +1,12 @@
 import { runPiSubagent } from "../../util/subagent.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.ts";
-import { loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
+import { holdUntilFrom, loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { waitJobWithLiveness, locateSubagentSession, startHeartbeat } from "../pipeline/subagent-liveness.ts";
+import { resolveSubagentSession, startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
+import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
+import { stopSubagent } from "../pipeline/subagent-kill.ts";
+import { repairSceneMembers, syncSceneIndex } from "./commit-tool.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 
@@ -52,9 +55,11 @@ export function setupL2Organizer(
 		}
 		ctx.ui.setStatus("memory", job.source === "manual" ? `Memory ⚙L2 (manual, ${staged.length} records)...` : "Memory ⚙L2...");
 		const abortCtl = new AbortController();
-		// 2026-09-21：改走活性判定（到点先看子代理会话是否还在写，还在写就续期，最多 2×）。
-		// L2 曾经的 3 分钟超时把"跑了 13 分钟、还在改场景块"的子代理掐死了四次（jobs 55/61/64/68）。
-		const locate = () => locateSubagentSession(ctx.sessionManager?.getSessionFile());
+		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：不再"到点判死"，改为**软阈值只提示、硬上限停掉子代理**。
+		// 旧实现到 600+30s 就标 failed + abort，实测把"跑了 987 秒还在长生成"的子代理误判四次
+		// （jobs 55/61/64/68），并**提前释放队列槽位**（子代理仍在写场景块）。
+		const parentSessionFile = ctx.sessionManager?.getSessionFile();
+		const locate = () => resolveSubagentSession(parentSessionFile).file;
 		const stopHeartbeat = startHeartbeat({
 			layer: "l2",
 			jobId: job.id,
@@ -73,8 +78,12 @@ export function setupL2Organizer(
 			// 毫秒级返回，此刻"游标没推进"只说明子代理还没干完，不代表失败
 			//（2026-09-19 实测：旧写法把 job 在 0 秒标 done → 队列以为空闲 → 两个 L2 并发改场景块）。
 			const db = getPipelineJobsDB(profilePath);
+			// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
+
+			const to = loadSubagentTimeouts(profilePath);
 			const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
-				baseMs: L2_SUBAGENT_TIMEOUT_MS + 30_000,
+				softMs: to.softMs,
+				hardMs: to.hardMs,
 				locate,
 				profilePath,
 				layer: "l2",
@@ -84,14 +93,19 @@ export function setupL2Organizer(
 			void spawnP.catch((err) => {
 				logEvent("l2", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
 			});
-			await Promise.race([spawnP, waitP]);
-			if (db.getJob(job.id)?.status === "running") await waitP;
+			const outcome = await waitP;
 
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
 				const st = loadL2State();
 				st.consecutiveFailures = 0;
 				saveL2State(st);
+				logEvent(
+					"l2",
+					`job ${job.id} 完成：${(outcome.elapsedMs / 1000).toFixed(0)}s` +
+						`${outcome.longestTurnMs !== undefined ? `，最长单轮 ${(outcome.longestTurnMs / 1000).toFixed(0)}s` : ""}`,
+					profilePath,
+				);
 				return "done";
 			}
 			if (after?.status === "skipped") {
@@ -99,22 +113,36 @@ export function setupL2Organizer(
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
-			// 仍在 running = 超过等待窗口仍没提交 → failed（并掐掉子代理）
-			if (after?.status === "running") db.complete(job.id, "failed", "timeout without l2_commit");
-			abortCtl.abort();
+			// 到硬上限仍是 running ⇒ 停掉子代理（先拦 → 宽限 → 杀进程树 → 杀后修复）
+			const stop = await stopSubagent({
+				graceMs: to.killGraceMs,
+				profilePath,
+				layer: "l2",
+				jobId: job.id,
+				reason: `L2 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
+				parentSessionFile,
+				hooks: { rebuildSceneIndex, repairSceneMembers },
+			});
+			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
 			await spawnP.catch(() => {});
+			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
 			const st = loadL2State();
 			st.consecutiveFailures++;
-			const l2TimeoutDetail = `job ${job.id}，status=${after?.status}`;
-			logEvent("l2", `organize ended without l2_commit (${l2TimeoutDetail})`, profilePath);
+			if (!stop.killConfirmed) {
+				// 停不下来就不能放新 L2 进来（两个写者会同时改场景块）⇒ 持有该层
+				st.holdUntil = holdUntilFrom(Date.now(), to.holdMsUnconfirmed);
+			}
+			const l2StopDetail = `job ${job.id}，${stop.note}`;
+			logEvent("l2", `organize stopped at hard cap (${l2StopDetail})`, profilePath);
 			noticeCard({
 				level: "warning",
-				title: "L2 场景组织未提交（超时/无 l2_commit）",
+				title: "L2 场景组织已在硬上限被停掉",
 				lines: [
-					`job ${job.id}（来源 ${job.source}）在时限内未调入 l2_commit`,
-					`连续失败 ${st.consecutiveFailures}/${L2_FAILURE_THRESHOLD}`,
+					`job ${job.id}（来源 ${job.source}）超过 ${(to.hardMs / 60000).toFixed(0)} 分钟未提交，已停止子代理`,
+					`本批未提交 ⇒ 游标未推进，下一轮重做；连续失败 ${st.consecutiveFailures}/${L2_FAILURE_THRESHOLD}`,
+					stop.killConfirmed ? "杀后修复已完成（临时文件/索引/成员/写锁已核）" : "**未能确认停止**，本层已持有，暂不接受新任务",
 				],
-				detail: `status=${after?.status}\n进程内日志：memoryDB/logs/l2.log`,
+				detail: `${stop.note}\n进程内日志：memoryDB/logs/l2.log`,
 			});
 			if (st.consecutiveFailures >= L2_FAILURE_THRESHOLD && !st.cooledDown) {
 				st.cooledDown = true;

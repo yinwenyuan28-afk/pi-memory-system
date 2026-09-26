@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { closePipelineJobsDB, getPipelineJobsDB, type PipelineJob, type PipelineJobType } from "./jobs-db.ts";
+import { isLayerHeld, loadFailureState } from "../failure-state.ts";
 import { drainNoticeCards, logEvent } from "../../util/notice.ts";
 
 export const PIPELINE_POLL_MS = 2000;
@@ -57,12 +58,16 @@ export function decideNextAfterL1(input: { hasL1Remaining: boolean; hasNewRecord
  * `hasActive("l1")` 拦下（"已在队列或运行中"）—— 看起来就是"L1 子代理卡死了"。
  * 熔断的语义是"这一层别跑"，不是"整条流水线停摆"：跳过熔断层，让它后面的照常跑；
  * 被跳过的 job 留在队列里，等这一层被手动复位（`/my-memory:l2-trigger` 之类）。
+ *
+ * 判定谓词是"**这层现在被阻塞吗**"（2026-09-26 起广义化）：熔断 **或** 层持有
+ * （`failure-state.json` 的 `holdUntil`，见 `isLayerHeld`）。持有只在"停了子代理但没能确认
+ * 它已死"时出现 —— 那种情况下放新 job 进去会变成两个写者改同一批场景块。
  */
 export function pickNextClaimable(
 	queued: PipelineJob[],
-	isCooledDown: (type: PipelineJobType) => boolean,
+	isLayerBlocked: (type: PipelineJobType) => boolean,
 ): PipelineJob | undefined {
-	return queued.find((j) => !isCooledDown(j.type));
+	return queued.find((j) => !isLayerBlocked(j.type));
 }
 
 /**
@@ -143,9 +148,11 @@ export function setupPipelineWorker(
 		// 全局单飞（2026-09-19）：两个 pi 进程同时开着时各自都能 claim 走一条 queued
 		// → 两个子代理并发（实测过 L2 并发改场景块）。这里要求"当前没有任何 running"。
 		if (db.hasAnyRunning()) return;
-		// 跳过熔断层（2026-09-21 修）：取队首会让"队首那一层熔断"变成整条流水线停摆，
-		// 把后面别的层（实测是 L1）永久堵在队列里。熔断的语义是"这一层别跑"，不是"全停"。
-		const job0 = pickNextClaimable(db.listQueued(), executors.isCooledDown);
+		// 跳过"被阻塞的层"（2026-09-21 修熔断、2026-09-26 扩到层持有）：取队首会让"队首那一层熔断"
+		// 变成整条流水线停摆，把后面别的层永久堵在队列里。语义是"这一层别跑"，不是"全停"。
+		const failure = loadFailureState(profilePath);
+		const blocked = (t: PipelineJobType) => executors.isCooledDown(t) || isLayerHeld(failure[t]);
+		const job0 = pickNextClaimable(db.listQueued(), blocked);
 		if (!job0) return;
 
 		const job = db.claim(job0.id);
