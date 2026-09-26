@@ -9,7 +9,10 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config } from "./config.ts";
+import { SCENE_DIR_NAME, SCENE_INDEX_PATH, SCENE_MEMBERS_PATH, saveL2Cursor, recordEpochMs, loadL2Config, loadL2ArchiveConfig } from "./config.ts";
+import { archiveDirOf, archiveSceneBlock, archivedBlockExists, loadArchiveMembers, memberIdsFromBody, reconcileArchive, restoreSceneBlock } from "./archive.ts";
+import { buildArchiveFacts, checkArchiveHardBlocks } from "./archive-facts.ts";
+
 import { BACKUP_DIR, L2_INDEX_DIR, MEMORY_DB_DIR } from "../paths.ts";
 import { writePendingTrigger } from "../l3/signal.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
@@ -43,8 +46,15 @@ export interface SceneMeta {
 
 /** 子代理提交的单条场景写入。 */
 export interface SceneWrite {
-	action: "create" | "update" | "merge" | "delete" | "consolidate";
+	action: "create" | "update" | "merge" | "delete" | "consolidate" | "archive" | "restore";
 	filename: string;
+	/**
+	 * 仅 `archive` 需要：**为什么搬它**（一句话）。
+	 *
+	 * 为什么强制：归档是唯一的"把一块内容移出日常场景导航"的动作（L3 画像不再读它），
+	 * 而判据不是可复算的公式（见 `archive-facts.ts` 头注释）—— 理由就是这件事的审计凭据。
+	 */
+	reason?: string;
 	/**
 	 * `consolidate` 专用：被合并的源块文件名列表（≥2，且不含 `filename` 自身；目标块可已存在）。
 	 * 代码原子完成：备份源块 → 完整性校验 → 写目标 → 删源块 → 合并成员 → 重建索引。
@@ -96,6 +106,10 @@ export interface L2CommitResult {
 	warning?: string;
 	/** 本批执行的 consolidate 动作回报。 */
 	consolidations?: ConsolidationReport[];
+	/** 本批搬进归档层的块（2026-09-27）。归档 ≠ 删除：可用 `{action:"restore"}` 搬回。 */
+	archived?: string[];
+	/** 本批从归档层搬回的块。 */
+	restored?: string[];
 	/**
 	 * 本次子代理进程里的第几次成功提交（从 1 开始）。
 	 *
@@ -159,7 +173,8 @@ export function checkSceneLimit(existing: Iterable<string>, writes: SceneWrite[]
 	const set = new Set(existing);
 	let count = set.size;
 	for (const w of writes) {
-		if (w.action === "delete") {
+		if (w.action === "delete" || w.action === "archive") {
+			// 归档与删除同款：目标块**离开 live 目录** ⇒ 净收缩（腾出名额，这正是归档的用途）。
 			if (set.delete(w.filename)) count--;
 			continue;
 		}
@@ -178,10 +193,13 @@ export function checkSceneLimit(existing: Iterable<string>, writes: SceneWrite[]
 			}
 			continue;
 		}
-		// create / update / merge：一律按**落盘效果**计增长 —— 写入循环对这三个动作同等对待（都 atomicWrite），
-		// 所以只要目标文件名当前不在集合里，本批就会多出一个块，与调用方填的动作名无关。
+		// create / update / merge / **restore**：一律按**落盘效果**计增长 —— 写入循环对这几个动作同等对待
+		// （archive/restore 走搬移，但"目标文件名是否已在集合里"这个判据完全相同），所以只要目标文件名
+		// 当前不在集合里，本批就会多出一个块，与调用方填的动作名无关。
 		// 2026-09-16 更正：旧口径只认 action==="create"，于是"update / merge + 新文件名"能绕过上限
 		// （预检说没长、实际长了：实测 cap=3 且目录已满时，merge / update 带新名落盘后目录变 4 块、返回仍 success=true）。
+		// 2026-09-27 补：`restore` 必须落进这一支 —— 恢复会往 live 目录加回一个块，满库时应被拒
+		// （同批先 archive 再 restore 则净 0，推演过程中任一时刻不越限即放行）。
 		if (!set.has(w.filename)) {
 			set.add(w.filename);
 			count++;
@@ -509,6 +527,9 @@ export function loadSceneMembers(profilePath: string): Record<string, string[]> 
  * - `consolidate`：取各源块成员与显式 `members` 的**并集**写入目标，并移除所有源条目。
  *   并集必须在删除源条目**之前**计算，否则会读到已清空的表。
  * - `delete`：移除该文件名的成员条目。
+ * - `archive`：同 `delete` —— 块离开 live 目录，成员已先写进**归档侧车**（`archiveSceneBlock` 的第 1 步）。
+ * - `restore`：**显式**用 `w.members`（调用方从归档侧车填）替换，不走 create/update 的"缺省保留"兜底 ——
+ *   否则恢复回来的块会拿到空成员，`l1/fix-tool` 对它的保护静默失效。
  * - 同批内同一文件名多次写入 → 以最后一次为准（与落盘顺序一致）。
  *
  * 返回 `missing`：本批带了写入但**未提供任何成员可归因**的目标文件名，供调用方回传警告
@@ -521,8 +542,19 @@ export function mergeSceneMembers(
 	const next: Record<string, string[]> = { ...existing };
 	const missing: string[] = [];
 	for (const w of writes) {
-		if (w.action === "delete") {
+		if (w.action === "delete" || w.action === "archive") {
+			// `archive`：块搬出 live 目录 ⇒ live 侧车不再保留该条目（成员已先写进归档侧车）。
 			delete next[w.filename];
+			continue;
+		}
+		if (w.action === "restore") {
+			// `restore`：块回到 live 目录。成员由调用方从**归档侧车**填进 `w.members`。
+			// 显式分支而不落进下面的 create/update 兜底：那里"缺省则保留原集合"的语义在恢复场景下
+			// 会让块拿到**空成员** ⇒ `l1/fix-tool` 的保护静默失效（归档侧车才是权威，这里只搬运）。
+			next[w.filename] = Array.isArray(w.members)
+				? [...new Set(w.members.filter((m) => typeof m === "string" && m))]
+				: [];
+			if (next[w.filename].length === 0) missing.push(w.filename);
 			continue;
 		}
 		if (w.action === "consolidate") {
@@ -756,8 +788,13 @@ export function registerL2CommitTool(
 					items: {
 						type: "object",
 						properties: {
-							action: { type: "string", enum: ["create", "update", "merge", "delete", "consolidate"] },
+							action: { type: "string", enum: ["create", "update", "merge", "delete", "consolidate", "archive", "restore"] },
 							filename: { type: "string" },
+							reason: {
+								type: "string",
+								description:
+									"Only for action=archive (required): ONE sentence on why this block is being moved out — e.g. \"项目已收尾\" / \"一次性排障记录，已被后续块覆盖\". Archiving takes the block out of the scene index (L3 persona no longer reads it), so the reason is the audit trail. Restore it with action=restore if it turns out to be wrong.",
+							},
 							sources: {
 								type: "array",
 								items: { type: "string" },
@@ -827,6 +864,93 @@ export function registerL2CommitTool(
 					}
 				}
 				const existingScenes = readdirSync(sceneDir).filter((f) => f.endsWith(".md"));
+
+				// ── 归档 / 恢复 的整批预检（2026-09-27）──
+				//
+				// 为什么全部集中在这里而不是散进写入循环：必须是**整批先验后写**，否则会出现
+				// "前几个动作已落盘、后面被拒"的半批数据（本文件开头就记着这类事故）。
+				const archiveCfg = loadL2ArchiveConfig(profilePath);
+				const archiveWrites = writes.filter((w) => w.action === "archive");
+				const restoreWrites = writes.filter((w) => w.action === "restore");
+				if (archiveWrites.length > 0 || restoreWrites.length > 0) {
+					// 先自愈：把上一次"崩在两步之间"的残留收干净（补账 / 剪孤儿条目 / 捞回搁浅成员）
+					try {
+						reconcileArchive(profilePath, now);
+					} catch {
+						// 自愈失败不阻断（最坏是账上少一条，账可由目录扫描补）
+					}
+				}
+				if (archiveWrites.length + restoreWrites.length > 0) {
+					const reject = (error: string) =>
+						({
+							content: [{ type: "text", text: JSON.stringify({ success: false, sceneCount: existingScenes.length, error } satisfies Partial<L2CommitResult>) }],
+							details: {},
+						});
+					if (archiveWrites.length > 0 && !archiveCfg.enabled) {
+						return reject(
+							"归档层已关闭（配置中心 l2.archive.enabled=false）：可以 restore，但不能新归档。" +
+								"若需要腾名额，请走合并评估或把内容并入最相关的现有块（update）。",
+						);
+					}
+					if (archiveWrites.length > archiveCfg.maxPerBatch) {
+						return reject(
+							`每批最多归档 ${archiveCfg.maxPerBatch} 个块（本批带了 ${archiveWrites.length} 个）—— ` +
+								"归档不是清理工具，一次搬一个、看清了再搬。",
+						);
+					}
+					// 同一文件名不得既 archive 又是 consolidate 的源：consolidate 的成员并集在源条目删除**之后**才
+					// 计算，两者同批会让被归档块的成员静默丢掉。
+					const consolidateSources = new Set(
+						writes.filter((w) => w.action === "consolidate").flatMap((w) => (Array.isArray(w.sources) ? w.sources : [])),
+					);
+					const seenArchive = new Set<string>();
+					for (const w of archiveWrites) {
+						if (consolidateSources.has(w.filename)) {
+							return reject(
+								`同一批里不能既归档 ${w.filename} 又把它当作 consolidate 的源（成员并集会在源条目删除后才算 ⇒ 静默丢成员）。请分两批做。`,
+							);
+						}
+						if (seenArchive.has(w.filename)) return reject(`同一批里重复归档同一个块：${w.filename}`);
+						seenArchive.add(w.filename);
+						if (!w.reason || !w.reason.trim()) {
+							return reject(
+								`归档 ${w.filename} 必须给出 reason（一句话说明为什么：项目已收尾 / 内容已被后续块覆盖 / 一次性排障记录）—— ` +
+									"归档会把该块移出场景索引（L3 画像不再读它），理由就是这件事的审计凭据。",
+							);
+						}
+						if (!existingScenes.includes(w.filename)) return reject(`要归档的块不在场景目录里：${w.filename}`);
+					}
+					const facts = buildArchiveFacts(profilePath);
+					const ageByFile = new Map(facts.blocks.map((b) => [b.filename, b.ageCalendarDays]));
+					for (const w of archiveWrites) {
+						const verdict = checkArchiveHardBlocks({
+							ageCalendarDays: ageByFile.get(w.filename) ?? null,
+							minAgeCalendarDays: archiveCfg.minAgeCalendarDays,
+							nameConflict: archivedBlockExists(profilePath, w.filename),
+						});
+						if (!verdict.ok) return reject(`不能归档 ${w.filename}：${verdict.message}`);
+					}
+					// restore：必须真在归档目录里、live 没有同名；成员从**归档侧车**填进 w.members
+					// （mergeSceneMembers 的 restore 分支只负责搬运，权威在归档侧车）。
+					const archiveMembers = loadArchiveMembers(profilePath);
+					for (const w of restoreWrites) {
+						if (existingScenes.includes(w.filename)) return reject(`场景目录里已有同名块，拒绝覆盖：${w.filename}`);
+						if (!archivedBlockExists(profilePath, w.filename)) return reject(`归档目录里没有这个块：${w.filename}`);
+						if (!Array.isArray(w.members) || w.members.length === 0) {
+							const fromSidecar = archiveMembers[w.filename] ?? [];
+							if (fromSidecar.length > 0) {
+								w.members = fromSidecar;
+							} else {
+								try {
+									w.members = memberIdsFromBody(readFileSync(join(archiveDirOf(profilePath), w.filename), "utf-8"));
+								} catch {
+									w.members = [];
+								}
+							}
+						}
+					}
+				}
+
 				const limit = loadL2Config(profilePath).maxScenes;
 				const limitCheck = checkSceneLimit(existingScenes, writes, limit);
 				if (!limitCheck.ok) {
@@ -989,6 +1113,28 @@ export function registerL2CommitTool(
 						}
 						continue;
 					}
+					if (w.action === "archive") {
+						// 搬移而非写入：`archiveSceneBlock` 自己做"先写归档 sidecar → 记账 → 移文件 → 清 live 条目"。
+						// 走到这里说明预检已过（块存在、年龄够、无同名、有 reason、每批 ≤ maxPerBatch）。
+						const res = archiveSceneBlock(profilePath, {
+							filename: w.filename,
+							reason: String(w.reason ?? ""),
+							by: "subagent",
+							nowIso: now,
+						});
+						if (!res.ok) throw new Error(`归档 ${w.filename} 失败：${res.error}`);
+						continue;
+					}
+					if (w.action === "restore") {
+						const res = restoreSceneBlock(profilePath, {
+							filename: w.filename,
+							by: "subagent",
+							reason: "子代理恢复（搬错则纠回）",
+							nowIso: now,
+						});
+						if (!res.ok) throw new Error(`恢复 ${w.filename} 失败：${res.error}`);
+						continue;
+					}
 					// create/update/merge：META + content 落盘
 					const meta: SceneMeta = {
 						created: w.meta?.created || now,
@@ -1077,6 +1223,10 @@ export function registerL2CommitTool(
 								cursor,
 								commitSeq,
 								...(commitSeq > 1 ? { commitHint: commitHintText(commitSeq) } : {}),
+								// 归档 / 恢复回报（2026-09-27）：让子代理知道"腾名额"这一步真的生效了，
+								// 且它是有出路的（archived 的块可用 restore 搬回）。
+								...(archiveWrites.length > 0 ? { archived: archiveWrites.map((w) => w.filename) } : {}),
+								...(restoreWrites.length > 0 ? { restored: restoreWrites.map((w) => w.filename) } : {}),
 								// 未上报 members 的目标文件（可观测：便于判断子代理是否如实填写）
 								...(memberUpdate.missing.length > 0 ? { membersMissing: memberUpdate.missing } : {}),
 								// 上限不变量被破坏的信号（正常不出现）

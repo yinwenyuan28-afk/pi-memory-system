@@ -19,9 +19,12 @@ import { listL0Files, loadL1Cursor, saveL1Mode } from "./memory/l1/config.ts";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
 import { registerReadL0IncrementTool, readL0Increment } from "./memory/l1/read-tool.ts";
-import { countNewRecords, loadL2Cursor } from "./memory/l2/config.ts";
+import { countNewRecords, countSceneBlocks, loadL2Config, loadL2Cursor } from "./memory/l2/config.ts";
+import { acquireRunLock, runLockBusyMessage } from "./memory/pipeline/run-lock.ts";
+import { archiveSceneBlock, listArchivedBlocks, reconcileArchive, restoreSceneBlock } from "./memory/l2/archive.ts";
 import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
 import { registerReadSceneBlocksTool } from "./memory/l2/scene-read-tool.ts";
+import { registerL2ArchiveGuideTool } from "./memory/l2/archive-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
 import { setupPipelineWorker, type PipelineExecutors, type PipelineJobResult, type PipelineWorker } from "./memory/pipeline/worker.ts";
@@ -333,6 +336,9 @@ export default function (pi: ExtensionAPI) {
   // read_scene_blocks 工具：l2-scene-organizer 子代理**一次**读完候选场景块（T2，2026-09-21）
   // 注册点必须在这里（模块顶层）——子代理进程不会执行 session_start 之后的代码（read_l1_increment 踩过这个死线）
   registerReadSceneBlocksTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+  // l2_archive_guide 工具：归档规则 + 事实清单**按需**拉取（2026-09-27）——平时零注入，
+  // 子代理判断"满了、要腾名额"时才调它。注册点同样必须在这里（模块顶层），理由同上。
+  registerL2ArchiveGuideTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
   // l3_edit 工具：l3-persona-generator 子代理的**条目级**写入（用户裁定：一次调用只动一条记忆）
   registerL3EditTool(
     pi,
@@ -1148,6 +1154,119 @@ export default function (pi: ExtensionAPI) {
         out.killConfirmed ? `${layer} 子代理已停掉，杀后修复已完成` : `未能确认停止：${out.note}（该层已持有）`,
         out.killConfirmed ? "info" : "warning",
       );
+    },
+  });
+
+  // ── /my-memory:l2:archive-list | :archive | :restore（2026-09-27 归档层的人工入口）──
+  //
+  // 为什么要人工入口：归档只由子代理在"库满且确实要腾名额"时才做，而人可能先看出「这个项目早就结了」
+  // 而子代理没动；反过来，搬错了必须能立刻搬回来 —— `restore` 是整套设计能成立的前提（单向归档
+  // 本质就是"有记账的 delete"）。
+  //
+  // 与子代理路径的两点不同：① 人工可以搬子代理搬不动的块（年龄/同名两条硬拦仍然生效，不绕过）；
+  // ② 必须显式给 --reason。两条路径都持 L2 运行级锁，否则会与正在跑的子代理交错提交。
+  pi.registerCommand("my-memory:l2:archive-list", {
+    description: "列出 L2 归档层的内容与账目（谁在什么时候为什么搬的）。用法：/my-memory:l2:archive-list",
+    handler: async (_args, ctx) => {
+      const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
+      if (!profilePath) {
+        ctx.ui.notify("未取得 profile", "error");
+        return;
+      }
+      const blocks = listArchivedBlocks(profilePath);
+      if (blocks.length === 0) {
+        ctx.ui.notify("归档层是空的（还没搬过任何块）", "info");
+        return;
+      }
+      const lines = blocks.map((b) => {
+        const last = [...b.events].reverse().find((e) => e.op === "archive" || e.op === "ledger-missing");
+        const when = last?.at ? last.at.slice(0, 10) : "?";
+        const why = last?.reason ?? "（无记录）";
+        return `${b.filename}｜${when}｜成员 ${b.members.length}｜${why}`;
+      });
+      ctx.ui.notify(`归档层 ${blocks.length} 个块：\n${lines.join("\n")}`, "info");
+    },
+  });
+
+  pi.registerCommand("my-memory:l2:archive", {
+    description: "手工把一个场景块搬进归档层。用法：/my-memory:l2:archive <文件名.md> --reason \"为什么搬它\"",
+    handler: async (args, ctx) => {
+      const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
+      if (!profilePath) {
+        ctx.ui.notify("未取得 profile", "error");
+        return;
+      }
+      const rawArgs = (args || "").trim();
+      const filename = rawArgs.split(/\s+/)[0] ?? "";
+      const reasonMatch = /--reason\s+(?:"([^"]*)"|'([^']*)'|(\S+))/.exec(rawArgs);
+      const reason = (reasonMatch?.[1] ?? reasonMatch?.[2] ?? reasonMatch?.[3] ?? "").trim();
+      if (!filename) {
+        ctx.ui.notify('用法：/my-memory:l2:archive <文件名.md> --reason "为什么搬它"', "warning");
+        return;
+      }
+      if (!reason) {
+        ctx.ui.notify("必须给 --reason（这是归档唯一的审计凭据）", "warning");
+        return;
+      }
+      const lock = acquireRunLock(profilePath, "l2");
+      if (!lock.acquired) {
+        ctx.ui.notify(runLockBusyMessage("l2", lock.owner), "warning");
+        return;
+      }
+      try {
+        reconcileArchive(profilePath, new Date().toISOString());
+        const out = archiveSceneBlock(profilePath, { filename, reason, by: "command" });
+        if (!out.ok) {
+          ctx.ui.notify(`归档失败：${out.error}`, "error");
+          return;
+        }
+        syncSceneIndex(profilePath);
+        logEvent("l2", `人工归档 ${filename}（${out.members.length} 个成员）：${reason}`, profilePath);
+        ctx.ui.notify(`已搬进归档层：${filename}（${out.members.length} 个成员随之保留）。搬回来：/my-memory:l2:restore ${filename}`, "info");
+      } finally {
+        lock.release();
+      }
+    },
+  });
+
+  pi.registerCommand("my-memory:l2:restore", {
+    description: "把一个归档的块搬回场景目录。用法：/my-memory:l2:restore <文件名.md>",
+    handler: async (args, ctx) => {
+      const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
+      if (!profilePath) {
+        ctx.ui.notify("未取得 profile", "error");
+        return;
+      }
+      const filename = (args || "").trim().split(/\s+/)[0] ?? "";
+      if (!filename) {
+        ctx.ui.notify("用法：/my-memory:l2:restore <文件名.md>", "warning");
+        return;
+      }
+      const lock = acquireRunLock(profilePath, "l2");
+      if (!lock.acquired) {
+        ctx.ui.notify(runLockBusyMessage("l2", lock.owner), "warning");
+        return;
+      }
+      try {
+        reconcileArchive(profilePath, new Date().toISOString());
+        // 恢复会往 live 目录加回一个块 ⇒ 受同一个上限约束（满库时须先腾位，否则拒绝）。
+        const count = countSceneBlocks(profilePath);
+        const limit = loadL2Config(profilePath).maxScenes;
+        if (count + 1 > limit) {
+          ctx.ui.notify(`场景目录已满（${count}/${limit}）：先把别的块归档或合并，腾出位置再恢复`, "warning");
+          return;
+        }
+        const out = restoreSceneBlock(profilePath, { filename, by: "command", reason: "人工恢复" });
+        if (!out.ok) {
+          ctx.ui.notify(`恢复失败：${out.error}`, "error");
+          return;
+        }
+        syncSceneIndex(profilePath);
+        logEvent("l2", `人工恢复 ${filename}（${out.members.length} 个成员）`, profilePath);
+        ctx.ui.notify(`已搬回场景目录：${filename}（${out.members.length} 个成员）`, "info");
+      } finally {
+        lock.release();
+      }
     },
   });
 

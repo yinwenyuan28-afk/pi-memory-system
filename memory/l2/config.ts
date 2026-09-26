@@ -72,7 +72,48 @@ export function loadL2Config(profilePath: string): L2Config {
 	return { maxScenes: MAX_SCENES_DEFAULT };
 }
 
+/** L2 归档层配置（配置中心 `l2.archive` 节；2026-09-27 新增）。 */
+export interface L2ArchiveConfig {
+	/**
+	 * 总开关。`false` ⇒ 不提供事实清单、`archive` 动作被拒；
+	 * **`restore` 与列举仍然可用** —— 否则已归档的块将无法恢复（原计划 §九 的回退说法就是错的）。
+	 */
+	enabled: boolean;
+	/**
+	 * 允许归档的最低真实年龄（**日历天**）。
+	 *
+	 * 这是本层**唯一保留的数值判据**：防"刚建完就休假"被当成冷（活跃日时钟在停工期间不增长，
+	 * 所以这里必须用日历天）。除此之外不再有任何"冷度阈值"—— 2026-09-27 实测证明按曝光/按 updated
+	 * 算出的冷度在本机恒为 0（L1 是自动注入式召回，每条记忆的 `last_hit_at` 都被持续刷新）。
+	 */
+	minAgeCalendarDays: number;
+	/** 每批最多归档几个（防止把归档当清理工具用）。 */
+	maxPerBatch: number;
+}
+
+/** 归档配置缺省值（配置缺失/非法时使用）。 */
+export const L2_ARCHIVE_DEFAULTS: L2ArchiveConfig = { enabled: true, minAgeCalendarDays: 7, maxPerBatch: 1 };
+
+/** 解析 `l2.archive` 节：非法值**逐项**回默认（与 `subagent` 阈值同款口径，逐项而非整节）。 */
+export function resolveArchiveSection(section: unknown): L2ArchiveConfig {
+	const s = (section ?? {}) as Record<string, unknown>;
+	const enabled = typeof s.enabled === "boolean" ? s.enabled : L2_ARCHIVE_DEFAULTS.enabled;
+	const age = Number(s.minAgeCalendarDays);
+	const minAgeCalendarDays =
+		Number.isFinite(age) && age >= 0 ? Math.floor(age) : L2_ARCHIVE_DEFAULTS.minAgeCalendarDays;
+	const per = Number(s.maxPerBatch);
+	const maxPerBatch = Number.isFinite(per) && per >= 1 ? Math.floor(per) : L2_ARCHIVE_DEFAULTS.maxPerBatch;
+	return { enabled, minAgeCalendarDays, maxPerBatch };
+}
+
+/** 读归档配置（收束到配置中心 `application-propertis.json` 的 `l2.archive`）。 */
+export function loadL2ArchiveConfig(profilePath: string): L2ArchiveConfig {
+	const section = (loadAppProps(profilePath) as { l2?: { archive?: unknown } } | undefined)?.l2?.archive;
+	return resolveArchiveSection(section);
+}
+
 /** 场景数量预警级别（与两个规则文件的红/橙/黄分级一致）。 */
+
 export type SceneCountLevel = "red" | "orange" | "yellow" | "none";
 
 /**
@@ -107,12 +148,18 @@ export function countSceneBlocks(profilePath: string): number {
  * 顶部标注的当前场景总数"，而那个摘要段在真实任务消息（`tasks/l2-task`）里并不存在。结果是分级
  * 预警实际靠子代理自己数目录，多绕一步且不确定。现在由代码算好级别并注入，规则文件只管照做。
  */
-export function sceneCountWarningLine(count: number, maxScenes: number): string {
+export function sceneCountWarningLine(count: number, maxScenes: number, archiveEnabled: boolean = true): string {
+	// 归档指引只在**橙/红级**追加，且只有在归档层启用时才提（否则是让子代理去调一个会被拒的动作）。
+	// 常驻成本约 40 字符；完整的归档规则**不在这里** —— 那是 `l2_archive_guide` 工具按需返回的
+	// （见 memory/l2/archive-tool.ts 头注释：渐进式，平时零注入）。
+	const pointer = archiveEnabled
+		? "；需要腾名额时也可调 l2_archive_guide（列出可搬的块与规则：归档 ≠ 删除，随时可 restore 搬回）"
+		: "";
 	switch (gradeSceneCount(count, maxScenes)) {
 		case "red":
-			return `红色（${count}/${maxScenes}，已满）——禁止 CREATE：先做合并评估腾出空位；若确实没有可合并的块，该内容并入最相关的现有块（update）`;
+			return `红色（${count}/${maxScenes}，已满）——禁止 CREATE：先做合并评估腾出空位；若确实没有可合并的块，该内容并入最相关的现有块（update）${pointer}`;
 		case "orange":
-			return `橙色（${count}/${maxScenes}，差 1 个）——进入合并评估：有可合并的块则合并（腾出空位后仍可 CREATE），没有则只 UPDATE`;
+			return `橙色（${count}/${maxScenes}，差 1 个）——进入合并评估：有可合并的块则合并（腾出空位后仍可 CREATE），没有则只 UPDATE${pointer}`;
 		case "yellow":
 			return `黄色（${count}/${maxScenes}，接近上限）——优先 UPDATE，或主动 MERGE 相似场景`;
 		case "none":
@@ -199,7 +246,7 @@ export function buildL2Task(profilePath: string, _recordsFilesOverride?: string[
 		promptDir: PROMPT_DIR,
 		mode: loadL1Config(profilePath).mode,
 		maxScenes: String(maxScenes),
-		sceneCountWarning: sceneCountWarningLine(countSceneBlocks(profilePath), maxScenes),
+		sceneCountWarning: sceneCountWarningLine(countSceneBlocks(profilePath), maxScenes, loadL2ArchiveConfig(profilePath).enabled),
 	});
 }
 

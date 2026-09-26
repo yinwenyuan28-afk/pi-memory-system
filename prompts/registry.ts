@@ -29,7 +29,11 @@ const PROMPTS_DIR = dirname(fileURLToPath(import.meta.url));
 
 /** 无运行时兜底、md 缺失即 throw 的 key 前缀/全名（启动静态类）。 */
 const MD_ONLY_KEYS = ["injection/l1-contract"];
-const MD_ONLY_PREFIXES = ["tools#"];
+// `tools#` = 工具 description（有逐字节 golden 基线）；`guides/` = 工具**按需返回的长规则文本**
+// （2026-09-27 新增，如 `guides/l2-archive`）。刻意与 `tools#` 分开：那段长文本若挂在 `tools#` 下，
+// 会被 verify-prompt-contracts 第 1d 组当成工具 description 去对 golden（`--strict` 直接变红），
+// 而且工具 description 是**每次请求都随 schema 发给 provider** 的，放那里等于每轮都付。
+const MD_ONLY_PREFIXES = ["tools#", "guides/"];
 
 /** 内置默认（运行时关键类的兜底）。key 与 md 覆盖层一一对应。 */
 const BUILTIN: Record<string, { template: string; vars: string[] }> = {

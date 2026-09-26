@@ -90,6 +90,31 @@ export const L2_SCENE_INDEX_PATH = join("l2", "index", "scene_index.json");
  * `syncSceneIndex()` 读取并并进索引条目 —— 对外表现仍是"成员的机读入口在索引里"，块文件保持轻量。
  */
 export const L2_SCENE_MEMBERS_PATH = join("l2", "index", "scene_members.json");
+/**
+ * L2 归档目录（{memoryDB}/l2/archive）—— 场景块满了以后把冷块搬到这里（2026-09-27）。
+ *
+ * 为什么与 `scene-blocks/` **平级**而不是它的子目录：块数统计走「目录列举 + 只认顶层 `.md`」
+ * （`countSceneBlocks`、`l2_commit` 的上限预检、`syncSceneIndex` 三处同口径），所以搬出去的块
+ * **天然不占名额**，索引重建零改动。平级而非嵌套，是为了人工查看与层级都好读。
+ */
+export const L2_ARCHIVE_DIR = join("l2", "archive");
+/**
+ * L2 归档块的成员 sidecar（{memoryDB}/l2/archive/scene_members.json）—— 与 live 侧车同构。
+ *
+ * **权威、不可重建**：索引是派生物，但"哪些 L1 记录属于这个已归档的块"只在这里（正文里的 id token 只作兜底）。
+ * `l1/fix-tool` 的高价值判定靠反查成员清单（live 索引 + 本文件），丢了会让归档块名下的记录
+ * **静默失去保护**（可被 `l1-fix` 直接改写/墓碑）。
+ */
+export const L2_ARCHIVE_MEMBERS_PATH = join("l2", "archive", "scene_members.json");
+/**
+ * L2 归档事件账（{memoryDB}/l2/archive/ledger.jsonl，append-only）。
+ *
+ * 一行一条 `{op, filename, at, reason, by, ...}`。**不重建**：记的是"谁在什么时候为什么搬的"，
+ * 这是归档区别于 `delete` 的核心（可追溯）。文件丢了可由**目录扫描**补出 `ledger-missing`
+ * 条目（存在性真源永远是目录，见 `listArchivedBlocks`）。
+ */
+export const L2_ARCHIVE_LEDGER_PATH = join("l2", "archive", "ledger.jsonl");
+
 
 // ── L3 画像 ────────────────────────────────────────────────
 /** L3 游标文件（{memoryDB}/l3/cursor.json）。 */

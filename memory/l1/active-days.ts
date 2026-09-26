@@ -58,3 +58,28 @@ export function activeDayKeysToTimestamps(keys: string[]): number[] {
     return new Date(y, m - 1, d).getTime();
   });
 }
+
+/** 取本地日 0 点时间戳 */
+export function startOfLocalDay(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * 二分统计 base（**不含当天**）之后的活跃日数量 —— 即"从那件事到现在，错过了多少个工作日"。
+ *
+ * 2026-09-27 从 `quality.ts` 移到这里：L2 归档的事实清单（"自 updated 起过了几个活跃日"）
+ * 需要同一个量，放在本模块才能保持单源（`quality.ts` 改为 import）。
+ */
+export function countActiveDaysAfter(activeDays: number[], baseMs: number): number {
+  const base = startOfLocalDay(baseMs);
+  let lo = 0;
+  let hi = activeDays.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (activeDays[mid] <= base) lo = mid + 1;
+    else hi = mid;
+  }
+  return activeDays.length - lo;
+}

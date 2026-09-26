@@ -8,7 +8,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { L1_RECORDS_DIR, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.ts";
+import { L1_RECORDS_DIR, L2_ARCHIVE_MEMBERS_PATH, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.ts";
 import { getL1HitStatsDB } from "../stats/l1-hit-stats-db.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
@@ -44,8 +44,19 @@ function isHighValue(profilePath: string, recordId: string): boolean {
 		const indexPath = join(profilePath, MEMORY_DB_DIR, L2_SCENE_INDEX_PATH);
 		if (existsSync(indexPath)) {
 			const idx = JSON.parse(readFileSync(indexPath, "utf8"));
-			if (Array.isArray(idx)) {
-				return idx.some((e: any) => Array.isArray(e?.members) && e.members.includes(recordId));
+			if (Array.isArray(idx) && idx.some((e: any) => Array.isArray(e?.members) && e.members.includes(recordId))) {
+				return true;
+			}
+		}
+		// **归档侧车也要查**（2026-09-27）：块被归档后从 scene_index.json 消失；若这里只看活跃索引，
+		// 归档块名下的记录会**静默失去保护** —— 用户看不到任何提示，而 l1-fix 会直接放行改写/墓碑。
+		const archiveMembersPath = join(profilePath, MEMORY_DB_DIR, L2_ARCHIVE_MEMBERS_PATH);
+		if (existsSync(archiveMembersPath)) {
+			const map = JSON.parse(readFileSync(archiveMembersPath, "utf8")) as unknown;
+			if (map && typeof map === "object" && !Array.isArray(map)) {
+				for (const v of Object.values(map as Record<string, unknown>)) {
+					if (Array.isArray(v) && v.includes(recordId)) return true;
+				}
 			}
 		}
 	} catch { /* 索引不可用不阻塞 */ }

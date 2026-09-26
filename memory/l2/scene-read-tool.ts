@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { MEMORY_DB_DIR } from "../paths.ts";
+import { L2_ARCHIVE_DIR, MEMORY_DB_DIR } from "../paths.ts";
 import { SCENE_DIR_NAME } from "./config.ts";
 import { parseSceneBlock } from "./commit-tool.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
@@ -46,6 +46,8 @@ export interface SceneBlockReadItem {
 	truncated?: boolean;
 	/** 因单次总量上限未返回 */
 	omitted?: boolean;
+	/** 该块来自归档目录（live 目录里没有它）—— 2026-09-27 新增 */
+	archived?: boolean;
 	chars?: number;
 }
 
@@ -110,9 +112,20 @@ export function readSceneBlocks(
 			continue;
 		}
 		const filePath = join(sceneDir, filename);
+		// 归档回落（2026-09-27）：live 目录找不到时，去归档目录找 —— 搬错了要能自己纠回来，
+		// 那一刻它需要读到全文才能判断。文件名白名单（isPlainSceneFilename）仍然只放行裸名，
+		// 所以回落不放大路径穿越面；读到的块在 meta 上标 archived: true，让调用方知道它不在 live 层。
+		let archived = false;
+		let readPath = filePath;
 		if (!existsSync(filePath)) {
-			blocks.push({ filename, ok: false, error: "场景块不存在" });
-			continue;
+			const archivedPath = join(profilePath, MEMORY_DB_DIR, L2_ARCHIVE_DIR, filename);
+			if (existsSync(archivedPath)) {
+				archived = true;
+				readPath = archivedPath;
+			} else {
+				blocks.push({ filename, ok: false, error: "场景块不存在（live 与归档目录都没有）" });
+				continue;
+			}
 		}
 		if (totalChars >= totalLimit) {
 			omitted++;
@@ -120,7 +133,7 @@ export function readSceneBlocks(
 				filename,
 				ok: false,
 				omitted: true,
-				error: `已达单次总量上限（${totalLimit} 字符），本块未返回 —— 请再发一次 read_scene_blocks（只带它）或单独 read：${join(sceneDir, filename)}`,
+				error: `已达单次总量上限（${totalLimit} 字符），本块未返回 —— 请再发一次 read_scene_blocks（只带它）或单独 read：${readPath}`,
 			});
 			continue;
 		}
@@ -128,7 +141,7 @@ export function readSceneBlocks(
 		let content: string;
 		let meta: SceneBlockReadItem["meta"];
 		try {
-			const parsed = parseSceneBlock(readFileSync(filePath, "utf-8"));
+			const parsed = parseSceneBlock(readFileSync(readPath, "utf-8"));
 			content = parsed.content;
 			meta = { created: parsed.meta.created, updated: parsed.meta.updated, summary: parsed.meta.summary, heat: parsed.meta.heat };
 		} catch (e) {
@@ -138,7 +151,7 @@ export function readSceneBlocks(
 
 		let wasTruncated = false;
 		if (content.length > singleLimit) {
-			content = `${content.slice(0, singleLimit)}\n\n…（本块已截断：原文超过 ${singleLimit} 字符。需要完整内容请单独 read：${join(sceneDir, filename)}）`;
+			content = `${content.slice(0, singleLimit)}\n\n…（本块已截断：原文超过 ${singleLimit} 字符。需要完整内容请单独 read：${readPath}）`;
 			wasTruncated = true;
 			truncated++;
 		}
@@ -149,13 +162,21 @@ export function readSceneBlocks(
 				filename,
 				ok: false,
 				omitted: true,
-				error: `加上本块会超过单次总量上限（${totalLimit} 字符；已返回 ${totalChars}）—— 请再发一次 read_scene_blocks（只带它）或单独 read：${join(sceneDir, filename)}`,
+				error: `加上本块会超过单次总量上限（${totalLimit} 字符；已返回 ${totalChars}）—— 请再发一次 read_scene_blocks（只带它）或单独 read：${readPath}`,
 			});
 			continue;
 		}
 
 		totalChars += content.length;
-		blocks.push({ filename, ok: true, meta, content, ...(wasTruncated ? { truncated: true } : {}), chars: content.length });
+		blocks.push({
+			filename,
+			ok: true,
+			meta,
+			content,
+			...(wasTruncated ? { truncated: true } : {}),
+			...(archived ? { archived: true } : {}),
+			chars: content.length,
+		});
 	}
 
 	return { blocks, returned: blocks.filter((b) => b.ok).length, omitted, truncated, totalChars };

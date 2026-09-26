@@ -39,7 +39,7 @@
 
 import { loadAllL1Records, type L1Record } from "../search/embedding/record-loader.ts";
 import { getL1HitStatsDB, type L1HitStat } from "../stats/l1-hit-stats-db.ts";
-import { activeDayKeysToTimestamps, loadActiveDayKeys } from "./active-days.ts";
+import { activeDayKeysToTimestamps, countActiveDaysAfter, loadActiveDayKeys, startOfLocalDay } from "./active-days.ts";
 
 /** 质量分计算结果 */
 export interface QualityScore {
@@ -95,25 +95,8 @@ export function loadActiveDays(profilePath: string): number[] | undefined {
   return keys ? activeDayKeysToTimestamps(keys) : undefined;
 }
 
-/** 取本地日 0 点时间戳 */
-function startOfLocalDay(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-/** 二分统计 base（不含当天）之后的活跃日数量 */
-function countActiveDaysAfter(activeDays: number[], baseMs: number): number {
-  const base = startOfLocalDay(baseMs);
-  let lo = 0;
-  let hi = activeDays.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (activeDays[mid] <= base) lo = mid + 1;
-    else hi = mid;
-  }
-  return activeDays.length - lo;
-}
+// `startOfLocalDay` / `countActiveDaysAfter` 2026-09-27 移入 `active-days.ts` 并导出（单源）：
+// L2 归档的事实清单（"自 updated 起过了几个活跃日"）需要同一个量，放在那边才不会两处各写一份。
 
 /**
  * 计算单条 L1 的质量分（纯函数，不读 DB）
