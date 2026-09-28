@@ -45,6 +45,8 @@ export const DEFAULT_MEMORY_CHAR_LIMIT = 2200;
  * 为什么涨：1375 是腾讯 persona 单文件的口径，`USER.md` 已被 18 条手写规则占到 1302（95%），
  * 修好 L3 触发后它只剩 73 字符空间 —— 等于跑一次也写不进东西。
  * 口径与 `store.totalChars()` 一致（LF 归一化：条目正文 + `\n§\n` 分隔符），不是磁盘字节数。
+ * 2026-09-28 起 L3 写的是提议稿 `USER-temp.md`，但限额仍按"并入 USER.md 后的整篇"计
+ * （`l3_edit` 的工作副本 = live 条目 + 本轮改动）⇒ 这个数字同时是注入预算与写入预算。
  */
 export const DEFAULT_USER_CHAR_LIMIT = 2200;
 export const DEFAULT_PROFILE = "default";

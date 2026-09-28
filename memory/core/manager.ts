@@ -80,7 +80,13 @@ export class MemoryManager {
 		return this.profileManager;
 	}
 
-	/** Refresh USER.md frozen snapshot after L3 commit (intra-session injection). */
+	/**
+	 * Refresh the USER.md frozen snapshot (intra-session injection).
+	 *
+	 * 2026-09-28 起 L3 只写 USER-temp.md（提议稿），live USER.md 由用户手工并入 ⇒ 这条刷新在
+	 * L3 提交后**没有任何内容可刷**（no-op）。保留是因为代价为零：将来若出现新的 live 写入者，
+	 * 注入快照刷新这条通道不用重建。
+	 */
 	refreshUserSnapshot(): void {
 		if (!this._initialized) return;
 		this.store.refreshSnapshot("user");

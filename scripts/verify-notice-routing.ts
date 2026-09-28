@@ -368,9 +368,10 @@ const l3Group = (async () => {
 	const db = getPipelineJobsDB(l3Root);
 	const queued = db.enqueue("l3", "manual");
 	const job = db.claim(queued.id)!;
-	// 桩子代理：把“规则乙”换成“规则丙”，然后写“真完成信号”（等价 l3_commit → completeRunningL3）
+	// 桩子代理：把“规则乙”换成“规则丙”写进**提议稿**（2026-09-28 起 L3 只写 USER-temp.md），
+	// 然后写“真完成信号”（等价 l3_commit → completeRunningL3）
 	(globalThis as unknown as { __piSubagentExecutor?: unknown }).__piSubagentExecutor = async (id: string) => {
-		writeFileSync(join(l3Root, "USER.md"), ["规则甲：中文输出", "规则丙：新增的画像规则"].join("\n§\n") + "\n", "utf-8");
+		writeFileSync(join(l3Root, "USER-temp.md"), ["规则甲：中文输出", "规则丙：新增的画像规则"].join("\n§\n") + "\n", "utf-8");
 		db.complete(job.id, "done");
 		return id;
 	};
@@ -385,7 +386,8 @@ const l3Group = (async () => {
 	check("executeJob 返回 done", l3Result === "done", l3Result);
 	check("L3 跑完产出 1 张卡片", l3Cards.entries.length === 1, `n=${l3Cards.entries.length}`);
 	const card = l3Cards.entries[0]?.data as NoticePayload;
-	check("标题 = ＋1 / －1（改一条=换掉一条）", card?.title === "画像更新：＋1 / －1", card?.title);
+	check("标题 = 画像提议 ＋1 / －1（改一条=换掉一条）", card?.title === "画像提议（待并入 USER.md）：＋1 / －1", card?.title);
+	check("摘要点明 live USER.md 未动", (card?.lines ?? []).some((l) => l.includes("live USER.md 未动")));
 	check("摘要列出新规则", (card?.lines ?? []).some((l) => l.includes("规则丙")));
 	check("摘要列出被换掉的规则", (card?.lines ?? []).some((l) => l.includes("规则乙")));
 	check("detail 含逐条明细", typeof card?.detail === "string" && card.detail.includes("＋ 规则丙") && card.detail.includes("－ 规则乙"));

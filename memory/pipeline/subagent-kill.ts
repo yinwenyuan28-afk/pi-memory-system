@@ -4,7 +4,8 @@
 //
 // ── 为什么"停下它"不丢数据（配合 stop-request 的"先拦"）──────────────
 //   ① 写本身原子：`atomicWrite` = 写临时文件 + `renameSync`（`memory/l2/commit-tool.ts`）；
-//      USER.md 同款，且每轮首次写盘前备份到 `backups/user-backups/` ⇒ 不会出现半个坏文件。
+//      L3 的提议稿 `USER-temp.md` 同款，且每轮首次写盘前备份到 `backups/user-backups/` ⇒ 不会
+//      出现半个坏文件（live `USER.md` 自 2026-09-28 起 L3 压根不写，见 `memory/l3/user-file.ts`）。
 //   ② `consolidate` 的顺序是"先写目标、再删源"（代码注释明说是为此刻意排序）⇒ 被杀最多
 //      "目标已写、源未删" = 内容重复，不是丢失。
 //   ③ 游标随 commit 推进 ⇒ 未提交 = 游标不动 = **下一轮重做**（"重做"而非"丢内容"）。

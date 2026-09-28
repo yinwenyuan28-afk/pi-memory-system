@@ -6,7 +6,7 @@ import { loadL1Config, type L1Mode } from "../l1/config.ts";
 import { L3_CURSOR_FILE as PATHS_L3_CURSOR, MEMORY_DB_DIR } from "../paths.ts";
 import { DEFAULT_USER_CHAR_LIMIT } from "../core/types.ts";
 import { SINGLE_ENTRY_CHAR_LIMIT } from "./entries.ts";
-import { readUserFile, userFilePath } from "./user-file.ts";
+import { readUserFile, userFilePath, userTempFilePath } from "./user-file.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /** P4 记忆阈值（L2 尚未稳定，高于腾讯默认 20）。 */
@@ -99,6 +99,13 @@ export function readSceneIndex(profilePath: string): SceneIndexEntry[] {
 	}
 }
 
+/**
+ * live USER.md 的正文（**注入侧口径**，与 `core/store.ts` 读的是同一份文件）。
+ *
+ * 注意与 L3 的落盘目标区分：2026-09-28 起 L3 写的是 `USER-temp.md`（提议稿），本函数**不是**
+ * 在读提议稿 —— 它回答的是"注入进 system prompt 的画像现在长什么样"，冷启动/恢复门控
+ * （`trigger.ts` 的 P2/P2.5/P3）与"用户是否已并入"都该按这个口径判。
+ */
 export function readUserPersonaBody(profilePath: string): string {
 	try {
 		return (readUserFile(profilePath) ?? "").trim();
@@ -140,7 +147,10 @@ export function buildL3Task(profilePath: string, triggerReason: string, changedS
 	const mode: L1Mode = loadL1Config(profilePath).mode;
 	return renderPrompt("tasks/l3-task", {
 		profilePath,
+		// live 画像：**只读**，用于去重（条目已在正式画像里就不要重复提）
 		userMdPath: userFilePath(profilePath),
+		// 落盘目标：L3 的工作副本 / 提议稿，l3_edit 改的是它（首次写盘时以 live 播种）
+		userTempMdPath: userTempFilePath(profilePath),
 		cursorPath: join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE),
 		sceneDir: join(profilePath, MEMORY_DB_DIR, SCENE_DIR_NAME),
 		indexPath: join(profilePath, MEMORY_DB_DIR, SCENE_INDEX_PATH),

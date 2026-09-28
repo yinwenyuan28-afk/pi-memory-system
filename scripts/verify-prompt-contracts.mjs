@@ -56,6 +56,7 @@ const FX = {
 	"tasks/l3-task": {
 		profilePath: "C:/p",
 		userMdPath: "C:/p/USER.md",
+		userTempMdPath: "C:/p/USER-temp.md",
 		cursorPath: "C:/p/memoryDB/l3/cursor.json",
 		sceneDir: "C:/p/memoryDB/l2/scene-blocks",
 		indexPath: "C:/p/memoryDB/l2/index/scene_index.json",
@@ -90,8 +91,10 @@ const LEGACY = {
 		["L2 organization task", `RecordsDir: ${v.recordsDir}  （用 read_l1_increment 工具按需读取，不要直接 read 这个目录）`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `CursorPath: ${v.cursorPath}`, `PromptDir: ${v.promptDir}`, `Mode: ${v.mode}`, `MaxScenes: ${v.maxScenes}  （场景块数量硬上限，规则文件中的 {maxScenes} 用此值替换）`, `SceneCountWarning: ${v.sceneCountWarning}  （代码按当前块数算好的分级预警：红=已满禁 CREATE / 橙=差 1 个先进合并评估 / 黄=接近 / 无色=无额外限制）`].join("\n"),
 	// 2026-09-16：tasks/l3-task 增 CharLimit / EntryCharLimit 两行（用户拍板：L3 条目级操作，
 	// 上限不再写死在提示词里，改由任务消息单源下发）。基线随之更新。
+	// 2026-09-28：增 UserTempMdPath 行（L3 落盘目标改成 USER-temp.md，UserMdPath 降为只读去重参照），
+	// 且 CharLimit 行的注释改为「并入 USER.md 后的整篇」口径。基线同步。
 	"tasks/l3-task": (v) =>
-		["L3 persona generation task", `ProfilePath: ${v.profilePath}`, `UserMdPath: ${v.userMdPath}`, `CursorPath: ${v.cursorPath}`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `PromptDir: ${v.promptDir}`, `PromptFile: ${v.promptFile}`, `ChangedScenes: ${v.changedScenes}`, `TriggerReason: ${v.triggerReason}`, `Mode: ${v.mode}`, `CharLimit: ${v.charLimit}  （USER.md 全篇字符上限，代码硬校验：超出会被 l3_edit 拒绝）`, `EntryCharLimit: ${v.entryCharLimit}  （单条规则字符上限，一次 l3_edit 只能写一条）`].join("\n"),
+		["L3 persona generation task", `ProfilePath: ${v.profilePath}`, `UserMdPath: ${v.userMdPath}  （live 画像，**只读**：去重与语义比对看它；你改不动它）`, `UserTempMdPath: ${v.userTempMdPath}  （写入稿：\`l3_edit\` 改的就是它；可能尚不存在 = 本轮首次提议，等于以 live 播种）`, `CursorPath: ${v.cursorPath}`, `SceneDir: ${v.sceneDir}`, `IndexPath: ${v.indexPath}`, `PromptDir: ${v.promptDir}`, `PromptFile: ${v.promptFile}`, `ChangedScenes: ${v.changedScenes}`, `TriggerReason: ${v.triggerReason}`, `Mode: ${v.mode}`, `CharLimit: ${v.charLimit}  （画像全篇字符上限，按「并入 USER.md 后的整篇」计价，代码硬校验：超出会被 l3_edit 拒绝）`, `EntryCharLimit: ${v.entryCharLimit}  （单条规则字符上限，一次 l3_edit 只能写一条）`].join("\n"),
 	"tasks/skill-review#main": (v) =>
 		[`SkillFeedFiles: ${v.skillFeedFiles}`, `CursorPath: ${v.cursorPath}`, `ReviewerCursor: ${v.reviewerCursor}`, `ProfilePath: ${v.profilePath}`].join("\n"),
 	"tasks/skill-review#learn-fallback": (v) => `Review session: ${v.sessionPath}\nProfile: ${v.profilePath}${v.extra}`,

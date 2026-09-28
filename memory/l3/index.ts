@@ -20,8 +20,7 @@ import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
-import { parseUserFile } from "./entries.ts";
-import { readUserFile } from "./user-file.ts";
+import { readL3Proposal, USER_TEMP_FILE } from "./user-file.ts";
 
 function incrementMemoriesSince(profilePath: string, count: number): void {
 	const filePath = join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE);
@@ -35,29 +34,40 @@ function l3CoolDownMessage(failures: number): string {
 	return `L3 画像连续失败 ${failures} 次，已暂停自动更新。用 /my-memory:l3-trigger 手动重试或检查日志。`;
 }
 
-/** 读取 USER.md 的条目列表（解析失败按空处理：比对失败不得影响 L3 队列本身）。 */
-function readUserEntries(profilePath: string): string[] {
+/**
+ * 读取提议稿原文的条目列表（temp 存在 = temp，否则 = live USER.md；解析失败按空处理：
+ * 比对失败不得影响 L3 队列本身）。
+ *
+ * 为什么跑前跑后都用"提议稿原文"而不是播种形态（live ∪ temp 独有）：卡片要回答的是
+ * "这次 run 把写入稿改成了什么样"。播种发生在**首次写盘时**，用原文口径取两次快照就正好
+ * 覆盖住它；若跑前取播种形态，用户手工放进 temp 的候选会被算成 L3 的新增（跑前看到的是并集、
+ * 跑后看到的是原文，两边基准不一致还会把"这一轮什么都没干"显示成一次删改）。
+ */
+function readProposalEntries(profilePath: string): string[] {
 	try {
-		return parseUserFile(readUserFile(profilePath)).entries;
+		return readL3Proposal(profilePath).entries;
 	} catch {
 		return [];
 	}
 }
 
 /**
- * 输出一张“画像变更”卡片（L3 是本系统里唯一会改**用户画像**的一层，改了什么必须可见）。
+ * 输出一张“画像提议”卡片（L3 是本系统里唯一会改**用户画像**的一层，提了什么必须可见）。
  *
  * 为什么在主进程算而不是让子代理上报：L3 在**独立进程**里跑，子代理的 `appendEntry`
  * 只会写进它自己的 session，用户看不到（跨进程卡片本可走 notices.jsonl，但改动点只有一处，
- * 主进程 spawn 前后各读一次 USER.md 更直接，也能顺手处理“本轮什么都没改”）。
+ * 主进程 spawn 前后各读一次提议稿更直接，也能顺手处理“本轮什么都没改”）。
+ *
+ * 为什么是"提议"：2026-09-28 起 L3 写 `USER-temp.md`，live `USER.md` 由用户手工并入
+ * ⇒ 卡片必须说清"这些改动还没生效"，否则用户会以为画像已经变了。
  *
  * 口径说明：集合比对，**同一位置的改写会同时计入新增与删除**（比如改一条 = +1/-1），
  * 不做逐条相似度匹配——那个成本远高于它带来的信息量。
  *
- * @param before spawn 前的条目快照
- * @param after  子代理提交后的条目快照
+ * @param before spawn 前的提议稿条目快照
+ * @param after  子代理提交后的提议稿条目快照
  */
-function reportUserFileDiff(before: string[], after: string[]): void {
+function reportProposalDiff(before: string[], after: string[]): void {
 	const beforeSet = new Set(before);
 	const afterSet = new Set(after);
 	const added = after.filter((e) => !beforeSet.has(e));
@@ -68,18 +78,22 @@ function reportUserFileDiff(before: string[], after: string[]): void {
 		noticeCard({
 			level: "info",
 			title: "画像本轮无改动（L3 已跑完）",
-			lines: [`USER.md 条目数 ${after.length}，与跑前一致`],
+			lines: [`提议稿（${USER_TEMP_FILE}）条目数 ${after.length}，与跑前一致`],
 		});
 		return;
 	}
 
-	const lines: string[] = [`条目数 ${before.length} → ${after.length}`];
+	const lines: string[] = [
+		`条目数 ${before.length} → ${after.length}`,
+		`写入 ${USER_TEMP_FILE}；live USER.md 未动，确认后手工并入`,
+	];
 	for (const e of added.slice(0, 3)) lines.push(`＋ ${cut(e)}`);
 	if (added.length > 3) lines.push(`＋ …另 ${added.length - 3} 条`);
 	for (const e of removed.slice(0, 3)) lines.push(`－ ${cut(e)}`);
 	if (removed.length > 3) lines.push(`－ …另 ${removed.length - 3} 条`);
 
 	const detail = [
+		`提议稿：${USER_TEMP_FILE}（live USER.md 未被 L3 修改，并入由用户手工完成）`,
 		`新增/改写 ${added.length} 条：`,
 		...added.map((e) => `＋ ${e}`),
 		"",
@@ -89,7 +103,7 @@ function reportUserFileDiff(before: string[], after: string[]): void {
 
 	noticeCard({
 		level: "info",
-		title: `画像更新：＋${added.length} / －${removed.length}`,
+		title: `画像提议（待并入 USER.md）：＋${added.length} / －${removed.length}`,
 		lines,
 		detail,
 	});
@@ -110,7 +124,7 @@ export interface L3Controls {
  *
  * 改动前 L3 是三层里唯一不排队的：主进程在 `agent_settled` 自行 `runPiSubagent`，用
  * `l3/run.lock` 文件锁单飞、靠后续 settle 观察游标推进来结算。那套能挡住并发，但**只挡 L3 自己** ——
- * 它挡不住 L3 与 L1/L2 重叠（同一时刻可能一个 L1 在啃 L0、一个 L3 在改 USER.md）。
+ * 它挡不住 L3 与 L1/L2 重叠（同一时刻可能一个 L1 在啃 L0、一个 L3 在写 USER-temp.md）。
  *
  * 现在 L3 是 `pipeline/jobs.sqlite` 的第三种 job（`type='l3'`）：
  *   · 本模块只负责**触发判定**（五级门控）与**入队**，不再直接 spawn；
@@ -217,8 +231,8 @@ export function setupL3Persona(
 			return "skipped";
 		}
 
-		// USER.md 快照（跑前）：子代理跑完后比对，用于“画像改了什么”卡片（见 reportUserFileDiff）
-		const userEntriesBefore = readUserEntries(profilePath);
+		// 提议稿快照（跑前）：子代理跑完后比对，用于“提了什么”卡片（见 reportProposalDiff）
+		const userEntriesBefore = readProposalEntries(profilePath);
 
 		const cursor = loadL3Cursor(profilePath);
 		saveL3Cursor(profilePath, { ...cursor, lastTriggeredAt: new Date().toISOString() });
@@ -269,9 +283,9 @@ export function setupL3Persona(
 						`${outcome.longestTurnMs !== undefined ? `，最长单轮 ${(outcome.longestTurnMs / 1000).toFixed(0)}s` : ""}）`,
 					profilePath,
 				);
-				// 画像变更卡片：这是本系统唯一会改用户画像的层，改了什么必须可见
+				// 画像提议卡片：这是本系统唯一会改用户画像的层，提了什么必须可见
 				//（2026-09-19 之前完全静默：连“跑完了没改任何东西”都无从得知）。
-				reportUserFileDiff(userEntriesBefore, readUserEntries(profilePath));
+				reportProposalDiff(userEntriesBefore, readProposalEntries(profilePath));
 				return "done";
 			}
 			if (after?.status === "skipped") {
@@ -293,7 +307,7 @@ export function setupL3Persona(
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
 			recordFailure(ctx, `子代理超过硬上限被停掉（job ${job.id}）`);
 			if (!stop.killConfirmed) {
-				// 停不下来就不能放新 L3 进来（它会改 USER.md —— 受保护数据）⇒ 持有该层
+				// 停不下来就不能放新 L3 进来（它会写 USER-temp.md，而停不下来的那个还在写同一份文件）⇒ 持有该层
 				const st3 = loadFailureState(profilePath);
 				st3.l3.holdUntil = holdUntilFrom(Date.now(), to.holdMsUnconfirmed);
 				saveFailureState(profilePath, st3);
@@ -304,7 +318,9 @@ export function setupL3Persona(
 				title: "L3 画像更新已在硬上限被停掉",
 				lines: [
 					`job ${job.id}（来源 ${job.source}）超过 ${(to.hardMs / 60000).toFixed(0)} 分钟未提交，已停止子代理`,
-					stop.killConfirmed ? "USER.md 已核（原子写 + 每轮备份，未被破坏）" : "**未能确认停止**，本层已持有，暂不接受新任务",
+					stop.killConfirmed
+						? `live USER.md 未被触碰（L3 只写 ${USER_TEMP_FILE}，原子写 + 每轮备份）`
+						: `**未能确认停止**，本层已持有，暂不接受新任务`,
 				],
 				detail: `${stop.note}\n进程内日志：memoryDB/logs/l3.log`,
 			});
@@ -338,7 +354,7 @@ export function setupL3Persona(
 			return;
 		}
 
-		// 去重靠队列本身：同 type 已有 queued/running 时不堆第二条（重复触发等于重复改 USER.md）
+		// 去重靠队列本身：同 type 已有 queued/running 时不堆第二条（重复触发 = 两个子代理交错写同一份提议稿）
 		// source 要带上意图：executeJob 在 claim 时会照 source 还原 force / personaSignal（见那里的注释）
 		const queued = pipeline.enqueueL3(opts.force ? "manual" : opts.personaSignal ? "signal" : "trigger");
 		if (!queued) {

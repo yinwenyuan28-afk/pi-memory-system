@@ -340,6 +340,8 @@ export default function (pi: ExtensionAPI) {
   // 子代理判断"满了、要腾名额"时才调它。注册点同样必须在这里（模块顶层），理由同上。
   registerL2ArchiveGuideTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
   // l3_edit 工具：l3-persona-generator 子代理的**条目级**写入（用户裁定：一次调用只动一条记忆）
+  // 落盘目标是 USER-temp.md 而非 live USER.md（2026-09-28 用户裁定，见 memory/l3/user-file.ts），
+  // 所以这个 onChanged（刷新注入快照）实际是 no-op —— 注入侧读的一直是 USER.md。
   registerL3EditTool(
     pi,
     () => manager?.getProfileManager().getActiveProfile()?.path,
@@ -1042,7 +1044,7 @@ export default function (pi: ExtensionAPI) {
   // ── L3 Persona Command ─────────────────────────────────────
 
   pi.registerCommand("my-memory:l3-trigger", {
-    description: "手动触发 L3 Persona 生成（从 L2 场景更新 USER.md）。用法：/my-memory:l3-trigger",
+    description: "手动触发 L3 Persona 生成（从 L2 场景更新画像提议稿 USER-temp.md，再由用户并入 USER.md）。用法：/my-memory:l3-trigger",
     usage: "用法：/my-memory:l3-trigger",
     handler: async (_args, ctx) => {
       if (!l3Controls) {

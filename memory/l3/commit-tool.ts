@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { MemoryManager } from "../core/manager.ts";
 import { USER_CHAR_LIMIT, loadL3Cursor, saveL3Cursor } from "./config.ts";
-import { entryBudget, parseUserFile } from "./entries.ts";
-import { readUserFile } from "./user-file.ts";
+import { entryBudget } from "./entries.ts";
+import { readL3Proposal } from "./user-file.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
 import { isStopRequested, stopRequestedMessage } from "../pipeline/stop-request.ts";
 import { acquireRunLock, runLockBusyMessage } from "../pipeline/run-lock.ts";
@@ -26,6 +26,10 @@ export interface L3CommitResult {
  * 为什么游标不能挂在 `l3_edit` 上：L3 完全可能读完场景后判定"没东西要改"（提示词明确允许），
  * 那样就一次 `l3_edit` 都不会调 —— 游标不推进 ⇒ 下一轮又认为"有变化场景" ⇒ 反复触发。
  * 所以收尾必须是一次独立、必被调用的动作；主进程也以"游标是否推进"判定这一轮成功与否。
+ *
+ * **2026-09-28**：L3 的落盘目标是 `USER-temp.md`（提议稿），live `USER.md` 只读。回传的
+ * `entryCount` / `usage` 口径因此改成**提议稿**（见 `user-file.ts` 的 `readL3Proposal`），
+ * 它等于"用户把 temp 并入后 USER.md 会是什么样"，与 `l3_edit` 的整篇限额同一口径。
  */
 export function registerL3CommitTool(
 	pi: ExtensionAPI,
@@ -57,7 +61,7 @@ export function registerL3CommitTool(
 				if (!profilePath) return reply({ success: false, error: "No active profile" });
 				// 停止请求（2026-09-26）：硬上限停掉 L3 子代理时，入口拒写（把被杀点推到操作边界）
 				if (isStopRequested(profilePath, "l3")) return reply({ success: false, error: stopRequestedMessage("l3") });
-				// 运行级锁（2026-09-26）：谁写谁持锁 —— 两个 L3 同时改 USER.md 会互相覆盖
+				// 运行级锁（2026-09-26）：谁写谁持锁 —— 两个 L3 同时改同一份落盘目标会互相覆盖
 				const runLock = acquireRunLock(profilePath, "l3");
 				if (!runLock.acquired) return reply({ success: false, error: runLockBusyMessage("l3", runLock.owner) });
 
@@ -67,8 +71,8 @@ export function registerL3CommitTool(
 					return reply({ success: false, error: `cursor 不是合法 ISO 时间戳: ${JSON.stringify(cursor)}` });
 				}
 
-				const entries = parseUserFile(readUserFile(profilePath)).entries;
-				const now = new Date().toISOString();
+					const entries = readL3Proposal(profilePath).entries;
+					const now = new Date().toISOString();
 				const prev = loadL3Cursor(profilePath);
 				saveL3Cursor(profilePath, {
 					lastPersonaUpdate: cursor,
@@ -77,6 +81,8 @@ export function registerL3CommitTool(
 					lastCommittedAt: now,
 				});
 
+				// 注入快照刷新：2026-09-28 起 L3 不再改 live USER.md ⇒ 这里是 no-op（注入内容未变）。
+				// 保留是因为代价为零、且将来若真出现"live 写入者"不必再改这一行。
 				getManager()?.refreshUserSnapshot();
 				// 队列的**真完成信号**（2026-09-19 并入串行执行器）：只有子代理自己提交了才算这一轮跑成。
 				// 子代理进程里做不了别的事 —— `runPiSubagent` 是 async:true，派发方等不到这个时刻。

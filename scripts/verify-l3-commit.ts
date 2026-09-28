@@ -8,6 +8,14 @@
 //   · 结构校验只判 `content.includes("§")`
 //   · CRLF 下 `split("\n§\n")` 把 18 条并成 1 条
 //
+// 覆盖 2026-09-28 的 staging 改造（第 15 组，L3 只写 USER-temp.md）：
+//   · live `USER.md` **逐字不动**（含注入侧口径 `readUserPersonaBody` 不含 L3 新增）
+//   · 播种 = live 条目在前 + temp 独有条目在后，且**每轮只在第一次成功写盘时做一次**
+//     （初版把并集写进"每次读" ⇒ 同轮 `delete` 掉的条目会被并回来，删除恒无效）
+//   · 跨 run 保住用户手工放进 temp 的候选；备份口径改成"temp 存在则备 temp 原文"
+//   · **超限种子的死锁出口**：工作副本本来就超限时只放行"真能降低用量"的改动，
+//     否则删除 op 的改动后用量仍在上限之上 ⇒ 恒拒 ⇒ 腾空间的第一步都做不了
+//
 // 用 tsx 跑（仓库约定：`.ts` 不能 node 直跑，也不用 tsc）：
 //   tsx scripts/verify-l3-commit.ts
 //
@@ -28,7 +36,7 @@ import { consumePendingTrigger, writePendingTrigger } from "../memory/l3/signal.
 import { entryBudget, locateEntry, normalizeEntryText, parseUserFile, serializeUserFile } from "../memory/l3/entries.ts";
 import { registerL3EditTool } from "../memory/l3/edit-tool.ts";
 import { registerL3CommitTool } from "../memory/l3/commit-tool.ts";
-import { resetBackupFlag, USER_FILE } from "../memory/l3/user-file.ts";
+import { isRunSeeded, readL3Proposal, resetRunFlags, seedProposalEntries, USER_FILE, USER_TEMP_FILE } from "../memory/l3/user-file.ts";
 import { setupL3Persona } from "../memory/l3/index.ts";
 import { closePipelineJobsDB, getPipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { loadFailureState, saveFailureState } from "../memory/failure-state.ts";
@@ -65,7 +73,7 @@ function dropRoot(root: string): void {
 function toolsFor(profileRoot: string) {
 	const captured: Array<Record<string, unknown>> = [];
 	const fakePi = { registerTool: (t: unknown) => captured.push(t as Record<string, unknown>) };
-	resetBackupFlag();
+	resetRunFlags(); // 一个子代理进程 = 一次 run：夹具里显式复位"已播种 / 已备份"两个标志
 	registerL3EditTool(fakePi as never, () => profileRoot, () => {});
 	registerL3CommitTool(fakePi as never, () => profileRoot, () => undefined);
 	const call = async (name: string, params: unknown): Promise<Record<string, unknown>> => {
@@ -80,7 +88,11 @@ function toolsFor(profileRoot: string) {
 const FOUR = ["规则甲：先分析根因", "规则乙：精确范围提交", "规则丙：最简可行实现", "规则丁：验证按变更侧选手段"];
 const LF_DOC = FOUR.join("\n§\n") + "\n";
 const CRLF_DOC = FOUR.join("\r\n§\r\n") + "\r\n";
-const readMd = (root: string) => readFileSync(join(root, USER_FILE), "utf-8");
+/** live 画像（USER.md）——**L3 一个字节都不该改它**。 */
+const readLive = (root: string) => readFileSync(join(root, USER_FILE), "utf-8");
+/** L3 的落盘结果：temp 存在读 temp，否则读 live（= 尚未写过盘时的"提议稿原文"口径）。 */
+const readMd = (root: string) =>
+	existsSync(join(root, USER_TEMP_FILE)) ? readFileSync(join(root, USER_TEMP_FILE), "utf-8") : readLive(root);
 const backupDir = (root: string) => join(root, "memoryDB", "backups", "user-backups");
 
 async function main(): Promise<void> {
@@ -154,6 +166,10 @@ async function main(): Promise<void> {
 		check("前 4 条逐字未变", entries.slice(0, 4).join("|") === FOUR.join("|"));
 		check("沿用 CRLF 未引入混排", readMd(root).includes("\r\n§\r\n"));
 		check("原文是新增后内容的前缀（无整篇重写）", readMd(root).startsWith(before.trimEnd()));
+		// 2026-09-28 staging：落盘目标是 temp，live 画像不该被碰
+		check("temp 已建立（首次提议以 live 播种）", existsSync(join(root, USER_TEMP_FILE)));
+		check("live USER.md 逐字未变", readLive(root) === CRLF_DOC);
+		check("提议稿 = live 4 条 + 新增 1 条", parseUserFile(readMd(root)).entries.length === 5);
 
 		check("add 换行 → 拒", (await call("l3_edit", { action: "add", content: "甲\n乙" })).success === false);
 		check("add 含 § → 拒", (await call("l3_edit", { action: "add", content: "甲 § 乙" })).success === false);
@@ -196,6 +212,7 @@ async function main(): Promise<void> {
 		check("可删到空", parseUserFile(readMd(root)).entries.length === 0, `文件=${JSON.stringify(readMd(root))}`);
 		const rebuild = await call("l3_edit", { action: "add", content: "从零重建的一条" });
 		check("空文件后仍能 add", rebuild.success === true && parseUserFile(readMd(root)).entries.length === 1);
+		check("live USER.md 全程未被触碰（update/delete 都只落在提议稿）", readLive(root) === LF_DOC);
 		rmSync(root, { recursive: true, force: true });
 	}
 
@@ -228,6 +245,7 @@ async function main(): Promise<void> {
 		check("用量确实等于上限", entryBudget(parseUserFile(readMd(near)).entries) === USER_CHAR_LIMIT);
 		check("再多 1 字符 → 拒", (await call("l3_edit", { action: "add", content: "庚" })).success === false);
 		check("差 1 超限被拒后文件未变", entryBudget(parseUserFile(readMd(near)).entries) === USER_CHAR_LIMIT);
+		check("live USER.md 全程未被触碰", readLive(near) === head.join("\n§\n") + "\n");
 		rmSync(near, { recursive: true, force: true });
 	}
 
@@ -246,6 +264,7 @@ async function main(): Promise<void> {
 		check("无空条目", entries.every((e) => e.trim().length > 0));
 		const seps = (doc.match(/\r?\n§\r?\n/g) || []).length;
 		check("分隔符数 = 条目数 - 1", seps === entries.length - 1, `${seps} vs ${entries.length - 1}`);
+		check("live USER.md 未被触碰", readLive(root) === LF_DOC);
 		rmSync(root, { recursive: true, force: true });
 	}
 
@@ -366,16 +385,28 @@ async function main(): Promise<void> {
 		check("含 EntryCharLimit 单源值", task.includes(`EntryCharLimit: ${L3_ENTRY_CHAR_LIMIT}`), `期望 ${L3_ENTRY_CHAR_LIMIT}`);
 		check("含 ChangedScenes", task.includes("ChangedScenes: s.md"));
 		check("含 PromptFile（code 模式）", task.includes("persona-generation-code.md"));
+		// staging（2026-09-28）：两个路径都要给 —— live 用于去重、temp 是写盘目标
+		check("含 UserMdPath（live 画像，去重参照）", task.includes(`UserMdPath: ${join(root, USER_FILE)}`));
+		check("含 UserTempMdPath（写盘目标 / 提议稿）", task.includes(`UserTempMdPath: ${join(root, USER_TEMP_FILE)}`));
+		check("CharLimit 行注释已改「并入 USER.md 后的整篇」口径", task.includes("并入 USER.md 后的整篇"));
 		rmSync(root, { recursive: true, force: true });
 	}
 
 	// ════════════════════════════════════════════════════════════════════════
-	console.log("\n=== 13. 注入侧口径（与 store.readFile 一致） ===");
+	console.log("\n=== 13. 注入侧口径：注入的是 live USER.md，L3 改动进不去 ===");
 	{
 		const root = makeProfile(CRLF_DOC);
 		check("readUserPersonaBody 非空", readUserPersonaBody(root).length > 0);
-		const raw = readMd(root).trim();
+		const liveBefore = readLive(root);
+		const raw = liveBefore.trim();
 		check("CRLF 文档切分 = 4 条", raw.split(/\r?\n§\r?\n/).map((s) => s.trim()).filter(Boolean).length === 4);
+
+		// L3 写一轮，注入侧必须一个字节都不变（这是这次改造的全部意义）
+		const { call } = toolsFor(root);
+		await call("l3_edit", { action: "add", content: "提议稿里的新条目" });
+		check("live USER.md 逐字未变", readLive(root) === liveBefore);
+		check("注入口径（readUserPersonaBody）不含 L3 新增", !readUserPersonaBody(root).includes("提议稿里的新条目"));
+		check("提议稿里能读到 L3 的新增", parseUserFile(readMd(root)).entries.some((e) => e.includes("提议稿里的新条目")));
 		rmSync(root, { recursive: true, force: true });
 	}
 
@@ -471,6 +502,86 @@ async function main(): Promise<void> {
 			`source=${log[3]?.source}`,
 		);
 		dropRoot(root);
+	}
+
+	// ════════════════════════════════════════════════════════════════════════
+	console.log("\n=== 15. staging 语义（写提议稿，不碰 live；播种 / 候选保护 / 限额死锁） ===");
+	{
+		// ① 首次提议：temp 不存在 ⇒ 工作副本以 live 播种，update/delete 能定位到 live 条目
+		const root = makeProfile(LF_DOC);
+		const { call } = toolsFor(root);
+		check("播种形态 = live 4 条", seedProposalEntries(root).length === 4);
+		check("尚未写盘时无 temp", !existsSync(join(root, USER_TEMP_FILE)));
+		check("写盘前：本轮还没切口径（仍是播种形态）", isRunSeeded() === false);
+		const up = await call("l3_edit", { action: "update", target: "先分析根因", content: "规则甲（改写）" });
+		check("首次 op 就能 update 命中 live 条目（播种生效）", up.success === true);
+		check("首次写盘成功后才切口径（之后读 temp 原文）", isRunSeeded() === true);
+		check("写盘后 temp 建立，live 仍 4 条", existsSync(join(root, USER_TEMP_FILE)) && readLive(root) === LF_DOC);
+
+		// ② 同一轮内的删除立刻生效：不能因为"该条目还在 live 里"被并回来（并集口径的死循环）
+		check("delete 命中", (await call("l3_edit", { action: "delete", target: "规则乙" })).success === true);
+		check("删掉的条目没有复活", !parseUserFile(readMd(root)).entries.some((e) => e.includes("规则乙")));
+		check("live 里它还在（未确认前不动 live）", readLive(root).includes("规则乙"));
+		rmSync(root, { recursive: true, force: true });
+
+		// ③ 用户手工放进 temp 的候选：跨 run（新进程）不能被播种清掉
+		const root2 = makeProfile(LF_DOC);
+		writeFileSync(join(root2, USER_TEMP_FILE), "用户手放的候选规则\n", "utf-8");
+		const t2 = toolsFor(root2);
+		const seeded = seedProposalEntries(root2);
+		check(
+			"播种 = live 4 条 + temp 独有 1 条（live 在前）",
+			seeded.length === 5 && seeded[0] === FOUR[0] && seeded[4].includes("用户手放的候选"),
+			`${seeded.length} 条`,
+		);
+		check("temp 已有的 live 条目不会被重复追加", seedProposalEntries(root2).filter((e) => e === FOUR[1]).length === 1);
+		await t2.call("l3_edit", { action: "add", content: "L3 本轮新增" });
+		const staged = parseUserFile(readMd(root2)).entries;
+		check("写盘后用户候选仍在", staged.some((e) => e.includes("用户手放的候选")));
+		check("live 4 条 + 用户候选 1 条 + L3 新增 1 条 = 6", staged.length === 6, `实际 ${staged.length}`);
+		check("live USER.md 未被触碰", readLive(root2) === LF_DOC);
+		rmSync(root2, { recursive: true, force: true });
+
+		// ④ 备份口径：temp 存在时备份 temp 原文（"这一轮要覆盖掉的那份提议稿"）
+		const root3 = makeProfile(LF_DOC);
+		writeFileSync(join(root3, USER_TEMP_FILE), "上一轮未并入的提议稿\n", "utf-8");
+		const t3 = toolsFor(root3);
+		await t3.call("l3_edit", { action: "add", content: "本轮改动" });
+		const bf = readdirSync(backupDir(root3));
+		check("temp 存在时备份的就是 temp 原文", bf.length === 1 && readFileSync(join(backupDir(root3), bf[0]), "utf-8") === "上一轮未并入的提议稿\n", bf.join(","));
+		await t3.call("l3_edit", { action: "add", content: "本轮第二次改动" });
+		check("同一轮内只备份一次", readdirSync(backupDir(root3)).length === 1);
+		rmSync(root3, { recursive: true, force: true });
+
+		// ⑤ 超限种子的死锁出口：live 已近满 + temp 还有未并入条目 ⇒ 只放行"真能降低用量"的改动。
+		//    没有这条，删除 op 的"改动后用量"仍在上限之上 ⇒ 恒拒 ⇒ L3 连第一步都做不了。
+		const head = ["甲", "乙", "丙", "丁"].map((c) => c.repeat(L3_ENTRY_CHAR_LIMIT));
+		const root4 = makeProfile(head.join("\n§\n") + "\n"); // live = 2009 字符（< 2200）
+		writeFileSync(join(root4, USER_TEMP_FILE), "戊".repeat(300) + "\n", "utf-8"); // 播种后 = 2312 > 2200
+		const t4 = toolsFor(root4);
+		const overSeed = entryBudget(seedProposalEntries(root4));
+		check("播种形态已超限（前置条件）", overSeed > USER_CHAR_LIMIT, `${overSeed}/${USER_CHAR_LIMIT}`);
+		const stillAdd = await t4.call("l3_edit", { action: "add", content: "己".repeat(10) });
+		check("超限种子下的 add → 拒", stillAdd.success === false);
+		check("被拒时不切口径（仍是播种形态，用户候选不会在下一 op 消失）", isRunSeeded() === false);
+		check("错误文案点明超限与上限值", String(stillAdd.error).includes("超过上限") && String(stillAdd.error).includes(String(USER_CHAR_LIMIT)));
+		check("被拒时不写盘（temp 原文未变）", readFileSync(join(root4, USER_TEMP_FILE), "utf-8") === "戊".repeat(300) + "\n");
+		const del = await t4.call("l3_edit", { action: "delete", target: "甲".repeat(20) });
+		check("超限种子下的 delete → 放行（不是死锁）", del.success === true, String(del.error));
+		check("删除后用量确实下降", entryBudget(parseUserFile(readMd(root4)).entries) < overSeed);
+		check("live USER.md 未被触碰", readLive(root4) === head.join("\n§\n") + "\n");
+		rmSync(root4, { recursive: true, force: true });
+
+		// ⑥ l3_commit 的口径 = 提议稿（= 用户并入后 USER.md 的形状）
+		const root5 = makeProfile(LF_DOC);
+		const t5 = toolsFor(root5);
+		await t5.call("l3_edit", { action: "add", content: "提议稿里多出来的一条" });
+		const c5 = await t5.call("l3_commit", { cursor: "2026-09-28T00:00:00.000Z" });
+		check("commit 成功", c5.success === true);
+		check("entryCount 口径 = 提议稿（live 4 + 1）", c5.entryCount === 5, `实际 ${c5.entryCount}`);
+		check("live USER.md 未被编辑与提交触碰", readLive(root5) === LF_DOC);
+		check("提议稿口径可独立复算（readL3Proposal）", readL3Proposal(root5).entries.length === 5);
+		dropRoot(root5); // commit 会开 pipeline sqlite（Windows 下句柄未关时 rmSync 会 EPERM）
 	}
 }
 
