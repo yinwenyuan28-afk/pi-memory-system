@@ -45,6 +45,41 @@ export const SCENE_ID_PREFIX = "sc";
 /** 池为空且子代理既没给 id 也没给名字时的兜底名字（不丢弃记忆，只标未归类）。 */
 export const SCENE_FALLBACK_NAME = "未分类场景";
 
+/**
+ * cwd 的**比较用**归一化键（2026-09-30 新增）。
+ *
+ * 为什么需要：池里 `cwds` 的写入一直是 `includes()` 精确比较后 append，**零归一化**。而 Windows 上
+ * 同一个目录至少有四种写法（`C:\a\b` / `C:/a/b` / `c:\A\B` / 尾部带 `\`），子代理和 L0 给来的
+ * 形态并不统一，于是同一个目录会被当成两个 —— 盘上已有实例：`sc0024` 的
+ * `cwds = ["C:\\Users\\leaf\\.pi", "C:/Users/leaf/.pi"]`。
+ *
+ * **只用于比较，不改字段语义**：`cwds` 里存的仍是调用方给的原字符串（历史数据不动、新写入不重写），
+ * 否则等于静默改写既有数据、让"池里存的是什么"与磁盘上的历史不一致。
+ *
+ * 规则：去首尾空白与成对引号 → 全部反斜杠转正斜杠 → 去尾部斜杠（保留盘符根 `C:/`）→ 转小写。
+ * 转小写是因为 Windows 路径大小写不敏感，`C:\Users` 与 `c:\users` 是同一个目录。
+ */
+export function cwdCompareKey(cwd: string): string {
+	let s = (cwd ?? "").trim();
+	// 去成对引号（子代理常把路径写成 "C:/a/b"）
+	if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) {
+		s = s.slice(1, -1).trim();
+	}
+	s = s.replace(/\\/g, "/");
+	// 去尾部斜杠。整串就是盘符根时**不能**去 —— 否则 `C:\` 会被去成 `C:`，
+	// 而 `C:` 在 Windows 上是"当前盘符的当前目录"、语义完全不同。
+	if (!/^[a-zA-Z]:\/?$/.test(s)) s = s.replace(/\/+$/, "");
+	return s.toLowerCase();
+}
+
+/** `entry.cwds` 里是否已存在与 `cwd` 指向同一目录的值（归一化后比较）。 */
+export function cwdsInclude(cwds: string[], cwd: string): boolean {
+	if (!cwd) return false;
+	const key = cwdCompareKey(cwd);
+	if (!key) return false;
+	return cwds.some((c) => cwdCompareKey(c) === key);
+}
+
 // ══════════════════════════════════════════════════════════════
 //  类型
 // ══════════════════════════════════════════════════════════════
@@ -257,7 +292,7 @@ export function findMostRecentScene(pool: ScenePool, cwd: string): SceneEntry | 
 	if (alive.length === 0) return null;
 	const byRecent = (a: SceneEntry, b: SceneEntry) => (a.lastUsedAt < b.lastUsedAt ? 1 : a.lastUsedAt > b.lastUsedAt ? -1 : 0);
 	if (cwd) {
-		const sameCwd = alive.filter((e) => e.cwds.includes(cwd)).sort(byRecent);
+		const sameCwd = alive.filter((e) => cwdsInclude(e.cwds, cwd)).sort(byRecent);
 		if (sameCwd.length > 0) return sameCwd[0];
 	}
 	return [...alive].sort(byRecent)[0];
@@ -321,7 +356,7 @@ export function buildScenePoolLines(
 	});
 	const byRecent = (a: SceneEntry, b: SceneEntry) => (a.lastUsedAt < b.lastUsedAt ? 1 : a.lastUsedAt > b.lastUsedAt ? -1 : 0);
 	const rankProject = (e: SceneEntry) => (batchProject && projectOf(e) === batchProject ? 0 : 1);
-	const rankCwd = (e: SceneEntry) => (batchCwd && e.cwds.includes(batchCwd) ? 0 : 1);
+	const rankCwd = (e: SceneEntry) => (batchCwd && cwdsInclude(e.cwds, batchCwd) ? 0 : 1);
 	const sorted = [...eligible].sort((a, b) => rankProject(a) - rankProject(b) || rankCwd(a) - rankCwd(b) || byRecent(a, b));
 	const shown = sorted.slice(0, limit);
 	return {
@@ -388,7 +423,7 @@ export function createSceneResolver(pool: ScenePool, nowIso: string): SceneResol
 
 	function addCwd(entry: SceneEntry, cwd: string): void {
 		if (!cwd) return;
-		if (entry.cwds.includes(cwd)) return;
+		if (cwdsInclude(entry.cwds, cwd)) return;
 		entry.cwds.push(cwd);
 		dirty = true;
 	}

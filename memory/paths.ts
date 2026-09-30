@@ -144,8 +144,25 @@ export const SKILL_FEED_CURSOR_FILE = join("skill", "cursor.json");
 export const VECTORS_DIR = join("search", "vectors");
 /** L1/L2 流水线 job 队列（{memoryDB}/pipeline/jobs.sqlite）。 */
 export const PIPELINE_JOBS_FILE = join("pipeline", "jobs.sqlite");
-/** 各层失败状态（{memoryDB}/state/failure-state.json）。 */
+/**
+ * 各层失败状态（{memoryDB}/state/failure-state.json）。
+ *
+ * 注：`state/stop-request-<layer>.json` 与 `state/run-lock-<layer>.lock/` 是另外两个
+ * state 文件，分别由 STOP_REQUEST_FILE_PREFIX / RUN_LOCK_FILE_PREFIX 定义。
+ */
 export const FAILURE_STATE_FILE = join("state", "failure-state.json");
+
+/**
+ * 会话级项目归属判定结果（{memoryDB}/state/judg-session-project.json，2026-09-30）。
+ *
+ * 每个**正在使用的会话**一条：这个会话实际在哪个项目目录上干活。
+ * 生产者是主进程（`util/judg-session-project` 的 `setupJudgSessionProject`），
+ * 消费者是 `l1_commit`（决定记忆的 `cwd`）与只读工具 `l1_project_get`。
+ *
+ * 放 `state/` 而不是 `l1/`：它描述的是**会话**而不是 L1 记录，且判定逻辑本身
+ * 是通用工具（跨 `l0` 的 sessionKey 与未来 `search` 的召回消费点），不属记忆层。
+ */
+export const JUDG_SESSION_PROJECT_FILE = join("state", "judg-session-project.json");
 /**
  * 子代理停止请求标记的前缀（`{memoryDB}/state/stop-request-<layer>.json`，2026-09-26）。
  *

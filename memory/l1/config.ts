@@ -218,7 +218,7 @@ export function detectBatchCwd(
  *   ④ 家目录本身（`C:\Users\leaf`——它是父目录而不是项目）。
  * 更具体的项（`C:\Users\leaf\.pi`、`C:\dev\code\xianhua`）一律保留。
  */
-function isBroadProjectPath(p: string): boolean {
+export function isBroadProjectPath(p: string): boolean {
 	const t = p.replace(/[\\/]+$/, "").toLowerCase();
 	if (/^[a-z]:$/.test(t)) return true;
 	const segs = t.split(/[\\/]/).filter(Boolean); // ['c:','users','leaf']

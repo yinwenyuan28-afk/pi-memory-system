@@ -16,6 +16,7 @@ import {
 import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
 import { MEMORY_DB_DIR, L1_VALUE_CHECK_LOG } from "../paths.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
+import { readJudgFile } from "../../util/judg-session-project/index.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
 import { isStopRequested, stopRequestedMessage } from "../pipeline/stop-request.ts";
 import { acquireRunLock, runLockBusyMessage } from "../pipeline/run-lock.ts";
@@ -241,6 +242,58 @@ export function registerL1CommitTool(
 						if (!Array.isArray(r.source_message_ids)) r.source_message_ids = [];
 						const md = typeof r.metadata === "object" && r.metadata !== null ? (r.metadata as Record<string, unknown>) : {};
 						r.metadata = { ...md, origin: "main-agent" };
+					}
+				}
+
+				// ── cwd 由「会话级项目归属」决定（2026-09-30）────────────────────
+				// 语义变更：cwd 从"会话工作台（pi 从哪启动）"改成"这个会话实际在干活的项目目录"。
+				//   - flag:true  → 填判定出的 project，projectSource = 判定来源（init/code/llm/manual）
+				//   - 否则        → **退回 ctx.cwd**（不留空），projectSource = "fallback"
+				//     留空是缺陷不是偏好：44/91 个会话到不了判定点，在已经 36.5% 指错的字段上
+				//     再叠一层空洞，只会让"按 cwd 统计"彻底没法解释。
+				//
+				// 位置要求（三条都必要）：
+				//   ① 在 `isMainAgent` 块**之外** —— main-agent 与 subagent 两条路径都要经过；
+				//   ② 在确定性闸门（下一个区块）**之前** —— 形式不合格的批不该浪费一次查表；
+				//   ③ 在写锁内的场景解析**之前** —— 场景池要按最终的 cwd 登记。
+				//
+				// 键取 `r.sessionKey`（记录自带），**不从 ctx 派生**：子代理进程里
+				// `ctx.sessionManager.getSessionFile()` 恒为 `"session"`，派生必然查不到。
+				// 空 sessionKey（实测 8/554 条）走 fallback 分支。
+				//
+				// 墓碑行（deleted:true）**不改 cwd**：它是"旧记录被改写/删除"的标记，
+				// 不是一条新记忆，改它的 cwd 等于用新语义篡改历史行的归属
+				// （与 l1-fix / rewrite.mjs 逐字继承旧 cwd 是同一条原则，见 B15）。
+				//
+				// 为什么不写在 `recordsToWrite` 上（计划原写法）：那个变量声明在下面的
+				// `:310`，而这里在它之前 —— 引用它是 use-before-declaration。
+				// 就地改 `records` 的元素是安全的，已核对下游：
+				// `splitBatch` 用 filter（保引用）、`applyVerdicts` 对 keep/drop **推同一引用**、
+				// 对 retype 走 `{...rec}` 浅拷贝且 `metadata` 是 `{...旧, valueCheck}` ⇒ 覆写全部存活。
+				{
+					let judgedFile: ReturnType<typeof readJudgFile> | null = null;
+					const ctxCwd = (ctx as { cwd?: unknown } | undefined)?.cwd;
+					const fallbackCwd = typeof ctxCwd === "string" ? ctxCwd : "";
+					for (const row of records) {
+						const r = row as Record<string, unknown>;
+						if (r.deleted === true) continue;
+						const rk = typeof r.sessionKey === "string" ? r.sessionKey : "";
+						let project = "";
+						let source = "fallback";
+						if (rk && profilePath) {
+							if (!judgedFile) judgedFile = readJudgFile(profilePath);
+							if (judgedFile.ok) {
+								const e = judgedFile.file.sessions[rk];
+								if (e && e.flag) {
+									project = e.project;
+									source = e.decidedBy;
+								}
+							}
+						}
+						// 覆写 LLM 传上来的 cwd —— 归属是服务端的事，不信模型自填
+						r.cwd = project || fallbackCwd;
+						const md = typeof r.metadata === "object" && r.metadata !== null ? (r.metadata as Record<string, unknown>) : {};
+						r.metadata = { ...md, projectSource: source };
 					}
 				}
 

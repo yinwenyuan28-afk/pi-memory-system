@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-30",
+  "note": "分层抽样 20 条，AI 依据客观事实独立标注，标注前未查看任何系统判定结果。truth 用相对 C:\\ 的小写路径（与标注文档一致），'无' = 这一轮没有工作对象，'多义' = 同时涉及多个项目且无主线。",
+  "sessions": [
+    {
+      "n": 1,
+      "sessionKey": "2026-09-18T15-44-07-473Z_01a0b530-7731-7a87-82df-ab064610ff59",
+      "dir": "--C--dev-code-xianhua--",
+      "cwd": "C:\\dev\\code\\xianhua",
+      "truth": "dev/code/xianhua"
+    },
+    {
+      "n": 2,
+      "sessionKey": "2026-09-16T09-53-53-738Z_01a0a9a3-1a4a-7ffb-bfe7-48a464c2135e",
+      "dir": "--C--Users-leaf-.pi--",
+      "cwd": "C:\\Users\\leaf\\.pi",
+      "truth": "users/leaf/.pi"
+    },
+    {
+      "n": 3,
+      "sessionKey": "2026-08-24T03-08-12-034Z_01a031bd-6981-736c-9de9-e096800a51d9",
+      "dir": "--C--dev-code_java-wangxin--",
+      "cwd": "C:\\dev\\code_java\\wangxin",
+      "truth": "多义"
+    },
+    {
+      "n": 4,
+      "sessionKey": "2026-09-02T01-22-02-381Z_01a05fb5-740d-70df-9711-4b7df15866e8",
+      "dir": "--C--dev-code-myLocation--",
+      "cwd": "C:\\dev\\code\\myLocation",
+      "truth": "dev/code/mylocation"
+    },
+    {
+      "n": 5,
+      "sessionKey": "2026-08-10T06-00-33-547Z_019fea42-2e0b-79ea-92b9-b81905167c9f",
+      "dir": "--C--dev-code_java-wangxin-frontend-A104525--",
+      "cwd": "C:\\dev\\code_java\\wangxin\\frontend\\A104525",
+      "truth": "dev/code_java/wangxin/frontend/a104525"
+    },
+    {
+      "n": 6,
+      "sessionKey": "2026-07-17T17-31-47-512Z_019f7122-65b8-7bae-b829-fb1c44e0af1b",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "dev/ide/pi-agent/pi-0.80.10"
+    },
+    {
+      "n": 7,
+      "sessionKey": "2026-08-10T02-49-42-065Z_019fe993-71b1-7c9d-aa4e-6e0a4ac2b093",
+      "dir": "--C--dev-code_java-wangxin-frontend-A104489--",
+      "cwd": "C:\\dev\\code_java\\wangxin\\frontend\\A104489",
+      "truth": "dev/code_java/wangxin/backend/a104527"
+    },
+    {
+      "n": 8,
+      "sessionKey": "2026-08-12T05-50-25-847Z_019ff485-a037-70eb-9cfb-68f069a7c903",
+      "dir": "--C--dev-code_java-wangxin-frontend-A104526--",
+      "cwd": "C:\\dev\\code_java\\wangxin\\frontend\\A104526",
+      "truth": "dev/code_java/wangxin/frontend/a104526"
+    },
+    {
+      "n": 9,
+      "sessionKey": "2026-07-22T02-04-09-772Z_019f8790-ecac-787a-aa68-78ad713b10ad",
+      "dir": "--C--dev-code_java-wangxin-backend-A104527--",
+      "cwd": "C:\\dev\\code_java\\wangxin\\backend\\A104527",
+      "truth": "dev/code_java/wangxin/backend/a104527"
+    },
+    {
+      "n": 10,
+      "sessionKey": "2026-08-05T03-33-39-749Z_019fcffb-e525-778d-80ae-7cb19c21e096",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "dev/ide/pi-agent/pi-0.80.10"
+    },
+    {
+      "n": 11,
+      "sessionKey": "2026-07-21T15-52-55-127Z_019f8561-5057-720b-8d05-ec77c618d104",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "dev/ide/pi-agent/pi-0.80.10"
+    },
+    {
+      "n": 12,
+      "sessionKey": "2026-07-27T15-11-14-583Z_019fa421-5097-7a23-b390-3e70aef8dacb",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "users/leaf/.pi"
+    },
+    {
+      "n": 13,
+      "sessionKey": "2026-07-22T01-24-15-395Z_019f876c-63a3-7a56-88da-44b8b10c7469",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "dev/ide/pi-agent/pi-0.80.10"
+    },
+    {
+      "n": 14,
+      "sessionKey": "2026-07-18T03-53-11-716Z_019f735b-4f24-7378-87a5-d5add53f06c4",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "dev/ide/pi-agent/pi-0.80.10"
+    },
+    {
+      "n": 15,
+      "sessionKey": "2026-09-23T02-32-52-992Z_01a0cc1b-dc00-7859-881f-74550c3d6a9a",
+      "dir": "--C--Users-leaf--",
+      "cwd": "C:\\Users\\leaf",
+      "truth": "无"
+    },
+    {
+      "n": 16,
+      "sessionKey": "2026-09-23T03-47-20-029Z_01a0cc60-055d-743e-98e4-6c0672f3aa31",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "无"
+    },
+    {
+      "n": 17,
+      "sessionKey": "2026-09-23T02-59-50-539Z_01a0cc34-8a8b-7f0b-a422-bda358e3d950",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "无"
+    },
+    {
+      "n": 18,
+      "sessionKey": "2026-09-23T02-26-21-470Z_01a0cc15-e29e-7751-b733-8c32177b385e",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "无"
+    },
+    {
+      "n": 19,
+      "sessionKey": "2026-09-15T15-39-26-750Z_01a0a5b9-1a9e-7c8e-a038-095360dc0820",
+      "dir": "--C--dev-ide-pi-agent-pi-0.80.10--",
+      "cwd": "C:\\dev\\ide\\pi-agent\\pi-0.80.10",
+      "truth": "无"
+    },
+    {
+      "n": 20,
+      "sessionKey": "2026-08-14T01-21-47-472Z_019ffddc-65d0-7626-abf1-e282b1e9af73",
+      "dir": "--C--dev-code_java-wangxin-frontend-A104526--",
+      "cwd": "C:\\dev\\code_java\\wangxin\\frontend\\A104526",
+      "truth": "dev/code_java/wangxin/frontend/a104489"
+    }
+  ]
+}

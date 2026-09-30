@@ -26,7 +26,9 @@ import { join } from "node:path";
 import {
 	buildScenePoolLines,
 	createSceneResolver,
+	cwdCompareKey,
 	emptyPool,
+	findMostRecentScene,
 	findSceneByNameOrAlias,
 	nextSceneId,
 	projectOf,
@@ -42,6 +44,7 @@ import { buildL1Task, detectBatchCwd, detectBatchProject } from "../memory/l1/co
 import { registerL1CommitTool, stampRecordTimes } from "../memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "../memory/l1/scene-tool.ts";
 import { readL0Increment } from "../memory/l1/read-tool.ts";
+import { upsertSessionJudg } from "../util/judg-session-project/index.ts";
 
 let pass = 0;
 let fail = 0;
@@ -174,6 +177,45 @@ console.log("\n=== A. 池内核：四分支解析 ===");
 	const emptyRes = createSceneResolver(e2, NOW).resolve({});
 	check("空池 + 无自填名 → 占位", emptyRes.scene_name === "未分类场景", emptyRes.scene_name);
 	check("空池 → scene_id 为 null", emptyRes.scene_id === null);
+}
+
+console.log("\n=== A1. cwd 比较归一化（2026-09-30）===");
+{
+	// 纯函数层
+	check("反斜杠 → 正斜杠", cwdCompareKey("C:\\a\\b") === "c:/a/b", cwdCompareKey("C:\\a\\b"));
+	check("大小写不敏感", cwdCompareKey("C:/Users/Leaf/.pi") === cwdCompareKey("c:\\users\\leaf\\.pi"), cwdCompareKey("C:/Users/Leaf/.pi"));
+	check("尾部斜杠被去", cwdCompareKey("C:/a/b/") === "c:/a/b", cwdCompareKey("C:/a/b/"));
+	check("盘符根不被去成 c:", cwdCompareKey("C:\\") === "c:/", cwdCompareKey("C:\\"));
+	check("成对引号被剥", cwdCompareKey('  "C:/a/b" ') === "c:/a/b", cwdCompareKey('  "C:/a/b" '));
+	check("空串安全", cwdCompareKey("") === "" && cwdCompareKey("   ") === "");
+
+	// 池层：addCwd 不得因写法不同而重复登记（盘上 sc0024 已双写同一个目录）
+	const pool: ScenePool = { ...emptyPool(), updatedAt: NOW, scenes: [] };
+	const r = createSceneResolver(pool, NOW);
+	r.resolve({ new_scene_name: "α｜X", new_scene_reason: "理由", cwd: "C:\\Users\\leaf\\.pi" });
+	const r2 = createSceneResolver(pool, NOW);
+	r2.resolve({ scene_id: "sc0001", cwd: "C:/Users/leaf/.pi/" });
+	r2.resolve({ scene_id: "sc0001", cwd: '  "c:\\USERS\\leaf\\.PI"  ' });
+	check("addCwd：三种写法只登记一次", pool.scenes[0].cwds.length === 1, JSON.stringify(pool.scenes[0].cwds));
+	check("addCwd：存的是原字符串（不改字段语义）", pool.scenes[0].cwds[0] === "C:\\Users\\leaf\\.pi", pool.scenes[0].cwds[0]);
+
+	// findMostRecentScene：同 cwd 必须能匹配到（否则退化成"全局最近"）
+	const p2: ScenePool = {
+		...emptyPool(),
+		updatedAt: NOW,
+		scenes: [
+			{ id: "sc0001", name: "旧｜X", cwds: ["C:/dev/alpha"], aliases: [], mergedInto: null, origin: "seed", createdAt: NOW, lastUsedAt: "2026-01-01T00:00:00.000Z", useCount: 1 },
+			{ id: "sc0002", name: "新｜Y", cwds: ["C:\\dev\\beta"], aliases: [], mergedInto: null, origin: "seed", createdAt: NOW, lastUsedAt: NOW, useCount: 1 },
+		],
+	};
+	const hit = findMostRecentScene(p2, "C:/dev/beta");
+	check("findMostRecentScene：反斜杠写法也能命中同 cwd", hit?.id === "sc0002", hit?.id ?? "null");
+
+	// buildScenePoolLines：同 cwd 优先不能因为斜杠风格而失效
+	// （两个 lastUsedAt 都必须落在 60 天注入窗口内 —— 窗口用的是 Date.now()，不是 NOW）
+	p2.scenes[0].lastUsedAt = "2026-09-14T09:00:00.000Z";
+	const lines = buildScenePoolLines(p2, { batchCwd: "C:\\dev\\alpha" });
+	check("buildScenePoolLines：同 cwd 优先命中 sc0001", lines.lines[0]?.startsWith("- sc0001 "), lines.lines[0] ?? "(空)");
 }
 
 console.log("\n=== A2. mergedInto 链 + 注入排序/截断/窗口 ===");
@@ -399,14 +441,33 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	check("D4 标记行不计数", (r4.sceneStats as { fallback: number })?.fallback === 0, JSON.stringify(r4.sceneStats));
 
 	// D5 新条目 id 递增、cwds 累积
+	// ⚠ 2026-09-30 夹具改造：`l1_commit` 的 `cwd` 改由**会话级项目归属**决定，
+	//   记录里自填的 `cwd` 一律被覆写。原来的断言（`cwds === [B]`，B 来自记录自填）
+	//   在新语义下必然变红 —— 真因不是"cwd 为空"，而是**覆写源从"记录自填"换成了
+	//   "judg-session-project.json 里那个 sessionKey 的条目"**。
+	//   所以这里给夹具种一条 `flag:true` 且 `project = B` 的条目，并让记录带上对应 sessionKey。
+	//   **不是**把断言改成"接受空 cwd"——那与已采纳的 fallback 设计相反。
+	upsertSessionJudg(p, "sess-d5", { project: B, flag: true, decidedBy: "llm", confidence: 0.8, evidence: [{ path: B, filesTouched: 3 }] });
 	const r5 = await commit({
 		cursor: "2026-09-15T10:10:00.000Z",
-		records: [{ content: "决策丁", type: "work_fact", new_scene_name: "beta｜超时排查", new_scene_reason: "换议题了", cwd: B }],
+		records: [{ content: "决策丁", type: "work_fact", sessionKey: "sess-d5", new_scene_name: "beta｜超时排查", new_scene_reason: "换议题了", cwd: A }],
 	});
 	check("D5 created=1", (r5.sceneStats as { created: number })?.created === 1);
 	const pool5 = readScenePool(p);
 	check("D5 新 id = sc0002", pool5.scenes.some((s) => s.id === "sc0002"), pool5.scenes.map((s) => s.id).join(","));
-	check("D5 新条目 cwds = [B]", JSON.stringify(pool5.scenes.find((s) => s.id === "sc0002")?.cwds) === JSON.stringify([B]));
+	check("D5 新条目 cwds = [B]（取自判定而非记录自填）", JSON.stringify(pool5.scenes.find((s) => s.id === "sc0002")?.cwds) === JSON.stringify([B]));
+	const rec5 = readRecords(p).filter((r) => r.content === "决策丁")[0];
+	check("D5 记录 cwd 被覆写成 project", rec5.cwd === B, String(rec5.cwd));
+	check("D5 metadata.projectSource = llm", (rec5.metadata as Record<string, unknown> | undefined)?.projectSource === "llm", JSON.stringify(rec5.metadata));
+
+	// D6 无判定条目 ⇒ 退回 ctx.cwd（A）+ projectSource=fallback（**不留空**，审查 V-2）
+	const r6 = await commit({
+		cursor: "2026-09-15T10:20:00.000Z",
+		records: [{ content: "决策戊", type: "work_fact", sessionKey: "sess-d6-无条目", new_scene_name: "beta｜兜底", new_scene_reason: "无判定", cwd: B }],
+	});
+	const rec6 = readRecords(p).filter((r) => r.content === "决策戊")[0];
+	check("D6 无条目 → 退回 ctx.cwd（A），不是记录自填的 B", rec6.cwd === A, String(rec6.cwd));
+	check("D6 metadata.projectSource = fallback", (rec6.metadata as Record<string, unknown> | undefined)?.projectSource === "fallback", JSON.stringify(rec6.metadata));
 }
 
 console.log("\n=== E. l1_commit 端到端（main-agent 路径）===");

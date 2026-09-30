@@ -17,7 +17,7 @@
   },
   "list_l1_scenes": {
     "file": "memory/l1/scene-tool.ts",
-    "value": "List the L1 scene pool — the canonical set of work scenes — so a record can be attributed to an existing scene **by id** instead of an invented name. Call this BEFORE `l1_commit` when recording: pick the `scene_id` whose topic matches the fact you are about to write. If nothing fits, omit the id and pass a stable `scene_name` of the form `{project}｜{topic}` (never encode what you are currently doing into it). Read-only. Returns the same window/limit the extractor sees: `{scenes: [{id, name, cwd, lastUsedAt, useCount}], returned, note}`. Entries absent from the list are either merged away or unused for over 60 days. Omitting both the id and the name is allowed but marks the record as unclassified."
+    "value": "List the L1 scene pool — the canonical set of work scenes — so a record can be attributed to an existing scene **by id** instead of an invented name. Call this BEFORE `l1_commit` when recording: pick the `scene_id` whose topic matches the fact you are about to write. If nothing fits, omit the id and pass a stable `scene_name` of the form `{project}｜{topic}` (never encode what you are currently doing into it). Read-only. Returns the same window/limit the extractor sees: `{scenes: [{id, name, cwd, lastUsedAt, useCount}], returned, note}`. Entries absent from the list are either merged away or unused for over 60 days. Omitting both the id and the name is allowed but marks the record as unclassified. NOTE on `cwd`: for records written since 2026-09-30 it is the **project** directory the session was judged to be working in, not the directory pi was launched from; it can therefore differ from the session's own cwd. Entries created earlier keep the older meaning (launch directory) — do not assume one meaning across the whole pool."
   },
   "l1_fix": {
     "file": "memory/l1/fix-tool.ts",
@@ -66,5 +66,9 @@
   "read_scene_blocks": {
     "file": "memory/l2/scene-read-tool.ts",
     "value": "Read several scene blocks in ONE call (the batch replacement for reading scene files one by one). Params: filenames (array of bare .md names taken from the scene index). Returns { blocks: [{filename, ok, meta, content, truncated?, omitted?, error?}], returned, omitted, truncated, totalChars }. Limits: one block is truncated at 24000 chars; a single call returns at most 96000 chars and marks the rest omitted (call again with fewer names, or read that block alone). Called by the l2-scene-organizer subagent — it must use this instead of per-block reads, because every extra tool call costs a full model turn and the whole L2 run has a wall-clock budget."
+  },
+  "l1_project_get": {
+    "file": "util/judg-session-project/tool.ts",
+    "value": "Look up which project directory the current session was judged to be working in. **For the l1-extractor subagent only.** You need it because each record's `metadata.scope` is YOUR call: `self` = only true inside this project, `subtree` = still true across this project's whole directory tree. You cannot answer that without knowing which project you are in, and the server never guesses it for you. Params: sessionKey (required) — pass the sessionKey carried on the L0 messages / the L1 task message, do NOT derive it from the session context (in a subagent process that always reads back as \"session\"). Returns {project, flag, confidence, decidedBy, note?}. **Check `flag`**: when it is false the `project` value is a placeholder (not yet judged, or judged to have no project) and must NOT be used as the basis for scope — record scope as if the project were generic. `confidence` is evidence concentration, not a calibrated probability."
   }
 }

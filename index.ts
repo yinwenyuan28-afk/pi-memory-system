@@ -18,6 +18,8 @@ import { loadL1Config, setupL1Extractor } from "./memory/l1/index.ts";
 import { listL0Files, loadL1Cursor, saveL1Mode } from "./memory/l1/config.ts";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
+import { setupJudgSessionProject } from "./util/judg-session-project/setup.ts";
+import { registerL1ProjectGetTool } from "./util/judg-session-project/tool.ts";
 import { registerReadL0IncrementTool, readL0Increment } from "./memory/l1/read-tool.ts";
 import { countNewRecords, countSceneBlocks, loadL2Config, loadL2Cursor } from "./memory/l2/config.ts";
 import { acquireRunLock, runLockBusyMessage } from "./memory/pipeline/run-lock.ts";
@@ -191,6 +193,9 @@ export default function (pi: ExtensionAPI) {
   let l1Initialized = false;
   let l1Controls: ReturnType<typeof setupL1Extractor> | undefined;
 
+  // 会话级项目归属判定（单次注册）：挂点必须在 :382 的 PI_SUBAGENT_CHILD 早退**之后**调用
+  let judgSessionProjectInitialized = false;
+
   // L2 场景组织调度器（单次注册）：由 pipeline-jobs 队列消费，不再 watchFile
   let l2Initialized = false;
   let l2Controls: ReturnType<typeof setupL2Organizer> | undefined;
@@ -324,6 +329,12 @@ export default function (pi: ExtensionAPI) {
   // list_l1_scenes 工具：主代理按需查场景池——记录前挑 scene_id，替代"猜场景"
   //（清单不进系统提示是出于 prefix cache；按需工具不吃这个代价，见 scene-tool.ts 头注释）。
   registerListL1ScenesTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+  // l1_project_get 工具：l1-extractor 子代理读「本会话属于哪个项目」，用来逐条判断 metadata.scope。
+  // ⚠ **必须在这里（模块顶层、session_start 之前）注册**，与上面几个工具同款：
+  //   注册点若落在 session_start 回调内的 `PI_SUBAGENT_CHILD` 早退之后，子代理进程就**根本没有**
+  //   这个工具 —— 而 `agents/l1-extractor.md` 的 `tools:` 行只是软约束，调不到也不报错，
+  //   整条 scope 设计会静默落空。同 read_l1_increment 的 2026-09-11 修复。
+  registerL1ProjectGetTool(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
   // l2_commit 工具：l2-scene-organizer 子代理的场景写盘桥接。
   // personaSignal 不再走回调 —— 回调只在子代理进程求值，那里 l3Controls 恒为 undefined。
   // 改为工具内直接写 l3/pending-trigger.json，主进程 agent_settled 消费（见 memory/l3/signal.ts）。
@@ -461,6 +472,17 @@ export default function (pi: ExtensionAPI) {
     if (!l1Initialized && pipelineWorker) {
       l1Controls = setupL1Extractor(pi, getProfilePath, pipelineWorker);
       l1Initialized = true;
+    }
+
+    // 会话级项目归属判定（2026-09-30）：每轮抽候选 + 必要时问一次 LLM，结果写
+    // memoryDB/state/judg-session-project.json，供 l1_commit 决定记忆的 cwd。
+    //
+    // ⚠ **必须留在 :382 的 `PI_SUBAGENT_CHILD` 早退之后**（与上面 setupL1Extractor 同一段）。
+    //   放到守卫之前 = 子代理每轮都跑判定：sessionKey 恒为 "session"、每轮白发一次 LLM 请求、
+    //   还会往子代理的 profile 里写条目。setup.ts 里另有一道同样的早退作为第二道防线。
+    if (!judgSessionProjectInitialized) {
+      setupJudgSessionProject(pi, getProfilePath);
+      judgSessionProjectInitialized = true;
     }
 
     // L3 persona 调度器（单次注册）：只做触发判定 + 入队，spawn 归串行执行器（2026-09-19 并入）
