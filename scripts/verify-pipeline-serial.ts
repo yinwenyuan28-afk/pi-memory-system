@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { decideManualTrigger, decideNextAfterL1, pickNextClaimable } from "../memory/pipeline/worker.ts";
-import { decideWaitPhase, isRunActive, locateSubagentSession, longestEntryGapMs, readAsyncRunInfo, sampleSession } from "../memory/pipeline/subagent-liveness.ts";
+import { decideWaitPhase, longestEntryGapMs, sampleSession } from "../memory/pipeline/subagent-liveness.ts";
 import { clearStopRequest, isStopRequested, stopRequestActive, stopRequestPath, writeStopRequest } from "../memory/pipeline/stop-request.ts";
 import { DEFAULT_HARD_MS, DEFAULT_HOLD_MS_UNCONFIRMED, DEFAULT_KILL_GRACE_MS, DEFAULT_RUN_LOCK_HEARTBEAT_MS, DEFAULT_RUN_LOCK_STALE_HEARTBEAT_MS, DEFAULT_SOFT_MS, DEFAULT_STOP_REQUEST_TTL_MS, loadSubagentTimeouts, resolveTimeoutSection } from "../memory/pipeline/timeout-config.ts";
 import { holdUntilFrom, isLayerHeld, loadFailureState, saveFailureState } from "../memory/failure-state.ts";
@@ -305,53 +305,17 @@ console.log("\n=== 10. 等待阶段：软阈值只提示、硬上限才交还控
 	check("条目 < 2 → undefined", longestEntryGapMs(f) === undefined);
 	check("文件不存在 → undefined", longestEntryGapMs(join(root, "nope.jsonl")) === undefined);
 
-	// 宿主 async run 的 status.json：确定性信号（state / pid / steps[].sessionFile）
-	const runDir = join(root, "async-subagent-runs", "run-abc");
-	mkdirSync(runDir, { recursive: true });
-	writeFileSync(
-		join(runDir, "status.json"),
-		JSON.stringify({
-			runId: "run-abc",
-			state: "running",
-			pid: 4242,
-			sessionId: "C:/p/session.jsonl",
-			lastActivityAt: t0,
-			steps: [{ sessionFile: "C:/p/session/sub/run-0/session.jsonl" }],
-		}),
-		"utf-8",
-	);
-	const info = readAsyncRunInfo(runDir);
-	check("读到 state", info?.state === "running");
-	check("读到 pid（停止序列要靠它杀进程树）", info?.pid === 4242, String(info?.pid));
-	check("读到子代理会话文件（比按 mtime 猜更确定）", info?.sessionFiles[0] === "C:/p/session/sub/run-0/session.jsonl");
-	check("running 视为活跃", isRunActive("running") && isRunActive("queued"));
-	check("complete 视为已结束", !isRunActive("complete"));
-	check("读不到 status.json → undefined（fail-soft，不抛）", readAsyncRunInfo(join(root, "nope")) === undefined);
+	// 原先这里有两组针对**宿主私有布局**的测试：
+	//   ① async run 的 status.json 解析（state / pid / steps[].sessionFile）
+	//   ② 子会话目录猜测（父会话目录下按 mtime 取最新 run）
+	// 二者随 2026-10-01 自建 spawn 一起移除——子进程由本扩展自己 spawn，pid 落在
+	// memory/pipeline/subagent-runs.ts 的运行记录里，session 文件由 --session-dir
+	// 指定在我们自己的目录下。替代覆盖见 scripts/verify-self-spawn.mts 与
+	// verify-subagent-stop.ts（停止序列取 pid 的路径）。
 
 	// 会话采样：读不到文件必须是 -1（未知），不能是 0（0 会被误判成"刚刚在写"）
 	check("不存在的文件 → size/silent 都是 -1", sampleSession("C:/temp/pi/script/__no_such_session__.jsonl").size === -1);
 	check("file=undefined → -1", sampleSession(undefined).silentMs === -1);
-
-	// 定位子代理会话：父会话目录下按 mtime 取最新 run
-	{
-		const root = mkdtempSync(join(tmpdir(), "liveness-"));
-		roots.push(root);
-		const parent = join(root, "2026-09-22T00-00-00-000Z_abc.jsonl");
-		writeFileSync(parent, "{}\n", "utf-8");
-		const sessionDir = join(root, "2026-09-22T00-00-00-000Z_abc");
-		// 早的一个子代理 + 晚的一个（晚的才是当前这轮）
-		mkdirSync(join(sessionDir, "aaaa1111", "run-0"), { recursive: true });
-		mkdirSync(join(sessionDir, "bbbb2222", "run-0"), { recursive: true });
-		writeFileSync(join(sessionDir, "aaaa1111", "run-0", "session.jsonl"), "old", "utf-8");
-		writeFileSync(join(sessionDir, "bbbb2222", "run-0", "session.jsonl"), "new", "utf-8");
-		// 显式错开 mtime：同毫秒写入时"按 mtime 取最新"会并列，夹具必须确定（否则测试本身假红）
-		utimesSync(join(sessionDir, "aaaa1111", "run-0", "session.jsonl"), new Date(1000), new Date(1000));
-		utimesSync(join(sessionDir, "bbbb2222", "run-0", "session.jsonl"), new Date(2000), new Date(2000));
-		const found = locateSubagentSession(parent);
-		check("定位到最新的 run 会话", found === join(sessionDir, "bbbb2222", "run-0", "session.jsonl"), String(found));
-		check("父会话不存在时返回 undefined", locateSubagentSession(join(root, "nope.jsonl")) === undefined);
-		check("空参数返回 undefined", locateSubagentSession(undefined) === undefined);
-	}
 }
 
 console.log("\n=== 11. 停止请求标记：生效窗口 + 写工具入口判据（2026-09-26 T2 第 1–2 步） ===");

@@ -8,8 +8,11 @@ L0–L3 记忆管线扩展。会话进行中自动提取原子记忆、整合进
 |---|---|---|
 | **操作系统** | **仅 Windows** | 停止子代理依赖 `taskkill /T /F` 的进程树语义；项目归属判定用盘符形状规则。见下方「已知限制」 |
 | Node | `>= 22.13` | 用到内置的 `node:sqlite` |
-| pi | 0.80+ | 扩展 API 与 `pi.events` 派发通道 |
-| **pi-subagents** | **必需** | L1/L2/L3/review/skill-review 五条链靠后台子代理执行。派发走上游公开的 `subagents:rpc:v1` 事件总线 |
+| pi | 0.80+ | 扩展 API |
+
+**不依赖 pi-subagents**（2026-10-01 起）。L1/L2/L3/review/skill-review 五条链的后台子代理由本扩展**自己 spawn 一个 pi 子进程**执行（`util/spawn.ts`），不需要安装、也不需要修改任何其它扩展的源码。
+
+> 此前版本走 pi-subagents 的 `subagents:rpc:v1` 事件总线，已移除——该桥接层硬编码从自己缓存里取 ctx，而 pi 会在 session 替换/reload 时作废该缓存，导致派发必然失败（`This extension ctx is stale…`）。详见 `plan/memory-system/SELF_SPAWN_PLAN.md`。
 
 ## 安装
 
@@ -57,8 +60,8 @@ JSONC 格式（支持 `//` 注释）。四个节：
 ## 已知限制
 
 - **仅支持 Windows**。项目归属判定依赖盘符形状（`C:/`）识别「用户主目录类噪声路径」；在 Linux/macOS 上这些规则**静默失效**——不报错，但项目判定会变差。子代理停止序列同样按 Windows 的进程树语义设计。
-- **不依赖任何对 pi-subagents 源码的修改**。子代理派发走上游 README 明确提供给第三方扩展的 `subagents:rpc:v1` 事件总线。
-- **不往 `~/.pi/agent/agents/` 写任何文件**。6 个子代理定义随包分发，激活时经上游的 `PI_SUBAGENT_EXTRA_AGENT_DIRS` 注册。若你曾在该目录手动放过同名定义，**以你的为准**（上游优先级：用户目录 > 插件自带）。
+- **不往 `~/.pi/agent/agents/` 写任何文件，也不写 `~/.pi/agent/settings.json`**。6 个子代理定义随包分发（`agents/*.md`），派发时由本扩展直接读取。
+- **pi 可执行文件的定位**优先用 `process.execPath` + pi 自己的入口（最可靠，因为扩展就跑在 pi 进程里）；PATH 里的 `pi` 位置带包管理器的会话哈希、跨窗口不稳定，只作回落。必要时可用 `PI_MEMORY_SYSTEM_PI_BIN` 指定。
 - **`vectorization` 默认关闭**。开启需要自备 OpenAI 兼容的 embedding 端点。
 
 ## 开发

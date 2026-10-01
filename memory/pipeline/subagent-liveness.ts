@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { waitWhileRunning } from "./worker.ts";
+import { isProcessAlive } from "./run-lock.ts";
 // 类型从 jobs-db 直接取：worker.ts 只是 import 了它、并没有 re-export（类型门禁会抓这个 —— 实测抓到了）
 import type { PipelineJob } from "./jobs-db.ts";
 import { DEFAULT_HARD_MS, DEFAULT_SOFT_MS } from "./timeout-config.ts";
@@ -122,156 +123,13 @@ export function longestEntryGapMs(sessionFile: string | undefined): number | und
 //  **它是宿主内部布局**（在系统临时目录下），跨版本可能变 ⇒ 全部 fail-soft：读不到按"未知"处理。
 // ══════════════════════════════════════════════════════════════
 
-const ASYNC_RUNS_DIR_NAME = "async-subagent-runs";
-
-export interface AsyncRunInfo {
-	asyncDir: string;
-	runId: string;
-	state: string;
-	pid?: number;
-	/** 父会话文件（本扩展所在会话）——用来把 run 认到自己的 job 上。 */
-	parentSessionFile?: string;
-	/** 子代理自己的会话文件（`steps[].sessionFile`）。 */
-	sessionFiles: string[];
-	lastActivityAt?: number;
-}
-
-/** `queued`/`running` = 还没结束；其余一律视为终态（不枚举终态名，避免上游新增状态时漏判）。 */
-export function isRunActive(state: string): boolean {
-	return state === "queued" || state === "running";
-}
-
-export function readAsyncRunInfo(asyncDir: string): AsyncRunInfo | undefined {
-	try {
-		const raw = readFileSync(join(asyncDir, "status.json"), "utf-8");
-		const d = JSON.parse(raw) as {
-			runId?: unknown;
-			state?: unknown;
-			pid?: unknown;
-			sessionId?: unknown;
-			lastActivityAt?: unknown;
-			steps?: Array<{ sessionFile?: unknown }>;
-		};
-		if (typeof d?.state !== "string") return undefined;
-		const sessionFiles: string[] = [];
-		for (const s of d.steps ?? []) {
-			if (typeof s?.sessionFile === "string" && s.sessionFile) sessionFiles.push(s.sessionFile);
-		}
-		return {
-			asyncDir,
-			runId: typeof d.runId === "string" && d.runId ? d.runId : basename(asyncDir),
-			state: d.state,
-			pid: typeof d.pid === "number" && d.pid > 0 ? d.pid : undefined,
-			parentSessionFile: typeof d.sessionId === "string" && d.sessionId ? d.sessionId : undefined,
-			sessionFiles,
-			lastActivityAt: typeof d.lastActivityAt === "number" ? d.lastActivityAt : undefined,
-		};
-	} catch {
-		return undefined;
-	}
-}
-
-/** 可能的 async run 根目录（宿主按 user scope 建在系统临时目录下；一个都没有则 []）。 */
-function candidateAsyncRoots(): string[] {
-	const roots: string[] = [];
-	try {
-		for (const name of readdirSync(tmpdir())) {
-			if (name.startsWith("pi-subagents-")) roots.push(join(tmpdir(), name, ASYNC_RUNS_DIR_NAME));
-		}
-	} catch {
-		// 忽略
-	}
-	return roots;
-}
-
-/**
- * 找本会话最近的 async run。给 `parentSessionFile` 时只认 `sessionId` 匹配的 run
- * （避免"同一父会话下同时有别的子代理"被认错，这条正是旧 mtime 猜测的已知风险）。
- */
-export function findAsyncRun(opts: { parentSessionFile?: string; activeOnly?: boolean } = {}): AsyncRunInfo | undefined {
-	const { parentSessionFile, activeOnly } = opts;
-	let best: AsyncRunInfo | undefined;
-	let bestMtime = -1;
-	for (const root of candidateAsyncRoots()) {
-		let dirs: string[];
-		try {
-			dirs = readdirSync(root);
-		} catch {
-			continue;
-		}
-		for (const d of dirs) {
-			const info = readAsyncRunInfo(join(root, d));
-			if (!info) continue;
-			if (parentSessionFile && info.parentSessionFile && info.parentSessionFile !== parentSessionFile) continue;
-			if (activeOnly && !isRunActive(info.state)) continue;
-			let mtime = 0;
-			try {
-				mtime = statSync(join(info.asyncDir, "status.json")).mtimeMs;
-			} catch {
-				// 忽略
-			}
-			if (mtime > bestMtime) {
-				bestMtime = mtime;
-				best = info;
-			}
-		}
-	}
-	return best;
-}
-
-/**
- * 定位"最近被创建的子代理 run 会话"：`<父会话目录>/<子代理id>/run-N/session.jsonl`，按 mtime 取最新。
- * 本机实测该布局成立（560dcec5 / f6aa63a8 / 6a0e3733 …）。
- *
- * ⚠ 已降级为**兜底**：优先用 `findAsyncRun().sessionFiles`（确定性）。本函数保留给
- * "status.json 读不到"的情况；旧风险（同目录下别的子代理被认错）仍在，后果仅限于多等。
- */
-export function locateSubagentSession(parentSessionFile: string | undefined): string | undefined {
-	if (!parentSessionFile) return undefined;
-	const sessionDir = join(dirname(parentSessionFile), basename(parentSessionFile, ".jsonl"));
-	let subdirs: string[];
-	try {
-		subdirs = readdirSync(sessionDir, { withFileTypes: true })
-			.filter((d) => d.isDirectory())
-			.map((d) => d.name);
-	} catch {
-		return undefined;
-	}
-	let best: { path: string; mtimeMs: number } | undefined;
-	for (const sub of subdirs) {
-		const subDir = join(sessionDir, sub);
-		let runs: string[];
-		try {
-			runs = readdirSync(subDir, { withFileTypes: true })
-				.filter((d) => d.isDirectory() && d.name.startsWith("run-"))
-				.map((d) => d.name);
-		} catch {
-			continue;
-		}
-		for (const run of runs) {
-			const file = join(subDir, run, "session.jsonl");
-			try {
-				const st = statSync(file);
-				if (!best || st.mtimeMs > best.mtimeMs) best = { path: file, mtimeMs: st.mtimeMs };
-			} catch {
-				// 还没落盘 → 跳过
-			}
-		}
-	}
-	return best?.path;
-}
-
-/**
- * 定位子代理会话：先走确定的 `status.json`（`steps[].sessionFile`），失败再退化为目录猜测。
- */
-export function resolveSubagentSession(parentSessionFile: string | undefined): {
-	file?: string;
-	runInfo?: AsyncRunInfo;
-} {
-	const runInfo = findAsyncRun({ parentSessionFile, activeOnly: true }) ?? findAsyncRun({ parentSessionFile });
-	if (runInfo && runInfo.sessionFiles.length > 0) return { file: runInfo.sessionFiles[runInfo.sessionFiles.length - 1], runInfo };
-	return { file: locateSubagentSession(parentSessionFile), runInfo };
-}
+// ── 以下原为 pi-subagents 私有布局的解析（AsyncRunInfo / readAsyncRunInfo /
+// candidateAsyncRoots / findAsyncRun / locateSubagentSession / resolveSubagentSession），
+// 2026-10-01 自建 spawn 后整体删除：子进程由本扩展自己 spawn，pid 落在
+// `memory/pipeline/subagent-runs.ts` 的运行记录里，session 文件由 `--session-dir`
+// 指定在我们自己的目录下，不需要再去猜宿主把文件放哪。
+// 判定逻辑（decideWaitPhase / waitJobWithLiveness）与心跳（startHeartbeat）保持不变——
+// 它们本来就只依赖「墙钟 + jobs.sqlite 的 job 状态」，不读任何 pi-subagents 产物。
 
 // ══════════════════════════════════════════════════════════════
 //  等待与心跳
@@ -284,8 +142,6 @@ export interface LivenessWaitOptions {
 	hardMs?: number;
 	/** 轮询间隔（默认沿用 waitWhileRunning 的 400ms）。 */
 	pollMs?: number;
-	/** 定位子代理会话（惰性：只在到点/收尾时调用）。 */
-	locate: () => string | undefined;
 	/** 落盘上下文（日志用）。 */
 	profilePath?: string;
 	/** 层名（日志 scope，如 "l1"/"l2"/"l3"）。 */
@@ -299,8 +155,13 @@ export interface LivenessWaitOutcome {
 	job: PipelineJob | undefined;
 	reason: "settled" | "hard";
 	elapsedMs: number;
-	/** 最长单轮生成（观测；未知则 undefined）。 */
+	/**
+	 * 最长单轮生成（观测）。自建 spawn 后不再从 session 文件算——那个定位依赖
+	 * pi-subagents 的私有布局，已删除；调用方若需要可自行从 `--session-dir` 下的
+	 * jsonl 统计。恒为 undefined，保留字段是为了不破坏既有调用点的解构。
+	 */
 	longestTurnMs?: number;
+	/** 同上：恒为 undefined，仅保留字段形状。 */
 	sessionFile?: string;
 }
 
@@ -329,8 +190,6 @@ export async function waitJobWithLiveness(
 				job: getJob(),
 				reason: "hard",
 				elapsedMs: elapsed,
-				longestTurnMs: longestEntryGapMs(opts.locate()),
-				sessionFile: opts.locate(),
 			};
 		}
 		// 本轮只等到"下一个里程碑"（软阈值或硬上限），避免软阈值被硬上限的整段等待吞掉
@@ -342,20 +201,13 @@ export async function waitJobWithLiveness(
 				job,
 				reason: "settled",
 				elapsedMs: Date.now() - startedAt,
-				longestTurnMs: longestEntryGapMs(opts.locate()),
-				sessionFile: opts.locate(),
 			};
 		}
 		if (!softNoticed && Date.now() - startedAt >= softMs) {
 			softNoticed = true;
-			const sessionFile = opts.locate();
-			const sample = sampleSession(sessionFile);
-			const longest = longestEntryGapMs(sessionFile);
 			logEvent(
 				opts.layer,
-				`job ${opts.jobId} 软阈值 ${(softMs / 1000).toFixed(0)}s：子代理仍在运行` +
-					`（会话 ${sample.size >= 0 ? `${sample.size} 字节，已静默 ${(sample.silentMs / 1000).toFixed(0)}s` : "未定位到"}` +
-					`${longest !== undefined ? `，最长单轮 ${(longest / 1000).toFixed(0)}s` : ""}）→ 继续等`,
+				`job ${opts.jobId} 软阈值 ${(softMs / 1000).toFixed(0)}s：子代理仍在运行 → 继续等`,
 				opts.profilePath,
 			);
 			continue;
@@ -363,35 +215,40 @@ export async function waitJobWithLiveness(
 	}
 }
 
-/** 心跳：纯观测（不参与判定），每 `heartbeatMs` 一行日志 + 可选回调（刷 footer）。 */
+/**
+ * 心跳：纯观测（不参与判定），每 `heartbeatMs` 一行日志 + 可选回调（刷 footer）。
+ *
+ * **2026-10-01 自建 spawn 后改口径**：原先报的是「session 文件多大、本段涨了多少字节」，
+ * 那个定位依赖 pi-subagents 的私有布局，已删除，于是每行都打成「子代理会话 未定位到」
+ * ——纯粹是噪声。现在直接报**子进程是否还活着**：pid 是我们自己 spawn 时拿到的，
+ * `isProcessAlive` 是确定性的判定，不需要任何猜测。
+ *
+ * 顺带说明：原先那句「静默≠已死」的经验依然成立（一次长生成期间 session 文件可以
+ * 一个字节都不涨，实测 987s），只是现在不再需要靠文件大小去近似这个概念了。
+ */
 export function startHeartbeat(opts: {
 	layer: string;
 	jobId: number;
 	profilePath?: string;
-	locate: () => string | undefined;
+	/** 子进程 pid 的**惰性**读取：心跳在派发之前就启动了，那时 pid 还不存在。
+	 *  不传就只报耗时、不报存活。 */
+	getPid?: () => number | undefined;
 	heartbeatMs?: number;
-	onTick?: (info: { elapsedMs: number; sample: SessionSample; grewBytes: number }) => void;
+	onTick?: (info: { elapsedMs: number; alive: boolean | undefined }) => void;
 }): () => void {
 	const heartbeatMs = opts.heartbeatMs ?? 30_000;
 	const startedAt = Date.now();
-	let lastSize = sampleSession(opts.locate()).size;
 	const timer = setInterval(() => {
 		const now = Date.now();
-		const sessionFile = opts.locate();
-		const sample = sampleSession(sessionFile, now);
-		const grew = sample.size >= 0 && lastSize >= 0 ? sample.size - lastSize : -1;
-		opts.onTick?.({ elapsedMs: now - startedAt, sample, grewBytes: grew });
-		const longest = longestEntryGapMs(sessionFile);
-		// 2026-09-26：静默不等于死 —— 一次长生成期间文件一个字节都不涨（实测 987s），
-		// 所以这里显式写出"单轮生成期间文件不涨 + 最长单轮"，免得看日志的人重犯旧判定的错。
+		const pid = opts.getPid?.();
+		const alive = typeof pid === "number" ? isProcessAlive(pid) : undefined;
+		opts.onTick?.({ elapsedMs: now - startedAt, alive });
 		logEvent(
 			opts.layer,
 			`job ${opts.jobId} 运行 ${((now - startedAt) / 1000).toFixed(0)}s` +
-				`（子代理会话 ${sample.size >= 0 ? `${sample.size} 字节，本段 ${grew >= 0 ? `+${grew}` : "?"}` : "未定位到"}` +
-				`；静默≠已死，单轮生成期间文件不涨，最长单轮 ${longest !== undefined ? `${(longest / 1000).toFixed(0)}s` : "未知"}）`,
+				`（子进程 ${pid ?? "尚未派发"} ${alive === undefined ? "" : alive ? "存活" : "**已退出**"}）`,
 			opts.profilePath,
 		);
-		lastSize = sample.size;
 	}, heartbeatMs);
 	return () => clearInterval(timer);
 }

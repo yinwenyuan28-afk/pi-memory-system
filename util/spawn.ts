@@ -194,7 +194,12 @@ export function buildSpawnArgs(opts: {
 }): string[] {
 	const args = [
 		"-p",                      // 非交互，跑完即退
-		"--mode", "json",           // 结构化输出，便于排查（不依赖，只落盘）
+		// ⚠ 用 text 而**不是** json（2026-10-02 实测修正）：`--mode json` 会对**每个 token
+		// 增量**发一行 message_update——一次 181 秒的 L1 提取就写了 3608 行 / 1.3MB，
+		// 99% 是无用的逐 token 流，长跑子代理能写到几十 MB。
+		// 完整过程（含每次工具调用的入参/结果）在 `--session-dir` 指向的 .jsonl 里，
+		// 那才是深挖该看的地方；stdout 只需要「子代理最后说了什么」这一句摘要。
+		"--mode", "text",
 		"--system-prompt", opts.promptFile,   // 完整替换系统提示（= systemPromptMode: replace）
 		"--tools", opts.agentDef.tools.join(","),  // 工具白名单
 		"--no-skills",              // = inheritSkills: false

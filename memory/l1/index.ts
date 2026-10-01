@@ -11,7 +11,8 @@ import {
 import { holdUntilFrom, loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { resolveSubagentSession, startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
+import { readSubagentRun } from "../pipeline/subagent-runs.ts";
+import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
 import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
@@ -97,15 +98,17 @@ export function setupL1Extractor(
 		// 仍需时间，同值会在这条尾巴上误判超时（2026-09-15）。
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：软阈值只提示、硬上限**停掉子代理**；
 		// 旧实现到点判死 + abort 实测会误判（job 70 标 failed 后 7 分钟才提交）。
-		const parentSessionFile = ctx.sessionManager?.getSessionFile();
-		const locate = () => resolveSubagentSession(parentSessionFile).file;
 		const stopHeartbeat = startHeartbeat({
 			layer: "l1",
 			jobId: job.id,
 			profilePath,
-			locate,
+			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
+			getPid: () => readSubagentRun(profilePath, "l1", job.id)?.pid,
 			onTick: (info) =>
-				ctx.ui.setStatus("memory", `Memory ⚙L1 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.grewBytes >= 0 ? `+${info.grewBytes}B/30s` : "静默?"}）`),
+				ctx.ui.setStatus(
+					"memory",
+					`Memory ⚙L1 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`,
+				),
 		});
 		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
@@ -113,7 +116,6 @@ export function setupL1Extractor(
 		const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
 				softMs: to.softMs,
 				hardMs: to.hardMs,
-			locate,
 			profilePath,
 			layer: "l1",
 			jobId: job.id,
@@ -154,7 +156,6 @@ export function setupL1Extractor(
 				layer: "l1",
 				jobId: job.id,
 				reason: `L1 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
-				parentSessionFile,
 			});
 			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
 			await spawnP.catch(() => {});

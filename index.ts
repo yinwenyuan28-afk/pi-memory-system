@@ -22,7 +22,7 @@ import { setupJudgSessionProject } from "./util/judg-session-project/setup.ts";
 import { registerL1ProjectGetTool } from "./util/judg-session-project/tool.ts";
 import { registerReadL0IncrementTool, readL0Increment } from "./memory/l1/read-tool.ts";
 import { countNewRecords, countSceneBlocks, loadL2Config, loadL2Cursor } from "./memory/l2/config.ts";
-import { acquireRunLock, runLockBusyMessage } from "./memory/pipeline/run-lock.ts";
+import { acquireRunLock, isProcessAlive, runLockBusyMessage } from "./memory/pipeline/run-lock.ts";
 import { archiveSceneBlock, listArchivedBlocks, reconcileArchive, restoreSceneBlock } from "./memory/l2/archive.ts";
 import { registerReadL1IncrementTool } from "./memory/l2/read-tool.ts";
 import { registerReadSceneBlocksTool } from "./memory/l2/scene-read-tool.ts";
@@ -31,7 +31,7 @@ import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
 import { setupPipelineWorker, type PipelineExecutors, type PipelineJobResult, type PipelineWorker } from "./memory/pipeline/worker.ts";
 import { getPipelineJobsDB, type PipelineJob } from "./memory/pipeline/jobs-db.ts";
-import { findAsyncRun } from "./memory/pipeline/subagent-liveness.ts";
+import { clearSubagentRun, listSubagentRuns, readSubagentRun } from "./memory/pipeline/subagent-runs.ts";
 import { stopSubagent } from "./memory/pipeline/subagent-kill.ts";
 import { loadSubagentTimeouts } from "./memory/pipeline/timeout-config.ts";
 import { holdUntilFrom, loadFailureState, saveFailureState } from "./memory/failure-state.ts";
@@ -508,6 +508,32 @@ export default function (pi: ExtensionAPI) {
         if (n > 0) logEvent("pipeline", `recovered ${n} leftover running job(s)`, profile.path);
       } catch (err) {
         logEvent("pipeline", `recover failed: ${err instanceof Error ? err.message : String(err)}`, profile.path);
+      }
+
+      // 残留子代理回收（自建 spawn，2026-10-01）：主进程重启后内存态全丢，但运行记录
+      // 还在。若记录里的 pid 还活着，说明上一任主进程崩溃/被杀时留下了孤儿子进程 ——
+      // 它们仍持有写工具，会和这一任抢着写同一层。逐个停掉（复用停止序列的杀进程树
+      // 与杀后修复），然后清记录。
+      try {
+        const orphans = listSubagentRuns(profile.path);
+        for (const rec of orphans) {
+          if (isProcessAlive(rec.pid)) {
+            const out = await stopSubagent({
+              profilePath: profile.path,
+              layer: rec.layer,
+              jobId: rec.jobId,
+              reason: "主进程重启后回收残留子代理",
+              skipGrace: true,
+            });
+            logEvent("pipeline", `回收残留子代理 ${rec.layer} job ${rec.jobId} pid=${rec.pid}：${out.note}`, profile.path);
+          }
+          clearSubagentRun(profile.path, rec.layer, rec.jobId);
+        }
+        if (orphans.length > 0) {
+          logEvent("pipeline", `清理 ${orphans.length} 条子代理运行记录`, profile.path);
+        }
+      } catch (err) {
+        logEvent("pipeline", `残留子代理回收失败: ${err instanceof Error ? err.message : String(err)}`, profile.path);
       }
     }
 
@@ -1199,20 +1225,28 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("用法：/my-memory:subagent-kill <l1|l2|l3> [jobId]", "warning");
         return;
       }
-      const parentSessionFile = ctx.sessionManager?.getSessionFile();
-      const active = findAsyncRun({ parentSessionFile, activeOnly: true });
+      // 自建 spawn（2026-10-01）：找子代理不再扫 pi-subagents 的私有布局，而是查我们
+      // 自己的运行记录（spawn 时写、job 收尾时删）。指定 jobId 就精确取那个 job 的记录；
+      // 不指定就取该层最近的一条。
+      const jobIdArg = Number(parts[1]);
+      const jobIdHint = Number.isFinite(jobIdArg) && jobIdArg > 0 ? jobIdArg : 0;
+      const runs = jobIdHint
+        ? [readSubagentRun(profilePath, layer, jobIdHint)].filter(Boolean)
+        : listSubagentRuns(profilePath).filter((r) => r.layer === layer);
+      const active = runs.length > 0 ? runs[runs.length - 1] : undefined;
       if (!active) {
-        ctx.ui.notify("没有正在运行的子代理（未找到 async run 的 status.json）", "info");
+        ctx.ui.notify(
+          `没有正在运行的子代理（${layer} 层没有本扩展的运行记录）`,
+          "info",
+        );
         return;
       }
-      const jobIdArg = Number(parts[1]);
-      const jobId = Number.isFinite(jobIdArg) && jobIdArg > 0 ? jobIdArg : 0;
+      const jobId = jobIdHint || active.jobId;
       const out = await stopSubagent({
         profilePath,
         layer,
         jobId,
         reason: "手动停止（/my-memory:subagent-kill）",
-        parentSessionFile,
         skipGrace: true,
         hooks: layer === "l2" ? { rebuildSceneIndex: syncSceneIndex, repairSceneMembers } : undefined,
       });

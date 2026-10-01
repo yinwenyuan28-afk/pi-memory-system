@@ -3,7 +3,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.ts";
 import { holdUntilFrom, loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
-import { resolveSubagentSession, startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
+import { readSubagentRun } from "../pipeline/subagent-runs.ts";
+import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
 import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { repairSceneMembers, syncSceneIndex } from "./commit-tool.ts";
@@ -58,17 +59,16 @@ export function setupL2Organizer(
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：不再"到点判死"，改为**软阈值只提示、硬上限停掉子代理**。
 		// 旧实现到 600+30s 就标 failed + abort，实测把"跑了 987 秒还在长生成"的子代理误判四次
 		// （jobs 55/61/64/68），并**提前释放队列槽位**（子代理仍在写场景块）。
-		const parentSessionFile = ctx.sessionManager?.getSessionFile();
-		const locate = () => resolveSubagentSession(parentSessionFile).file;
 		const stopHeartbeat = startHeartbeat({
 			layer: "l2",
 			jobId: job.id,
 			profilePath,
-			locate,
+			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
+			getPid: () => readSubagentRun(profilePath, "l2", job.id)?.pid,
 			onTick: (info) =>
 				ctx.ui.setStatus(
 					"memory",
-					`Memory ⚙L2 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.grewBytes >= 0 ? `+${info.grewBytes}B/30s` : "静默?"}）`,
+					`Memory ⚙L2 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`,
 				),
 		});
 		try {
@@ -84,7 +84,6 @@ export function setupL2Organizer(
 			const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
 				softMs: to.softMs,
 				hardMs: to.hardMs,
-				locate,
 				profilePath,
 				layer: "l2",
 				jobId: job.id,
@@ -124,7 +123,6 @@ export function setupL2Organizer(
 				layer: "l2",
 				jobId: job.id,
 				reason: `L2 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
-				parentSessionFile,
 				hooks: { rebuildSceneIndex, repairSceneMembers },
 			});
 			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
