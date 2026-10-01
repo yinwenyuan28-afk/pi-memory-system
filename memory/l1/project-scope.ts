@@ -2,7 +2,7 @@
  * L1 项目标签（`metadata.project`）+ 适用范围标签（`metadata.scope`）的**契约模块**。
  *
  * 职责：定义两个标签的取值空间与归一化规则，并回答「一条记忆最终该挂到哪个项目路径」。
- * 计划出处：`plan/memory-system/L1_PROJECT_SCOPE_TAGS_PLAN.md` 任务 0（先立契约，后写回填器）。
+ * 计划出处：`plan/memory-system/completed/L1-项目与范围标签-计划.md` 任务 0（先立契约，后写回填器）。
  *
  * 边界（刻意收紧，调用方不得越界）：
  *   - **纯函数 + 纯常量，零 import**：不读文件、不写文件、不发网络请求、不调模型。

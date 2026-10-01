@@ -9,7 +9,7 @@
 //
 //   C:/dev/ide/pi-agent/pi-0.80.10/node_modules/.bin/tsx --conditions=import scripts/verify-project-scope.ts
 //
-// 覆盖（计划 `plan/memory-system/L1_PROJECT_SCOPE_TAGS_PLAN.md` 任务 0/3/6 的契约层）：
+// 覆盖（计划 `plan/memory-system/completed/L1-项目与范围标签-计划.md` 任务 0/3/6 的契约层）：
 //   A. 取值空间：`SCOPE_VALUES` 恰好三值（self / global / unknown），旧档 `subtree` 已作废
 //   B. `normalizeScope` 零容错：只吃首尾空白 + 大小写，**不做同义词映射**
 //      （`subtree` / `project` / `memory-system` / `workflow` / `module` 全必须 `null`）
