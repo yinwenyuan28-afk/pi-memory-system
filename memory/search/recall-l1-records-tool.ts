@@ -17,6 +17,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadRecallConfig } from "./recall-config.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
+import { promptVarsFor } from "../../prompts/tool-vars.ts";
 
 /** 工具参数 */
 interface RecallL1RecordsArgs {
@@ -56,7 +57,7 @@ export function registerRecallL1RecordsTool(
 ) {
   pi.registerTool({
     name: "recall_l1_records",
-    description: renderPrompt("tools#recall_l1_records"),
+    description: renderPrompt("tools#recall_l1_records", promptVarsFor("tools#recall_l1_records")),
     parameters: {
       queryText: {
         type: "string",

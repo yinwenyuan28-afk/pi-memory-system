@@ -1,0 +1,4 @@
+{
+	"type": "module",
+	"description": "config/ 目录内 .ts 按 ESM 解析——thresholds.ts 需被 prompts/tool-vars.ts（ESM）静态 import 具名导出，若按 CJS 解析则 ESM 侧拿不到具名导出；pi 宿主 jiti 加载不受影响"
+}

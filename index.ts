@@ -44,10 +44,12 @@ import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-t
 import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.ts";
 import { registerFixTool } from "./memory/l1/fix-tool.ts";
 import { loadRecallConfig } from "./memory/search/recall-config.ts";
+import { AUTO_INJECT_TOP_K } from "./config/thresholds.ts";
 import { createRecallScheduler } from "./memory/search/recall-scheduler.ts";
 import { handleSkillManageTool } from "./skill/skill-tool.ts";
 import { handleSkillViewTool } from "./skill/skill-view-tool.ts";
 import { render as renderPrompt, checkPromptAssets } from "./prompts/registry.ts";
+import { promptVarsFor } from "./prompts/tool-vars.ts";
 import {
   drainNoticeCards,
   logEvent,
@@ -669,7 +671,7 @@ export default function (pi: ExtensionAPI) {
 
   // 2026-09-12：模板迁入 prompts/registry 单源（prompts/backends/tool-reminder.md）；
   // 旧加载器 memory/prompts.ts 已删除。
-  const MEMORY_TOOL_REMINDER = renderPrompt("backends/tool-reminder");
+  const MEMORY_TOOL_REMINDER = renderPrompt("backends/tool-reminder", promptVarsFor("backends/tool-reminder"));
 
   pi.on("before_agent_start", async (event, ctx) => {
     // [subagent-guard] 子代理进程守卫：pi-subagents 启动子代理时设 PI_SUBAGENT_CHILD=1。
@@ -780,7 +782,7 @@ export default function (pi: ExtensionAPI) {
           payload: {
             queryText,
             profilePath: _activeProfile.path,
-            topK: 3,
+            topK: AUTO_INJECT_TOP_K,
             source: "inject",
             countHits: false, // 计数改由 context 真入列时做（见 context 事件）
           },

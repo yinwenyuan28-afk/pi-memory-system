@@ -21,6 +21,10 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, hasTemplate } from "../prompts/registry.ts";
+// 与生产调用点共用同一张变量表：部分工具 description 里的系统阈值（l1_fix 三道闸、
+// 召回条数）不再手抄，改由 config/thresholds.ts 注入。工具链必须用同一份 vars 渲染，
+// 否则 golden 比对的就是另一段文本，整个基线失去意义。
+import { promptVarsFor } from "../prompts/tool-vars.ts";
 
 const EXT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PROMPTS_DIR = join(EXT_ROOT, "prompts");
@@ -182,7 +186,7 @@ console.log("── 1c) backends/tool-reminder 回归（Protected Files 白名�
 
 	let out;
 	try {
-		out = render("backends/tool-reminder", {});
+		out = render("backends/tool-reminder", promptVarsFor("backends/tool-reminder"));
 	} catch (e) {
 		fail(`backends/tool-reminder: render 抛错 ${e.message}`);
 		out = null;
@@ -209,7 +213,7 @@ console.log("── 1d) 工具 description 回归（registry vs .golden/tools.js
 			const key = `tools#${name}`;
 			let out;
 			try {
-				out = render(key, {});
+				out = render(key, promptVarsFor(key));
 			} catch (e) {
 				fail(`${key}: render 抛错 ${e.message}`);
 				continue;

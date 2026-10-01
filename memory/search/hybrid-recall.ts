@@ -23,6 +23,7 @@ import { getEmbeddingService } from "./embedding/service.ts";
 import { getVectorStore } from "./vector-store/store.ts";
 import type { HitSource } from "../stats/l1-hit-stats-db.ts";
 import { logEvent } from "../../util/notice.ts";
+import { TOOL_RECALL_TOP_K_DEFAULT } from "../../config/thresholds.ts";
 
 /** L1 record 召回候选 */
 export interface L1RecordCandidate {
@@ -94,7 +95,7 @@ export async function recallL1Records(
 
   if (!queryText || !profilePath) return result;
 
-  const topK = options.topK ?? 5;
+  const topK = options.topK ?? TOOL_RECALL_TOP_K_DEFAULT;
   // 闸门参数来源：recall-config.json（profile 级可覆盖），options 显式传参优先
   const cfg = loadRecallConfig(profilePath);
   const minScore = options.minScore ?? cfg.minScore;

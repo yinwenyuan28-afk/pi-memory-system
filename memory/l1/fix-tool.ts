@@ -11,10 +11,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { L1_RECORDS_DIR, L2_ARCHIVE_MEMBERS_PATH, L2_SCENE_INDEX_PATH, MEMORY_DB_DIR } from "../paths.ts";
 import { getL1HitStatsDB } from "../stats/l1-hit-stats-db.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
+import { FIX_DEBOUNCE_HOURS, FIX_DEBOUNCE_MS, FIX_HIGH_VALUE_HITS, FIX_MIN_EVIDENCE_CHARS } from "../../config/thresholds.ts";
+import { promptVarsFor } from "../../prompts/tool-vars.ts";
 
 const TOOL_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "l1-admin");
 const AUDIT_RE = /【\d{4}-\d{2}-\d{2} L1 修正/;
-const DEBOUNCE_MS = 24 * 3600e3;
+// 三道闸阈值来自 config/thresholds.ts（零依赖叶子模块）——那里的值同时被提示词
+// 通过 registry 变量回显，改一处两侧同步，杜绝「代码改了、提示词没改」的漂移。
+const DEBOUNCE_MS = FIX_DEBOUNCE_MS;
 
 /** 读 LWW 最后一行（追加序覆盖）；返回 null = id 不存在 */
 function lastRow(profilePath: string, recordId: string): Record<string, unknown> | null {
@@ -34,11 +38,11 @@ function lastRow(profilePath: string, recordId: string): Record<string, unknown>
 	return last;
 }
 
-/** 高价值判定：hit-stats 有效命中 ≥5 或 被 L2 场景块 members 引用 */
+/** 高价值判定：hit-stats 有效命中 ≥ FIX_HIGH_VALUE_HITS 或 被 L2 场景块 members 引用 */
 function isHighValue(profilePath: string, recordId: string): boolean {
 	try {
 		const st = getL1HitStatsDB(profilePath).getStats(recordId);
-		if (st && (st.hits || 0) >= 5) return true;
+		if (st && (st.hits || 0) >= FIX_HIGH_VALUE_HITS) return true;
 	} catch { /* 统计不可用不阻塞 */ }
 	try {
 		const indexPath = join(profilePath, MEMORY_DB_DIR, L2_SCENE_INDEX_PATH);
@@ -90,8 +94,8 @@ export async function runFix(params: FixParams, profilePath: string, opts: { for
 		return fail("recordId 与 action(rewrite|tombstone) 必填");
 	}
 	// 护栏 1：evidence 门槛
-	if (evidence.trim().length < 20) {
-		return fail("evidence 过短（<20 字符）：修正必须附可复核证据（grep/file:line/命令输出）");
+	if (evidence.trim().length < FIX_MIN_EVIDENCE_CHARS) {
+		return fail(`evidence 过短（<${FIX_MIN_EVIDENCE_CHARS} 字符）：修正必须附可复核证据（grep/file:line/命令输出）`);
 	}
 	if (action === "rewrite" && newContent.trim().length < 10) {
 		return fail("rewrite 需要 newContent（>=10 字符）");
@@ -111,7 +115,7 @@ export async function runFix(params: FixParams, profilePath: string, opts: { for
 	}
 	// 护栏 4：高价值保护（拒改，提示命令 --force）
 	if (!opts.force && isHighValue(profilePath, recordId)) {
-		return fail(`高价值记录（hits>=5 或 L2 场景块引用）：自动修正被拒绝。如确认需要，请执行 /my-memory:l1:fix ${recordId} --action ${action} --force`);
+		return fail(`高价值记录（hits>=${FIX_HIGH_VALUE_HITS} 或 L2 场景块引用）：自动修正被拒绝。如确认需要，请执行 /my-memory:l1:fix ${recordId} --action ${action} --force`);
 	}
 
 	// 护栏 2：审计标注自动追加
@@ -146,7 +150,7 @@ export function registerFixTool(
 	pi.registerTool({
 		name: "l1_fix",
 		label: "Fix L1 Record",
-		description: renderPrompt("tools#l1_fix"),
+		description: renderPrompt("tools#l1_fix", promptVarsFor("tools#l1_fix")),
 		parameters: {
 			type: "object",
 			properties: {

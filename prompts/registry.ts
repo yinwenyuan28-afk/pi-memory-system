@@ -177,7 +177,7 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 
 	// ── backends：后台/常驻提示词（整文件 key；Phase 3 自 memory/prompts/ 迁入） ──
 	"backends/tool-reminder": {
-		vars: [],
+		vars: ["autoInjectTopK", "toolRecallTopK"],
 		template:
 			"[Memory → L1] 你的持久记忆写入通道是 **`l1_commit`（`source: \"main-agent\"`）**；旧的 `memory` 工具已退役，不要再调它。\n" +
 			"RECORD when: 用户偏好/纠正/风格指令、根因结论（含\"因为…所以…\"因果结构）、非显然的约束或事实、用户拍板的决策（含理由与被否项）、踩坑经验、未定事项。\n" +
@@ -186,9 +186,9 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 			"调用形态：`l1_commit({ source: \"main-agent\", records: [ { content, type, priority? } ] })` —— 只需 `content` + `type`；`id`/时间/会话/cwd 由服务端补齐，**不要自己编 `id`**。\n" +
 			"完整规则（类型判据 / priority 分档 / 边界）→ 调 `load_memory_rules`。\n" +
 			"\n" +
-			"[Memory Recall] Each turn auto-injects up to 3 L1 atomic memories in the <l1-records> block above (recalled by similarity to your current task).\n" +
+			"[Memory Recall] Each turn auto-injects up to {{autoInjectTopK}} L1 atomic memories in the <l1-records> block above (recalled by similarity to your current task).\n" +
 			"RECALL when: the injected memories are not enough, or you suspect earlier sessions hold relevant details (past decisions, project conventions, preferences, previously fixed issues).\n" +
-			"How: call recall_l1_records with your own queryText (returns top-5, broader than auto-inject). If a recalled record proves useless for the current task, call clear_invalid_l1_records with its recordId so its weight can be lowered.\n" +
+			"How: call recall_l1_records with your own queryText (returns top-{{toolRecallTopK}}, broader than auto-inject). If a recalled record proves useless for the current task, call clear_invalid_l1_records with its recordId so its weight can be lowered.\n" +
 			"Limit: max 3 recall calls per turn. If 3 attempts return nothing relevant, the information is not in memory — answer from existing context and do not keep searching.\n" +
 			"\n" +
 			"{{>shared#protected-files}}",

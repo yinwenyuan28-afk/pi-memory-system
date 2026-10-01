@@ -39,7 +39,8 @@ Look up which project directory the current session was judged to be working in.
 
 ## l1_fix
 
-Fix or remove an L1 memory record found to be wrong (agent-initiated correction). Executes the same in-place semantics as the l1-admin CLI (rewrite = new id + old row tombstoned in place; tombstone = mark deleted). Guards: evidence (>=20 chars, required), audit annotation auto-appended, 24h debounce per record, high-value protection (hits>=5 or referenced by L2 scene members -> rejected, use '/my-memory:l1:fix --force'). Params: recordId (required), action ('rewrite'|'tombstone'), newContent (required for rewrite), evidence (required), reason (optional), priority (optional 0-100 reassessment for rewrite).
+<!-- vars: fixMinEvidenceChars, fixDebounceHours, fixHighValueHits -->
+Fix or remove an L1 memory record found to be wrong (agent-initiated correction). Executes the same in-place semantics as the l1-admin CLI (rewrite = new id + old row tombstoned in place; tombstone = mark deleted). Guards: evidence (>={{fixMinEvidenceChars}} chars, required), audit annotation auto-appended, {{fixDebounceHours}}h debounce per record, high-value protection (hits>={{fixHighValueHits}} or referenced by L2 scene members -> rejected, use '/my-memory:l1:fix --force'). Params: recordId (required), action ('rewrite'|'tombstone'), newContent (required for rewrite), evidence (required), reason (optional), priority (optional 0-100 reassessment for rewrite).
 
 ## read_l0_increment
 
@@ -67,7 +68,8 @@ Finish an L3 persona update and advance the L3 cursor. Called by l3-persona-gene
 
 ## recall_l1_records
 
-Search your L1 atomic memories (durable facts, work methods, tasks, and artifacts extracted from past sessions) by semantic similarity. Use when: (a) no <l1-records> block is present this turn (it is inserted only once recall is ready; a turn that finishes in a single LLM call never gets it), or the block does not cover what you need; (b) the user references something from earlier sessions — past decisions, project conventions, preferences, or previously fixed issues; (c) you need more candidates than the injected top-3. Returns top-K records as {recordId, score, content, type, priority, scene_name, createdAt}. Call limit: max 3 times per turn total. If 3 attempts return nothing relevant, the memory is not stored — answer from existing context. Independent of the legacy memory system (jieba inverted index / sub-memories).
+<!-- vars: autoInjectTopK -->
+Search your L1 atomic memories (durable facts, work methods, tasks, and artifacts extracted from past sessions) by semantic similarity. Use when: (a) no <l1-records> block is present this turn (it is inserted only once recall is ready; a turn that finishes in a single LLM call never gets it), or the block does not cover what you need; (b) the user references something from earlier sessions — past decisions, project conventions, preferences, or previously fixed issues; (c) you need more candidates than the injected top-{{autoInjectTopK}}. Returns top-K records as {recordId, score, content, type, priority, scene_name, createdAt}. Call limit: max 3 times per turn total. If 3 attempts return nothing relevant, the memory is not stored — answer from existing context. Independent of the legacy memory system (jieba inverted index / sub-memories).
 
 ## clear_invalid_l1_records
 
