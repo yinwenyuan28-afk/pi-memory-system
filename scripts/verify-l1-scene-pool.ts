@@ -12,7 +12,8 @@
 //   B. detectBatchCwd：尾部众数 / 缺 cwd 字段退化 / 坏分片跳过
 //   C. buildL1Task：ScenePool 块形态、空池 `(无)`、变量契约（无残留占位符）
 //   D. l1_commit 端到端（subagent）：canonical 覆写 / 新条目登记 / 中间字段剥离 /
-//      未知 id 降级不阻断 / deleted 行不碰池 / sceneStats 自洽
+//      未知 id 降级不阻断 / deleted 行不碰池 / sceneStats 自洽 /
+//      **cwds 登记的是记录自填的工作台（不是判定出的项目）** —— 2026-09-30 撤回 cwd 覆写后的口径
 //   E. l1_commit 端到端（main-agent）：cwd 匹配 / 显式名字不入池 / 零命中占位 + fallback 标记
 //   F. stampRecordTimes：active 覆写双字段、标记行保留 createdAt、timestamps 不动
 //
@@ -27,6 +28,7 @@ import {
 	buildScenePoolLines,
 	createSceneResolver,
 	cwdCompareKey,
+	cwdsInclude,
 	emptyPool,
 	findMostRecentScene,
 	findSceneByNameOrAlias,
@@ -441,33 +443,60 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	check("D4 标记行不计数", (r4.sceneStats as { fallback: number })?.fallback === 0, JSON.stringify(r4.sceneStats));
 
 	// D5 新条目 id 递增、cwds 累积
-	// ⚠ 2026-09-30 夹具改造：`l1_commit` 的 `cwd` 改由**会话级项目归属**决定，
-	//   记录里自填的 `cwd` 一律被覆写。原来的断言（`cwds === [B]`，B 来自记录自填）
-	//   在新语义下必然变红 —— 真因不是"cwd 为空"，而是**覆写源从"记录自填"换成了
-	//   "judg-session-project.json 里那个 sessionKey 的条目"**。
-	//   所以这里给夹具种一条 `flag:true` 且 `project = B` 的条目，并让记录带上对应 sessionKey。
-	//   **不是**把断言改成"接受空 cwd"——那与已采纳的 fallback 设计相反。
+	// ⚠ 2026-09-30 第二次夹具改造（撤回 cwd 覆写之后）：
+	//   `l1_commit` 现在**不改写 `r.cwd`** —— cwd 是「会话工作台」，判定出的项目另走 `metadata.project`。
+	//   所以 `addCwd(entry, r.cwd)` 拿到的就是**记录自填的工作台**，场景池与读侧
+	//   `rankCwd`（比的是 `batchCwd` = L0 消息 cwd 众数 = 同样是工作台）口径重新对齐。
+	//   这里刻意让「记录自填的工作台」(`WB`)、「判定出的项目」(`B`)、「ctx.cwd / batchCwd」(`A`)
+	//   三者互不相同，这样"登记的是哪一个"一旦写错立刻变红，不会出现三值同源的假绿。
+	const WB = "C:/workbench/d5";
 	upsertSessionJudg(p, "sess-d5", { project: B, flag: true, decidedBy: "llm", confidence: 0.8, evidence: [{ path: B, filesTouched: 3 }] });
 	const r5 = await commit({
 		cursor: "2026-09-15T10:10:00.000Z",
-		records: [{ content: "决策丁", type: "work_fact", sessionKey: "sess-d5", new_scene_name: "beta｜超时排查", new_scene_reason: "换议题了", cwd: A }],
+		records: [{ content: "决策丁", type: "work_fact", sessionKey: "sess-d5", new_scene_name: "beta｜超时排查", new_scene_reason: "换议题了", cwd: WB, metadata: { scope: "self" } }],
 	});
 	check("D5 created=1", (r5.sceneStats as { created: number })?.created === 1);
 	const pool5 = readScenePool(p);
-	check("D5 新 id = sc0002", pool5.scenes.some((s) => s.id === "sc0002"), pool5.scenes.map((s) => s.id).join(","));
-	check("D5 新条目 cwds = [B]（取自判定而非记录自填）", JSON.stringify(pool5.scenes.find((s) => s.id === "sc0002")?.cwds) === JSON.stringify([B]));
+	check("D5 新 id = sc0002（承接 D1 的 sc0001）", pool5.scenes.some((s) => s.id === "sc0002"), pool5.scenes.map((s) => s.id).join(","));
+	check("D5 新条目 cwds = [记录自填的工作台]，不是判定出的项目", JSON.stringify(pool5.scenes.find((s) => s.id === "sc0002")?.cwds) === JSON.stringify([WB]), JSON.stringify(pool5.scenes.find((s) => s.id === "sc0002")?.cwds));
 	const rec5 = readRecords(p).filter((r) => r.content === "决策丁")[0];
-	check("D5 记录 cwd 被覆写成 project", rec5.cwd === B, String(rec5.cwd));
+	check("D5 记录 cwd 原样保留工作台（不被项目覆写）", rec5.cwd === WB, String(rec5.cwd));
+	check("D5 判定出的项目只落进 metadata.project", (rec5.metadata as Record<string, unknown> | undefined)?.project === B, JSON.stringify(rec5.metadata));
 	check("D5 metadata.projectSource = llm", (rec5.metadata as Record<string, unknown> | undefined)?.projectSource === "llm", JSON.stringify(rec5.metadata));
 
-	// D6 无判定条目 ⇒ 退回 ctx.cwd（A）+ projectSource=fallback（**不留空**，审查 V-2）
+	// D5b 场景池读写口径自洽（撤回覆写的**收益**所在，同项目不同工作台不会散）
+	//   ① 同一场景、不同工作台 → cwds **追加**而非替换（不会互相顶掉）
+	//   ② 读侧 `rankCwd` 比的是 batchCwd（= L0 消息 cwd 众数 = 工作台），命中 → 排到最前
+	//   ③ 项目路径（B）**从不**登记进 cwds ⇒ 用项目路径当 batchCwd 不再能"命中同 cwd"
+	await commit({
+		cursor: "2026-09-15T10:12:00.000Z",
+		records: [{ content: "决策丁2", type: "work_fact", sessionKey: "sess-d5", scene_id: "sc0002", cwd: A }],
+	});
+	const pool5b = readScenePool(p);
+	const cwds5b = pool5b.scenes.find((s) => s.id === "sc0002")?.cwds ?? [];
+	check("D5b 同场景不同工作台 → cwds 累积两条（不替换、不散开）", JSON.stringify(cwds5b) === JSON.stringify([WB, A]), JSON.stringify(cwds5b));
+	check("D5b 工作台批次 → 同 cwd 优先命中该条目", buildScenePoolLines(pool5b, { batchCwd: A }).lines[0] === "- sc0002 | beta｜超时排查", buildScenePoolLines(pool5b, { batchCwd: A }).lines.join(" | "));
+	check("D5b 项目路径当 batchCwd → 不再被 cwds 命中（写侧不再塞项目，读侧才敢按工作台比）", !cwdsInclude(cwds5b, B), JSON.stringify(cwds5b));
+	check("D5b findMostRecentScene 按工作台命中", findMostRecentScene(pool5b, A)?.id === "sc0002", findMostRecentScene(pool5b, A)?.id ?? "null");
+
+	// D6 无判定条目 ⇒ metadata.project 空串 + projectSource=fallback；cwd 仍原样保留自填值
+	const WB6 = "C:/workbench/d6";
 	const r6 = await commit({
 		cursor: "2026-09-15T10:20:00.000Z",
-		records: [{ content: "决策戊", type: "work_fact", sessionKey: "sess-d6-无条目", new_scene_name: "beta｜兜底", new_scene_reason: "无判定", cwd: B }],
+		records: [{ content: "决策戊", type: "work_fact", sessionKey: "sess-d6-无条目", new_scene_name: "beta｜兜底", new_scene_reason: "无判定", cwd: WB6 }],
 	});
 	const rec6 = readRecords(p).filter((r) => r.content === "决策戊")[0];
-	check("D6 无条目 → 退回 ctx.cwd（A），不是记录自填的 B", rec6.cwd === A, String(rec6.cwd));
+	check("D6 无条目 → cwd 原样保留自填工作台（不退回 ctx.cwd）", rec6.cwd === WB6, String(rec6.cwd));
+	check("D6 无条目 → metadata.project 为空串（判定不可用不猜）", (rec6.metadata as Record<string, unknown> | undefined)?.project === "", JSON.stringify(rec6.metadata?.project));
 	check("D6 metadata.projectSource = fallback", (rec6.metadata as Record<string, unknown> | undefined)?.projectSource === "fallback", JSON.stringify(rec6.metadata));
+	// D6b cwd 缺字段 ⇒ **唯一**的兜底：填会话工作台 ctx.cwd（A），并登记进池
+	const r6b = await commit({
+		cursor: "2026-09-15T10:22:00.000Z",
+		records: [{ content: "决策己", type: "work_fact", sessionKey: "sess-d6-无条目", new_scene_name: "beta｜无 cwd", new_scene_reason: "缺 cwd" }],
+	});
+	const rec6b = readRecords(p).filter((r) => r.content === "决策己")[0];
+	check("D6b cwd 缺字段 → 兜底填 ctx.cwd（A）", rec6b.cwd === A, String(rec6b.cwd));
+	check("D6b 兜底出的工作台同样登记进池", JSON.stringify(readScenePool(p).scenes.find((s) => s.name === "beta｜无 cwd")?.cwds) === JSON.stringify([A]), JSON.stringify(readScenePool(p).scenes.find((s) => s.name === "beta｜无 cwd")?.cwds));
 }
 
 console.log("\n=== E. l1_commit 端到端（main-agent 路径）===");

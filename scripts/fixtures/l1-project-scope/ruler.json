@@ -1,0 +1,279 @@
+{
+  "version": 2,
+  "createdAt": "2026-09-30",
+  "labeledBy": "model",
+  "note": "模型标注，非人工。评测时必须先人工复核 10 条再采信。v2 变更：scope 收成二值 {self, global}（subtree 档作废，5 条原 subtree 已重判）；5 条原 project=null 全部用新项目清单重新解出、不再留 null；新增 flagSuspect 字段。四层抽样、30 条 id 与 layer 与 v1 相同，可直接与 v1 做前后对比。\n\n【scope 判据（唯一一条）】「这条记忆换个项目还成立吗？」不成立 ⇒ self（project 填它真正所属的项目，可以是会话项目以外的）；成立 ⇒ global（project 留空）。v1 用 40% 拿不准的自/子树线换成这一句后，不确定数从 12 降到 3（见 unclearCount），这是二值化确实更可判的直接证据。\n\n【derivedBy 记录的是被采用的那条判定路径】scene_id=查 scenes.json 取 ｜ 前缀（仅在前缀不是伪项目时）；scene_name_substr=在 scene_name/content 里匹配到 listKnownProjects() 的目录；content_path=正文里的文件路径反推出项目（需跨记录交叉验证）；no_match=前三条都没产出可用的 project，含「文本命中了但被正文否定」与「只有别名没有项目名」两类。\n\n【project 三态互不等价】字符串=判出的项目路径；空串=判成 global 所以没有项目；null=连人读原文都定不了——v2 已无此类，留着是为了让回填器仍能输出这个诚实的值。\n\n【flagSuspect=true 的含义】本条的 project 判定存在与答案竞争的表层信号（scene_name / cwd / 旧 metadata.scope 任一明确指向另一个项目），我预期模型裁决要在这里反复权衡甚至判错。真值全库 19/30（63%）为 true——这说明新架构里模型裁决是承重件，不是点缀。\n\n【项目清单口径】按 memory/l1/config.ts:326 listKnownProjects() 的 16 项（过 isBroadProjectPath 滤掉 C:/ / C:/temp / C:/tmp / C:/Users/leaf 等过宽项）。⚠ 这份清单里没有 memory-system 扩展自己的目录 C:/Users/leaf/.pi/agent/extensions/memory-system（用户从没在那个目录开过会话），本尺子 10 条 memory-system 记忆全部标到该精确路径——它是真实目录、normalizeProjectTag 收、isNotAProjectPath 也放行（HOME_DOT_PREFIX_EXEMPT=true，点开头目录豁免），但任何靠 listKnownProjects() 取候选的管线都提不出它，只能退化到 C:/Users/leaf/.pi（而 .pi 下还有 context-mode-plus / permission-gate 两个同级扩展）。**回填器需要给这个项目开一条特例，否则全库第二大项目永远标不准。**",
+  "unclearCount": 3,
+  "items": [
+    {
+      "id": "l1_1789526400004_f4a6",
+      "layer": 1,
+      "derivedBy": "scene_id",
+      "project": "C:/dev/code/xianhua",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "规则1：scene_id=sc0001 → sc0001 名前缀 xianhua，20 个 xianhua 场景的 cwds 全部是 C:\\dev\\code\\xianhua。内容是 bubble-3d 原型补齐 mediumPer/smallPer/scatter/scale/posX 五个具体配置字段（commit 656b310）——换到别的项目这些常量根本不存在 ⇒ self。scene / cwd / 正文三方一致，不可疑。"
+    },
+    {
+      "id": "l1_1789816000001_a1b1",
+      "layer": 1,
+      "derivedBy": "scene_id",
+      "project": "C:/dev/code/xianhua",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "规则1：scene_id=sc0006 → 前缀 xianhua。v1 判 subtree，二值化后改判 self：内容是 28 张表的字段口径、免费档/魔力值/推送配额的具体取值，换个项目这套表结构不存在 ⇒ 换个项目不成立。二值判据下不再需要「结构性 / 一次性拍板」那种没法操作的分层，v1 在这里的犹豫（本轮已消解）不再成立。"
+    },
+    {
+      "id": "l1_1789817400001_q1w2",
+      "layer": 1,
+      "derivedBy": "scene_id",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "规则1：scene_id=sc0017 → 前缀 memory-system。v1 曾犹豫 self 还是 global（因为「游标分页要在刷盘组边界收尾」可以读成通用增量读取规则），二值判据下不再含糊：正文点名的是 L1 提取器按 recordedAt 推进游标、background 分组、严格 `recordedAt > cursor`，这些符号只在 memory-system 的 memory/l1/read-tool.ts 里存在，换项目不成立 ⇒ self。scene 命中的前缀是 memory-system 不是伪项目，三方一致。"
+    },
+    {
+      "id": "l1_1789836500006_r6f6",
+      "layer": 1,
+      "derivedBy": "scene_id",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "规则1：scene_id=sc0021 → 前缀 memory-system。内容是两份向量库回归脚本资产（vectorstore-test.mts 6 项断言、old-vs-new.mts 的 git show 对照），脚本测的是 memory-system 的向量库模块（真模块 + 真 sqlite），换项目这两份脚本不适用 ⇒ self。"
+    },
+    {
+      "id": "l1_1790006100001_c7k2",
+      "layer": 1,
+      "derivedBy": "scene_id",
+      "project": "C:/dev/code_java/wangxin/temp/面试材料/campus-hub",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "规则1：scene_id=sc0036 → 前缀 campus-hub，8 个 campus-hub 场景的 cwds 全部是该目录。v1 判 subtree，二值化后改判 self：内容是「campus-hub 是一个让 Agent 能自己投递简历的本地校招工作台 server + 规划记录放在 plan/campus-hub/」，这是关于 campus-hub 这一个项目的事实，换个别的项目这句话不成立 ⇒ self。"
+    },
+    {
+      "id": "l1_1790006300003_j6s2",
+      "layer": 1,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "【争议点一，我独立判断：同意 global，与你倾向一致】scene_id=sc0038 前缀是 campus-hub、cwd 也在 campus-hub，但正文讲的是 ~/.gitconfig 里配错的 user.email 并明说「作者与提交者都写成错的，影响所有仓库」，外加 core.autocrlf 来自 C:/dev/env/git。按「换个项目还成立吗」：在任何仓库里这条都成立、都是必须先修的 ⇒ global，project 置空。判 global 的实际依据不是「我信正文不信 scene」，而是我实测过 6 个「协作规范」场景的 cwds 横跨 4 个目录——前缀体系本身就混着跨项目约定和真项目，sc0038 把一条全局环境配置收进 campus-hub 属于分错场景。**顺带一条不在标签范围内但更该修的建议：这条的场景归属本身就是错的，应该移出 sc0038「新场景=归属正确」这个假设，否则任何以 scene_id 为强特征的管线都会稳定复现这个错误。** flagSuspect=true 因为 scene 与 cwd 两个表层信号都明确指向 campus-hub。"
+    },
+    {
+      "id": "l1_1789816600006_f6c6",
+      "layer": 1,
+      "derivedBy": "scene_id",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": false,
+      "reason": "规则1：scene_id=sc0010 → 前缀「协作规范」。我实测过这 6 个场景条目的 cwds 横跨 C:\\Users\\leaf\\.pi / C:\\dev\\code\\xianhua / C:\\dev\\code_java\\wangxin / campus-hub 四个目录——它不是项目名而是跨项目约定分类，所以规则1 在这里的正确用法是「取到前缀后判定为伪项目 ⇒ project 置空」。内容是核验子代理 run 的通用纪律（读 session.jsonl 逐条对工具调用配对、验收闭合、自述残余风险量化），换个项目照样成立 ⇒ global。"
+    },
+    {
+      "id": "l1_1789817060005_t3q6",
+      "layer": 1,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "【我不同意你给的那个提示，明确说清】你在括注里说「讲 MCP 配置加载的那本来就该归 pi-agent 而不是 pi-0.80.10」。按二值判据这条是 global、project 留空，不该归任何项目，理由有实测证据：l1_1790006200001_w2x5 这条记录明写 MCP 配置文件的真实路径是 C:\\Users\\leaf\\.pi\\agent\\mcp.json（profile 级，不在 pi 源码仓里），正文给的排查动作是「比对 mcp.json 修改时间与会话启动时间」——换到任何项目，只要这个项目要用 MCP，同一条排查步骤都成立 ⇒ 成立 ⇒ global。如果哪天真要给它 project，我同意你的粒度直觉（pi-agent 这一层比 pi-0.80.10 这个版本目录更像项目身份，因为版本目录会随升级变），但那与「scope=global 时 project 必须为空」的契约不兼容，二者不能同时要。v1 判 subtree 正是「挂上层路径」那套逻辑的产物，二值化后无处安放，按判据落到 global。"
+    },
+    {
+      "id": "l1_1787017600003_jsonl_fix",
+      "layer": 2,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "scene_name「pi-agent 记忆系统 L1/L2 注入位置与 JSONL 隔离机制」同时点到两个项目，但正文点名 memory-system/index.ts 的 structuredClone 注入链路 ⇒ 取 memory-system。换个项目没有这条注入链路 ⇒ self。flagSuspect=true：cwd=C:\\dev\\ide\\pi-agent\\pi-0.80.10（该路径 114 条里大半其实是 memory-system 的记忆，因为扩展装在 .pi 而会话在 pi 源码仓跑），是个会稳定把答案带偏的强表层信号。"
+    },
+    {
+      "id": "l1_1756100000104_j9k0",
+      "layer": 2,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "scene_name「pi-agent 记忆系统扩展」字面先点到 pi-agent，但正文说的是 memory-system 扩展里 L1/L2/L3 子代理经 pi-subagents 的 runPiSubagent 调起、不走 memory-system-model.json ⇒ 工作对象是 memory-system，pi-agent 是宿主。换项目不成立 ⇒ self。v1 判 subtree 只是因为它同时覆盖 L1/L2/L3 三个模块，二值判据不关心这个。flagSuspect=true：scene_name 首个命中的就是错的（pi-agent），子串匹配器必错。"
+    },
+    {
+      "id": "l1_1789097476492_5wjk",
+      "layer": 2,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "scene_name 命中 memory-system，正文是 memory-system-model.json 里的 llm / embedding 两条配置（2026-09-11 审计补注已收束进 application-propertis.json 的 model 节），与 pi-agent 无关。具体到一个配置文件、换项目不成立 ⇒ self。flagSuspect=true：与 l1_1756100000104_j9k0 同场景名、同 cwd（pi-0.80.10），两个表层信号都错。"
+    },
+    {
+      "id": "l1_1787212758001_a1b2",
+      "layer": 2,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "scene_name「pi-agent memory-system 清洗管线勘误」并排点到两个项目，正文只讲 L0 同日 YYYY-MM-DD 合并分片与 skill-feed 全局列导致的跨 session 回溯 ⇒ 主线是 memory-system，pi-agent 仅作宿主被提及。这次裁决（L0 保持日分片不变）换个项目不成立 ⇒ self。flagSuspect=true：两个项目名并排、无先后语义，纯子串匹配无法定序。"
+    },
+    {
+      "id": "l1_1789097476492_iucd",
+      "layer": 2,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "与上一条同场景名。正文只给出一个 memory-system 内的计划文档路径 plan/memory-system/memory/L0_SESSION_SHARD_PLAN.md（版本 8c31f38），路径本身已把归属钉死 ⇒ memory-system。具体一份计划文档、换个项目不成立 ⇒ self。flagSuspect=true：同上，并排双项目名。"
+    },
+    {
+      "id": "l1_1787278230000_d5e6",
+      "layer": 2,
+      "derivedBy": "content_path",
+      "project": "C:/dev/code_java/wangxin/frontend/A104525",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "v1 标了 null，理由是 A104525 不在那 7 个场景前缀里；新清单收录了它，重新解出。正文只给了文件名 electronic.vue，单独不足以定项目，我用跨记录交叉验证确定归属：l1_1789097476492_m118 明写「A104525 electronic.vue 中 OCR 原文按钮被 v-if=ocrFullText 控制」，l1_1787296800003_meth3_fix 把 electronic.vue 列为 A104525 前端 5 个合同业务文件之一，l1_1789097476492_rt83 还点明 A104525 是 PC 端（src/views/ 结构）而 A104489 才是 uni-app 小程序端（src/pages/）——三条互相印证 ⇒ A104525。页面改造换项目不成立 ⇒ self。scene_name / 正文本身都不含项目名，所以标了 content_path 而非 scene_name_substr。"
+    },
+    {
+      "id": "l1_1789023100001_a1b2",
+      "layer": 2,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/dev/code_java/wangxin/backend/A104527",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "v1 标了 null，理由同上（清单只到「wangxin多仓」这一级）。scene_name 直接写了「在 A104527 仓库上排查 git push 失败冲突」，新清单收录了 C:\\dev\\code_java\\wangxin\\backend\\A104527，正文也全在 A104527 这一个仓内（application-security.yml 免登白名单、master_jyw 分支、提交号 32d25c5c / 7fdd5582 / ea8f246a / cd244770）⇒ A104527。一次具体 push 排障换项目不成立 ⇒ self。scene / cwd / 正文三方一致，不可疑。"
+    },
+    {
+      "id": "l1_1789097476492_7sm8",
+      "layer": 2,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "scene_name 挂在「A104527 仓库核查未提交变更并清理空 stash」下、cwd 也在 A104527，但正文只有一条零项目内容的 git 技巧（2-parent 结构无 index 快照的 stash，用 stash 的 HEAD 基线对比 worktree 快照，无差异即为空 stash 可安全 drop）——这条在任何仓库都成立、都是对的 ⇒ global，project 置空，derivedBy 记 no_match（scene 命中的 A104527 被正文否定）。flagSuspect=true：scene 与 cwd 一致地指向 A104527，正是最容易被判成 self 的一类。"
+    },
+    {
+      "id": "l1_1789450316142_9352",
+      "layer": 2,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "scene_name 命中 xianhua、cwd 也在 xianhua，但正文（heredoc 追加长文本被静默截断且不报错、正确做法是先 write 临时文件再 cat、追加后做花括号配平自检）与 xianhua 毫无关系，是环境级 shell 陷阱；跨记录也能佐证：l1_1790578400009_c9e6「协作规范｜命令行工具陷阱」（metadata.merged_from 含本条的来源 id）把同类内容合并成了一条协作规范记忆 ⇒ xianhua 被正文否定 ⇒ global。flagSuspect=true：scene 与 cwd 两个信号都指向 xianhua，是「被 session/cwd 带跑」的标准样本。"
+    },
+    {
+      "id": "l1_1789105000005_x9yc",
+      "layer": 2,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "scene_name 点名 memory-system L1 记忆治理，正文讲 l1_commit 追加墓碑行删不掉旧活跃行、loader 需改按 id 追加序 LWW 判定、向量召回走 loadL1RecordById 首匹配 ⇒ memory-system，换项目不存在这套删除语义 ⇒ self。scene / cwd（.pi 是扩展所在目录）/ 正文三方一致，不可疑。"
+    },
+    {
+      "id": "l1_1790578400009_c9e6",
+      "layer": 3,
+      "derivedBy": "scene_id",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": false,
+      "reason": "规则1：scene_id=sc0047 → 前缀「协作规范」，同 f6c6 我已实测这批场景 cwds 横跨 4 个目录，不是项目。正文是 bash 内联脚本被 shell 语义破坏的通用禁忌（含反斜杠的 Windows 路径被当转义、node -e 里反引号被当命令替换并吃空写入内容、heredoc 静默截断）——换任何项目、在任何 shell 上都成立 ⇒ global。"
+    },
+    {
+      "id": "l1_1790043320112_h9c3",
+      "layer": 3,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "scene_id=sc0043 命中 campus-hub、cwd 也在 campus-hub，但正文是 DOM 规范层面的通用陷阱（表单回调里 await 之后 event.currentTarget 已置 null，应在同步阶段先把表单元素和值取出来），campus-hub「保存新版本」只是被举证的实例 ⇒ 否掉 campus-hub。换个项目写浏览器表单照样成立 ⇒ global。flagSuspect=true：scene 与 cwd 一致地指向 campus-hub。"
+    },
+    {
+      "id": "l1_1790579100006_p6f6",
+      "layer": 3,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "scene_id=sc0004 命中 xianhua、cwd 也在 xianhua，但正文是 agent 的回答纪律（不能只凭代码里有开关逻辑就断言某 UI 能力可用，必须实际打开页面操作一次；UI 行为类结论一律以实测为准），xianhua 只是被举证的例子（面板被 display:none !important 藏死）⇒ 否掉 xianhua。这条纪律对任何项目、任何 agent 都成立 ⇒ global。flagSuspect=true：scene 与 cwd 一致地指向 xianhua。"
+    },
+    {
+      "id": "l1_1790481300000_2w6z",
+      "layer": 3,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "scene_id=sc0045 命中 xianhua、cwd 也在 xianhua，但正文把规则表述成通用形态且与 24h 曝光业务解耦：「用 Redis 存带时效的数据时，TTL 起算点必须与业务有效期起算点对齐，EXPIRE 从命令执行时刻起算会按自然日分桶整桶提前过期，正确做法是按到期日分桶 + EXPIREAT 到该日 24:00，读时合并今天桶与明天桶」——任何用 Redis 做时效数据的项目都成立 ⇒ global。v1 曾怀疑它只对 xianhua 推送曝光有效而犹豫（本轮已消解）：不成立的前提是「只在 xianhua 为真」，而正文明写的是一般性规则。flagSuspect=true：scene 与 cwd 一致地指向 xianhua。"
+    },
+    {
+      "id": "l1_1789837900005_r8c4",
+      "layer": 3,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "【争议点二，我的解法如下】scope=global、project 置空：正文以「用户要求」开头、约束面是「改完任何 .ts」，是标准的跨项目个人习惯。关于「global + project:\"\" 表达不了全局规则却带项目专属参数」这个遗留问题，我的判断是**它根本不是标签问题，是 content 的主语写歪了，而且解法是改 content 不是加字段**。三条理由与具体动作：(1) 语义上，project 回答的是「这条记忆在哪些会话里算本地事实」，不回答「正文里提到了哪个路径」——正文里那条相对路径是这条规则的**举例**，不是这条规则的作用域；把举例提升成结构化字段，等于给一个会被重写的句子建了个索引。(2) 机制上，projectForScope(\"global\", x) 已经在契约层保证 global 一定不带 project，global 记忆召回时不做项目过滤，正文里的相对路径由 agent 自己 resolve——它知道自己在哪个仓，`agent/extensions/memory-system/scripts/check-types.mjs` 从 .pi 根能直接找到。真正会出事的是「注入后原样执行一条不存在的命令」，而那不是任何标签能管的事。(3) 归因上，用户当初是在 memory-system 项目里说的这句话，他真实的约束对象是 memory-system 的 .ts，「任何 .ts」是记忆提取时的主语泛化。**最小改动是把 content 改成「改完本仓任何 .ts 必须跑类型检查门禁（本仓门禁脚本：node agent/extensions/memory-system/scripts/check-types.mjs）」**——一句话解决，且不用动 schema。如果哪天真需要机器可用的「这条 global 记忆依赖哪个项目」，那才值得加字段，但现在没有证据表明需要，我不建议预先加。flagSuspect=true：scene_id（sc0025 memory-system）与旧 metadata.scope=\"user\" 两边都不指向 global，模型很可能判成 memory-system + self。"
+    },
+    {
+      "id": "l1_1787000001234_c3d4",
+      "layer": 3,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "scene_name 命中 wangxin、cwd 却是 C:\\Users\\leaf\\.pi（已在提 plan-execute skill 的地方，不是任何项目仓）。正文是「plan 目录归置的同主题优先原则」（同一功能主题的多个 PLAN 整个主题目录整体移动，不因单个 PLAN 只涉及单项目而拆散；判断归属先看主题再看单文件），且已写进 plan-execute skill —— 那是对所有项目生效的归档约定，换项目同样成立 ⇒ global，wangxin（sensitive-word/IMPORT_PERF_PLAN.md）只是被举例的主题 ⇒ 否掉。flagSuspect=true：scene_name 明确点到 wangxin，是纯子串匹配必错的样本。"
+    },
+    {
+      "id": "l1_1790042635009_b6v2",
+      "layer": 3,
+      "derivedBy": "scene_id",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "【本轮 30 条里我还拿不准的一条】规则1：scene_id=sc0010 → 前缀「协作规范」，非项目 ⇒ project 置空。正文前半是通用编排原则（批量核验队列时子代理只承担浏览器核验、领取/落库/结单由主会话统一，避免 N 个子代理各开 MCP 写同一份状态），后半是 campus-hub 22 条任务的具体实操（2 条 auth_check + 20 条 url_review、租约 30 分钟、先领 2-5 条跑通链路再放量）。我按「拿不准时的默认」选 global（因为 scene 明确归到跨项目约定，且前半的规则句才是这条记忆的复用意图），**但拿不准**：如果判据是「整条记忆换个项目还成立吗」，后半那半句显然不成立，那它就该是 campus-hub + self。这条正好卡在「一条记忆同时是通用规则和某项目的一次执行记录」的缝隙上，是二值化之后残留的唯一一类真疑难。flagSuspect=true：scene（协作规范）/ cwd（campus-hub）/ 正文（两者都有）三方打架。"
+    },
+    {
+      "id": "l1_1789097476492_lcmo",
+      "layer": 4,
+      "derivedBy": "scene_name_substr",
+      "project": "C:/dev/code_java/wangxin/frontend/A104525",
+      "scope": "self",
+      "flagSuspect": false,
+      "reason": "v1 标了 null（当时清单只到「wangxin多仓」这一级），新清单收录 A104525，重新解出：scene_name 直接写「团队在围绕 A104525 合同变更业务规则与状态机设计推进前端实现」，cwd 同为 A104525，正文给到 index.vue:686-689 的 canStartChild(row) 一个页面的一个函数 ⇒ A104525，换项目不成立 ⇒ self。注意旧 metadata.scope=\"A104525\" 是「项目名被误填进 scope」的典型，本条纯属碰巧对上，**回填器不能拿旧 scope 当项目证据**（同层的 l1_1789097476492_3rj2 旧 scope=\"frontend\" 就与项目无关）。三方一致，不可疑。"
+    },
+    {
+      "id": "l1_1789097476492_ifvg",
+      "layer": 4,
+      "derivedBy": "no_match",
+      "project": "",
+      "scope": "global",
+      "flagSuspect": true,
+      "reason": "【本轮 30 条里我还拿不准的第二条】v1 判 pi-agent + self，现在改判 global + 空 project。改判依据是跨记录实测：l1_1787190100001_a1b2 与 l1_1787198510001_a1b2 显示 models.json / settings.json 是「pi 的官方用户配置入口」且都在 C:\\Users\\leaf\\.pi 下，不在 pi 源码仓里；正文讲的是 Clash Verge 系统代理与 pi 的 httpProxy 是否叠加、pi 的 Node 进程用 undici ProxyAgent 不读系统代理。这套配置对任何项目都一样、都是必须先配好的 ⇒ 成立 ⇒ global。**拿不准**：另一种读法是「这条记忆描述的对象就躺在 C:\\Users\\leaf\\.pi 这个目录里」，按 isNotAProjectPath 的口径 .pi 是合法项目路径、也在 listKnownProjects() 里，判 self + C:/Users/leaf/.pi 同样有依据（但会把 78 条 .pi 会话的记忆都归到 .pi，而 .pi 下还有 context-mode-plus / permission-gate 两个同级扩展）。我选 global 的理由是判据问的是「换个项目还成立吗」而不是「对象住在哪」。flagSuspect=true：scene_name 明确写 pi-agent、旧 metadata.scope 也是 pi-agent，两个表层信号一致地指向 pi-agent。"
+    },
+    {
+      "id": "l1_1789097476492_3rj2",
+      "layer": 4,
+      "derivedBy": "content_path",
+      "project": "C:/dev/code_java/wangxin/frontend/A104489",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "v1 标了 null（当时分不清是 A104489 毕业生端还是别的子仓），现在解出。正文只给了文件名 imTeacher.vue，scene_name 只说「uni-app 毕业生小程序」、cwd 只到 C:\\dev\\code_java\\wangxin 根，三个单独都不足以定项目；用跨记录交叉验证：l1_1789097476492_6ca3 / _jaej / _7ze1 三条的 cwd 都是 C:\\dev\\code_java\\wangxin\\frontend\\A104489 且正文点名 imTeacher.vue 与其注册路径 /pages/business/ecosystem/bus/guide/imTeacher（src/pages/ 是 uni-app 标准结构），再对上 l1_1789097476492_rt83「frontend/A104489 是 uni-app 微信小程序端…区别于 PC 端 A104525」⇒ A104489。待适配的页面任务换项目不成立 ⇒ self。flagSuspect=true：本条必须跨记录交叉验证才能定，纯本记录证据（scene_name / content / cwd 三处）全都指不到具体子仓——**这正是「模型裁决能不能救回来」的典型考题**。旧 metadata.scope=\"frontend\" 是技术分类被误填进 scope，不构成线索。"
+    },
+    {
+      "id": "l1_1789097476492_6dt9",
+      "layer": 4,
+      "derivedBy": "content_path",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "v1 标了 null（正文只出现 L0/L1、l1/read-tool.ts:25/91/119、buildL1Task 等内部符号，7 个场景前缀一个都没命中）。新证据：正文点名 l1/read-tool.ts 与 buildL1Task，这两个符号只在 memory-system 扩展里存在（C:/Users/leaf/.pi/agent/extensions/memory-system/memory/l1/）⇒ memory-system。v1 reason 里说的「匹配不上但答案可从文件路径恢复」就是这一条，现在恢复出来了。勘误「已验证同项目继承/异项目切分无污染」不成立、修复后首个复用率 0/7，换项目不成立 ⇒ self。flagSuspect=true：cwd=C:\\dev\\ide\\pi-agent\\pi-0.80.10 与 scene_name（无项目名）都不指向 memory-system，只有正文里那个文件路径能定归属。"
+    },
+    {
+      "id": "l1_1789107095799_g8x1",
+      "layer": 4,
+      "derivedBy": "no_match",
+      "project": "C:/Users/leaf/.pi/agent/extensions/memory-system",
+      "scope": "self",
+      "flagSuspect": true,
+      "reason": "【本轮 30 条里我还拿不准的第三条】v1 判 subtree，二值化后改判 self：内容是对 L0-L3 的适配评估结论（L0 对话归档有价值、L1 的 7 类分类/质量评分/向量化/去重对个人开发者过度工程化、L2 的 15 场景上限与 CREATE/UPDATE/MERGE 过重、L3 价值最低），判据全落在**这个实现**上（maxScenes 仍 15、quality 全量、heat 全链路、Jaccard duplicate-check 0.5/0.8）——换个项目这套评估不成立 ⇒ self。derivedBy 记 no_match 是因为 scene_name 与 content 都没点名 7 个或新清单里的任何项目，只用「Agent Memory L1-L3」这个别称，归属是靠正文里的内部机制符号判出来的。**拿不准**：若按「对个人开发者的取舍建议」这条读，它是一条跨项目的设计取向（任何个人开发者的任何记忆方案都适用），那就该是 global + 空 project。我选 self 是因为正文举的全是 memory-system 的具体实现细节。flagSuspect=true：项目名只以别称出现、cwd 是 profile 目录 C:\\Users\\leaf\\.pi\\agent\\profiles\\default（既不是已知项目也指不到具体扩展）。"
+    }
+  ]
+}

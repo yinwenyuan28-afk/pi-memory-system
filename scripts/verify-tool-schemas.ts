@@ -10,7 +10,11 @@
 // 本脚本的做法：用一个假 pi 调扩展入口，拿到**经包装器归一化之后**的最终 schema
 //（= 真正发给 provider 的东西），逐条校验。这是唯一能在本地复现该类问题的入口。
 //
-// 用 tsx 跑（package.json 是 commonjs，顶层 await 不可用）：tsx scripts/verify-tool-schemas.ts
+// 用 tsx 跑（package.json 是 commonjs，顶层 await 不可用）：
+//   C:/dev/ide/pi-agent/pi-0.80.10/node_modules/.bin/tsx --conditions=import scripts/verify-tool-schemas.ts
+// ⚠ `--conditions=import` 不能少（2026-09-30 实测）：本脚本 import 扩展入口 → config/model-config.ts
+//   **静态** import `@earendil-works/pi-ai/compat`，而该包的 exports 只声明了 import 条件
+//   （没有 require），少了就报 `ERR_PACKAGE_PATH_NOT_EXPORTED: './compat'`。
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import extension from "../index.ts";

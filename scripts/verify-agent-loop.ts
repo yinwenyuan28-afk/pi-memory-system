@@ -8,7 +8,10 @@
 // 用 pi-ai 自带的 faux provider 构造可控响应，全部离线可复现。
 //
 // 用 tsx 跑（package.json 是 commonjs，顶层 await 不可用）：
-//   C:/dev/ide/pi-agent/pi-0.80.10/node_modules/.bin/tsx scripts/verify-agent-loop.ts
+//   C:/dev/ide/pi-agent/pi-0.80.10/node_modules/.bin/tsx --conditions=import scripts/verify-agent-loop.ts
+// ⚠ `--conditions=import` 不能少（2026-09-30 实测）：本文件**直接** import
+//   `@earendil-works/pi-ai/compat`，而该包的 exports 只声明了 import 条件（没有 require），
+//   少了就报 `ERR_PACKAGE_PATH_NOT_EXPORTED: './compat'`。
 import {
 	type FauxProviderRegistration,
 	fauxAssistantMessage,

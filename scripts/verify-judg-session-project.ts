@@ -3,7 +3,10 @@
 // verify-judg-session-project.ts — 会话级项目归属判定 回归基线
 //
 // 用法（本仓 `.ts` 不能用 `node` 直接跑，见 verify-l1-scene-pool.ts 头注）：
-//   C:/dev/ide/pi-agent/pi-0.80.10/node_modules/.bin/tsx scripts/verify-judg-session-project.ts
+//   C:/dev/ide/pi-agent/pi-0.80.10/node_modules/.bin/tsx --conditions=import scripts/verify-judg-session-project.ts
+// ⚠ `--conditions=import` 不能少（2026-09-30 实测）：本脚本 import `judg-session-project/llm.ts`
+//   → **静态** import `@earendil-works/pi-ai/compat`，而该包的 exports 只声明了 import 条件
+//   （没有 require），少了就报 `ERR_PACKAGE_PATH_NOT_EXPORTED: './compat'`。
 //
 // 覆盖（对应计划任务 9b 的 15 条）：
 //   A. 读写层：原子写 / 归一化 / 拒收非法值 / 读损坏不覆盖 / 建条目不覆盖 / evidence 截断
@@ -12,7 +15,8 @@
 //   D. LLM 响应解析：正常 / unknown / content 空串 / 截断兜底 / 没 project / 围栏
 //   E. isUnder：等于 / 在其下 / 兄弟目录 / 斜杠与大小写归一
 //   F. 静态断言：挂点在 PI_SUBAGENT_CHILD 守卫之后；maxTokens 不得被改小
-//   G. 端到端：l1_commit 两条路径的 cwd 与 projectSource
+//   G. 端到端：l1_commit 两条路径的 cwd 与 metadata.project / projectSource
+//      （2026-09-30 起：cwd 保持「会话工作台」语义、**永不被改写成项目**；项目只进 metadata.project）
 //
 // 铁律：**只用临时目录**，绝不碰真实 profile。
 // ============================================================================
@@ -403,30 +407,41 @@ console.log("\n=== G. 端到端：l1_commit 两条路径 ===");
 		}
 		return out;
 	}
+	// ── 以下 G1/G2/G3/G5 测的是 **2026-09-30 撤回后的新契约** ──
+	//   `r.cwd` = 会话工作台（原样保留子代理自填值，缺字段/空串时才兜底填 ctx.cwd，**永不被改写成项目**）
+	//   `r.metadata.project` = 会话判定出的项目（flag:true 用判定值，否则空串）
+	//   `r.metadata.projectSource` = 判定来源
+	// 为什么 cwd 不许承载项目：`scene-pool.ts` 的 `addCwd(entry, r.cwd)` 会把它塞进 `entry.cwds`，
+	// 而排序侧 `rankCwd` 拿 `entry.cwds` 去比 `batchCwd`（= L0 消息 cwd 众数 = **会话工作台**）。
+	// 写侧塞项目、读侧比工作台 ⇒「同 cwd 优先」对所有新记录永不命中。项目归属走 metadata.project 正路。
+
 	// G1 subagent + flag:true（decidedBy=llm）
 	const g1 = tempProfile();
 	upsertSessionJudg(g1, "sk1", { project: "C:/dev/proj", flag: true, decidedBy: "llm", confidence: 0.9, evidence: [{ path: "C:/dev/proj", filesTouched: 5 }] });
-	await commitIn(g1, { cursor: "2026-09-30T00:00:00.000Z", records: [{ content: "G1", type: "work_fact", sessionKey: "sk1", cwd: "C:/LLM瞎填的" }] });
+	await commitIn(g1, { cursor: "2026-09-30T00:00:00.000Z", records: [{ content: "G1", type: "work_fact", sessionKey: "sk1", cwd: "C:/LLM瞎填的", metadata: { scope: "self" } }] });
 	const r1 = readRecs(g1).find((r) => r.content === "G1");
-	check("G1 subagent：cwd 取判定值（覆盖 LLM 传值）", r1?.cwd === "C:/dev/proj", String(r1?.cwd));
+	check("G1 subagent：cwd 原样保留自填值（永不被改写成项目）", r1?.cwd === "C:/LLM瞎填的", String(r1?.cwd));
+	check("G1 subagent：判定出的项目落进 metadata.project", (r1?.metadata as Record<string, unknown>)?.project === "C:/dev/proj", JSON.stringify(r1?.metadata));
 	check("G1 subagent：projectSource=llm", (r1?.metadata as Record<string, unknown>)?.projectSource === "llm", JSON.stringify(r1?.metadata));
 
-	// G2 subagent + flag:false → 退回 ctx.cwd（B7 风格：启动工作台）
+	// G2 subagent + flag:false → 判定不可用：project 写空串，**cwd 仍原样保留**（不退回 ctx.cwd）
 	const g2 = tempProfile();
 	upsertSessionJudg(g2, "sk2", { project: "C:/dev/占位", flag: false, decidedBy: "llm", confidence: 0.1, evidence: [{ path: "C:/dev/占位", filesTouched: 1 }] });
 	await commitIn(g2, { cursor: "2026-09-30T00:00:00.000Z", records: [{ content: "G2", type: "work_fact", sessionKey: "sk2", cwd: "C:/LLM瞎填的" }] });
 	const r2 = readRecs(g2).find((r) => r.content === "G2");
-	check("G2 flag:false → 退回 ctx.cwd，不留空", r2?.cwd === "C:\\workbench", String(r2?.cwd));
+	check("G2 flag:false → cwd 仍原样保留（判定不可用也不动 cwd）", r2?.cwd === "C:/LLM瞎填的", String(r2?.cwd));
+	check("G2 flag:false → metadata.project 为空串（占位 project 不取）", (r2?.metadata as Record<string, unknown>)?.project === "", JSON.stringify(r2?.metadata?.project));
 	check("G2 flag:false → projectSource=fallback", (r2?.metadata as Record<string, unknown>)?.projectSource === "fallback", JSON.stringify(r2?.metadata));
 
-	// G3 main-agent 路径同样走覆写。
+	// G3 main-agent 路径走同一套：**cwd 由 main-agent 补齐块先填成 ctx.cwd**，之后项目段只加 metadata 两键。
 	// ⚠ main-agent 的 sessionKey 由服务端从 ctx 派生（`C:/x/sess.jsonl` → `sess`），
 	//   子代理路径才是记录自带 —— 两条路径的键来源不同，这里各建一条对应条目。
 	const g3 = tempProfile();
 	upsertSessionJudg(g3, "sess", { project: "C:/dev/main路径", flag: true, decidedBy: "manual", confidence: 0.7, evidence: [{ path: "C:/dev/main路径", filesTouched: 2 }] });
-	await commitIn(g3, { source: "main-agent", records: [{ content: "G3", type: "work_fact" }] });
+	await commitIn(g3, { source: "main-agent", records: [{ content: "G3", type: "work_fact", metadata: { scope: "self" } }] });
 	const r3 = readRecs(g3).find((r) => r.content === "G3");
-	check("G3 main-agent：也走同一套覆写", r3?.cwd === "C:/dev/main路径", String(r3?.cwd));
+	check("G3 main-agent：cwd 保持会话工作台（ctx.cwd），不被判定值盖掉", r3?.cwd === "C:\\workbench", String(r3?.cwd));
+	check("G3 main-agent：判定值同样只进 metadata.project", (r3?.metadata as Record<string, unknown>)?.project === "C:/dev/main路径", JSON.stringify(r3?.metadata));
 	check("G3 main-agent：projectSource=manual", (r3?.metadata as Record<string, unknown>)?.projectSource === "manual", JSON.stringify(r3?.metadata));
 
 	// G4 墓碑行不改 cwd（不改写历史行的归属）
@@ -444,11 +459,24 @@ console.log("\n=== G. 端到端：l1_commit 两条路径 ===");
 	const last4 = rows4[rows4.length - 1];
 	check("G4 墓碑行保留原 cwd（不按新语义改写历史归属）", last4?.cwd === "C:/老归属", JSON.stringify(rows4.map((r) => r.cwd)));
 
-	// G5 无条目 + 空 sessionKey（B7）→ fallback，不抛
+	// G5 无条目 + 空 sessionKey（B7）→ project 走空串 + projectSource=fallback，**不抛**，cwd 不动
 	const g5 = tempProfile();
 	await commitIn(g5, { cursor: "2026-09-30T00:00:00.000Z", records: [{ content: "G5", type: "work_fact", cwd: "C:/瞎填" }] });
 	const r5 = readRecs(g5).find((r) => r.content === "G5");
-	check("G5 空 sessionKey → fallback，不抛", r5?.cwd === "C:\\workbench", String(r5?.cwd));
+	check("G5 空 sessionKey → 提交成功且不抛（记录已落盘）", !!r5, JSON.stringify(readRecs(g5).map((r) => r.content)));
+	check("G5 空 sessionKey → cwd 原样保留自填值", r5?.cwd === "C:/瞎填", String(r5?.cwd));
+	check("G5 空 sessionKey → project 空串 + projectSource=fallback", (r5?.metadata as Record<string, unknown>)?.project === "" && (r5?.metadata as Record<string, unknown>)?.projectSource === "fallback", JSON.stringify(r5?.metadata));
+
+	// G6 cwd 兜底：**只在缺字段或空串时**填会话工作台（这是撤回覆写后 cwd 唯一的兜底规则）
+	// ⚠ 两条记录必须各带 id：子代理路径**不像 main-agent 那样服务端生成 id**，
+	//   缺 id 的第二条会被「同 id 重投跳过」静默丢掉（`existingIds` 已含 undefined）。
+	const g6 = tempProfile();
+	await commitIn(g6, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_aaaa", content: "G6缺字段", type: "work_fact" }, { id: "l1_1_bbbb", content: "G6空串", type: "work_fact", cwd: "" }] });
+	const recs6 = readRecs(g6);
+	const g6a = recs6.find((r) => r.content === "G6缺字段");
+	const g6b = recs6.find((r) => r.content === "G6空串");
+	check("G6 cwd 缺字段 → 兜底填 ctx.cwd", g6a?.cwd === "C:\\workbench", String(g6a?.cwd));
+	check("G6 cwd 传空串 → 同样兜底填 ctx.cwd（不留空）", g6b?.cwd === "C:\\workbench", String(g6b?.cwd));
 }
 
 // ══════════════════════════════════════════════════════════════
