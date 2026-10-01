@@ -1,9 +1,21 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spliceJsonKey } from "../../util/json-edit.ts";
 import { DEFAULT_PROFILE, PROFILES_DIR_NAME, type Profile } from "./types.ts";
 
 const PROFILES_DIR = PROFILES_DIR_NAME;
 const SETTINGS_FILE = "settings.json";
+
+/**
+ * 激活 profile 在宿主 settings.json 里的位置（点号路径，见 util/json-edit）。
+ *
+ * 为什么挂在自己的命名空间下而不是裸的顶层 `activeProfile`：
+ * settings.json 是宿主拥有的文件，顶层键是它的命名空间，我们只占其中一个。
+ * `memorySystem` 一眼能看出这段不是宿主写的，将来要整个摘掉也只需去掉一个对象，
+ * 不会和宿主将来可能新增的同名键静默互相覆盖。
+ */
+const ACTIVE_PROFILE_KEY = "memorySystem.activeProfile";
 
 /**
  * ProfileManager — manages multiple isolated memory profiles.
@@ -73,8 +85,19 @@ export class ProfileManager {
 		if (!existsSync(path)) {
 			this.ensureProfileStructure(path);
 		}
+		const prev = this.activeProfile;
 		this.activeProfile = name;
-		this.writeActiveProfile(name);
+		try {
+			this.writeActiveProfile(name);
+		} catch (e) {
+			// 写盘失败必须回滚内存：否则会话里用的是新 profile、磁盘上却是旧的，
+			// 重启后静默变回去，用户全程看不到任何提示 —— 这正是原实现「catch 吞掉 +
+			// 先改内存后写盘」组合出来的假成功。
+			this.activeProfile = prev;
+			throw new Error(
+				`切换 profile 失败（仍保持 '${prev}'）: ${e instanceof Error ? e.message : String(e)}`
+			);
+		}
 		return { name, path };
 	}
 
@@ -131,10 +154,14 @@ export class ProfileManager {
 			const settingsPath = join(this.baseDir, "..", SETTINGS_FILE);
 			if (existsSync(settingsPath)) {
 				const raw = readFileSync(settingsPath, "utf-8");
-				const settings = JSON.parse(raw);
-				if (settings.activeProfile && typeof settings.activeProfile === "string") {
-					return settings.activeProfile;
-				}
+				const settings = JSON.parse(raw) as Record<string, unknown>;
+				const ns = settings?.memorySystem as Record<string, unknown> | undefined;
+				const cur = ns?.activeProfile;
+				if (typeof cur === "string" && cur) return cur;
+				// 旧版写的是顶层 activeProfile（2026-10-01 之前）。只读兼容，不再写回 ——
+				// 下一次 switch 会把值搬到命名空间下，顶层那个键由用户自行清理。
+				const legacy = settings?.activeProfile;
+				if (typeof legacy === "string" && legacy) return legacy;
 			}
 		} catch {
 			// ignore — fall back to default
@@ -142,19 +169,101 @@ export class ProfileManager {
 		return DEFAULT_PROFILE;
 	}
 
+	/**
+	 * 把激活 profile 写进宿主 settings.json。
+	 *
+	 * 这个文件**有别的写者**（宿主的 settings-manager，改主题/模型/装包时都会重写它），
+	 * 所以三条约束缺一不可（STANDALONE_RELEASE_PLAN P1-6）：
+	 *
+	 * 1. **定点编辑**：只替换 `memorySystem.activeProfile` 那一个值，文件其余字节不动。
+	 *    不做 parse→stringify 全量往返 —— 那样等于拿旧快照盖掉整个文件，会把并发写者的
+	 *    改动抹掉，也会把不认识的键重新排版一遍。
+	 * 2. **原子写**：tmp → rename。`writeFileSync` 是「截断 → 重写」，并发读者可能读到半截
+	 *    JSON；宿主读失败会记 `globalSettingsLoadError`，之后 `save()` 直接 early-return
+	 *    —— 一次写坏 = 整个会话的配置写入静默失效。
+	 * 3. **写后校验 + 重试**：我们和宿主之间没有共享锁（不引 `proper-lockfile` 的理由见计划：
+	 *    为一个键加运行时依赖不划算，而锁实现有 bug 或崩溃留陈旧锁会**阻塞宿主写配置**）。
+	 *    写完立刻重读确认自己的值还在；不在 = 这期间被别人覆盖了，重来。
+	 *
+	 * 失败一律抛出，**不再 best-effort 静默吞掉** —— 调用方 switchProfile 靠它回滚内存。
+	 */
 	private writeActiveProfile(name: string): void {
-		try {
-			const settingsPath = join(this.baseDir, "..", SETTINGS_FILE);
-			let settings: Record<string, unknown> = {};
-			if (existsSync(settingsPath)) {
-				const raw = readFileSync(settingsPath, "utf-8");
-				settings = JSON.parse(raw);
+		const settingsPath = join(this.baseDir, "..", SETTINGS_FILE);
+		const rawValue = JSON.stringify(name);
+		let lastErr: unknown = null;
+
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				// 宿主容忍空 settings.json（它把空当 {}），我们也得能往里写
+				const before = existsSync(settingsPath) ? readFileSync(settingsPath, "utf-8") : "";
+				const base = before.trim() ? before : "{}";
+
+				// 幂等：值已经对得上就不动文件，省掉一次整文件改名
+				if (this.readActiveProfileKey(base) === name) return;
+
+				const spliced = spliceJsonKey(base, ACTIVE_PROFILE_KEY, rawValue);
+				this.atomicWrite(settingsPath, spliced.text);
+
+				// 校验：自己的值真的落到位了吗（被并发覆盖时这里不通过）
+				const after = existsSync(settingsPath) ? readFileSync(settingsPath, "utf-8") : "";
+				if (this.readActiveProfileKey(after) === name) return;
+				lastErr = new Error("写入后校验未通过（可能被并发写者覆盖）");
+			} catch (e) {
+				lastErr = e;
 			}
-			settings.activeProfile = name;
-			writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-		} catch {
-			// best effort
 		}
+		throw new Error(
+			`写入 ${settingsPath} 失败（已重试 3 次）: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`
+		);
+	}
+
+	/** 从一段 settings.json 文本里取激活 profile 名；取不到或文本非法 → undefined。 */
+	private readActiveProfileKey(text: string): string | undefined {
+		try {
+			const ns = (JSON.parse(text) as Record<string, unknown>)?.memorySystem as
+				| Record<string, unknown>
+				| undefined;
+			const v = ns?.activeProfile;
+			return typeof v === "string" && v ? v : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * 原子写：写同目录 tmp → rename 覆盖。Windows 上 rename 撞 EBUSY/EPERM
+	 * （别的进程正开着这个文件）是已知现象，重试 3 次 / 0·50·50ms。
+	 *
+	 * ⚠ 不要写成「先 `rmSync` 再 `renameSync`」—— 仓库里 `config/app-config.ts` 和
+	 * `util/judg-session-project` 都是那么写的，那会在两者之间留一个「文件不存在」的
+	 * 空窗，比不原子还糟。Node 的 `fs.renameSync` 在 Windows 上走
+	 * `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`，本机实测能直接覆盖已存在文件，
+	 * `rmSync` 纯属多余（方法落地时实测过，见 scripts/verify-profile-settings.ts）。
+	 */
+	private atomicWrite(file: string, text: string): void {
+		const tmp = `${file}.tmp-${randomUUID()}`;
+		const delays = [0, 50, 50];
+		let lastErr: unknown = null;
+		for (const d of delays) {
+			if (d > 0) {
+				// 同步接口只能忙等（这里不能 await）
+				const until = Date.now() + d;
+				while (Date.now() < until) { /* spin */ }
+			}
+			try {
+				writeFileSync(tmp, text, "utf-8");
+				renameSync(tmp, file);
+				return;
+			} catch (e) {
+				lastErr = e;
+			}
+		}
+		try {
+			rmSync(tmp, { force: true });
+		} catch {
+			/* 临时文件残留不影响正确性 */
+		}
+		throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 	}
 
 	private profilePath(name: string): string {

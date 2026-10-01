@@ -31,8 +31,11 @@ export interface FilterResult {
 export interface MemoryManagerConfig {
 	memoryCharLimit: number;
 	userCharLimit: number;
-	profilesDir: string;
-	activeProfile: string;
+	// 原先这里还有 profilesDir / activeProfile 两个字段，2026-10-01 删除：
+	// 两个构造点（MemoryManager / MemoryStore）都只 Pick 上面这两个，是彻底的死字段。
+	// 特意点名 activeProfile —— 它**不走**这个配置对象，唯一真源是宿主 settings.json 的
+	// memorySystem.activeProfile（见 memory/core/profile.ts）。留着这个字段会让下一个
+	// 读代码的人以为激活 profile 是从这里来的。
 }
 
 // ─── 常量 ───
