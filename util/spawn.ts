@@ -31,7 +31,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { MEMORY_DB_DIR, SUBAGENT_PROMPT_TMP_DIR, SUBAGENT_SESSION_DIR } from "../memory/paths.ts";
-import { writeSubagentRun, type SubagentRunRecord } from "../memory/pipeline/subagent-runs.ts";
+import { clearSubagentRun, writeSubagentRun, type SubagentRunRecord } from "../memory/pipeline/subagent-runs.ts";
 import { logEvent } from "./notice.ts";
 
 /** 插件根目录（<插件>/util/spawn.ts → 上两级）。 */
@@ -227,6 +227,10 @@ export interface SpawnOptions {
 	jobId: number;
 	/** 子进程工作目录；缺省用当前进程 cwd。 */
 	cwd?: string;
+	/** 子进程**非 0 退出**时回调（早死检测）。让调用方立刻把 job 标 failed，
+	 *  而不是干等硬上限（默认 45 分钟）——那期间串行队列全被这一个 job 堵死。
+	 *  退出码 0 不回调：那可能是正常收尾（干完活、commit 稍晚）。 */
+	onEarlyExit?: (info: { code: number | null; signal: string | null; pid: number; runId: string }) => void;
 }
 
 /**
@@ -361,12 +365,22 @@ function spawnSubagentReal(opts: SpawnOptions): SpawnedSubagent {
 	// 早死检测：子进程非 0 退出码时通知调用方，由它决定是否把 job 标 failed。
 	// 只在非 0 时回调——退出码 0 但没 commit 属于「可能正在收尾」，交给活性门控的硬阈值，
 	// 避免误杀（2026-09-15 记录过同值尾巴被误判超时的事故）。
+	// 早死检测：子进程**非 0 退出**时回调，让调用方立刻把 job 标 failed，而不是干等到
+	// 硬上限（默认 45 分钟）——那时串行队列全被这一个 job 堵死。
+	//
+	// ��意只在非 0 时回调：退出码 0 但 job 仍 running 是**正常收尾**（子代理干完活、
+	// commit 稍晚），交给活性门控的硬阈值，避免误杀（2026-09-15 记录过 job 70 被误判）。
+	// 信号导致的终止（code=null）也当异常处理——正常收尾不会是被信号杀掉。
 	child.on("exit", (code, signal) => {
+		const crashed = code !== 0;
 		logEvent(
 			"store",
-			`[self-spawn] ${opts.layer} job ${opts.jobId} 子进程退出 pid=${child.pid} code=${code} signal=${signal ?? "-"}`,
+			`[self-spawn] ${opts.layer} job ${opts.jobId} 子进程退出 pid=${child.pid} ` +
+			`code=${code} signal=${signal ?? "-"}${crashed ? " ⇒ 判为早死" : ""}`,
 			opts.profilePath,
 		);
+		clearSubagentRun(opts.profilePath, opts.layer, opts.jobId);
+		if (crashed) opts.onEarlyExit?.({ code, signal, pid: child.pid, runId });
 	});
 
 	return { runId, pid: child.pid, command: rec.command };

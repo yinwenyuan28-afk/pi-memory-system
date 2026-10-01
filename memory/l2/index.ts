@@ -55,7 +55,6 @@ export function setupL2Organizer(
 			return "skipped";
 		}
 		ctx.ui.setStatus("memory", job.source === "manual" ? `Memory ⚙L2 (manual, ${staged.length} records)...` : "Memory ⚙L2...");
-		const abortCtl = new AbortController();
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：不再"到点判死"，改为**软阈值只提示、硬上限停掉子代理**。
 		// 旧实现到 600+30s 就标 failed + abort，实测把"跑了 987 秒还在长生成"的子代理误判四次
 		// （jobs 55/61/64/68），并**提前释放队列槽位**（子代理仍在写场景块）。
@@ -87,6 +86,13 @@ export function setupL2Organizer(
 				profilePath,
 				layer: "l2",
 				jobId: job.id,
+				// 早死检测：子进程非 0 退出且 job 仍 running ⇒ 立刻标 failed（详见 l1 同名注释）
+				onEarlyExit: (info) => {
+					if (db.getJob(job.id)?.status !== "running") return;
+					const why = `子进程异常退出（code=${info.code}, signal=${info.signal ?? "-"}, pid=${info.pid}）`;
+					db.complete(job.id, "failed", why);
+					logEvent("l2", `job ${job.id} ${why} ⇒ 立即标 failed，不再等硬上限`, profilePath);
+				},
 			});
 			const spawnP = runPiSubagent("l2-scene-organizer", task, ctx, {
 				profilePath,
@@ -112,7 +118,6 @@ export function setupL2Organizer(
 				return "done";
 			}
 			if (after?.status === "skipped") {
-				abortCtl.abort();
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
@@ -125,7 +130,6 @@ export function setupL2Organizer(
 				reason: `L2 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
 				hooks: { rebuildSceneIndex, repairSceneMembers },
 			});
-			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
 			await spawnP.catch(() => {});
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
 			const st = loadL2State();
@@ -153,7 +157,6 @@ export function setupL2Organizer(
 			saveL2State(st);
 			return "failed";
 		} catch (err) {
-			abortCtl.abort();
 			const st = loadL2State();
 			st.consecutiveFailures++;
 			const l2FailMsg = err instanceof Error ? err.message : String(err);

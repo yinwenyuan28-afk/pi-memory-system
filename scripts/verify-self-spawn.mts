@@ -17,7 +17,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -39,6 +39,8 @@ function check(name: string, cond: boolean, extra = ""): void {
 }
 
 const profile = mkdtempSync(join(tmpdir(), "verify-self-spawn-"));
+// 6b 用的「必定退出 0」的假 pi 入口
+writeFileSync("C:/temp/pi/_exit0.js", "process.exit(0);", "utf-8");
 // 走与生产相同的那一档（process.execPath + pi 的 cli.js），不走需要 shell 的 PATH 回落
 const piCli = "C:/Users/leaf/.pi/agent/npm/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
 if (existsSync(piCli)) process.env.PI_MEMORY_SYSTEM_PI_BIN = piCli;
@@ -131,6 +133,64 @@ try {
 	writeSubagentRun(profile, { ...sample, jobId: 79, pid: 999 });
 	check("按 layer+jobId 隔离（l2-78 仍在）", readSubagentRun(profile, "l2", 78)?.pid === 12345);
 	check("坏文件不影响其它记录", listSubagentRuns(profile).length >= 2);
+
+	// ── 6. 早死检测：非 0 退出才回调，退出码 0 不回调 ───────────────────────
+	console.log("\n=== 6. 早死检测回调 ===");
+	{
+		// 6a 非 0 退出 ⇒ 触发回调 + 清运行记录
+		// 造一个「能通过 looksLikePiCli 校验、但一启动就非 0 退出」的假 pi 包：
+		//   * 目录里有 package.json 且 name 是 @earendil-works/pi-coding-agent
+		//     ⇒ resolvePiCommand 的第二档校验通过，会用 process.execPath 跑它
+		//   * 入口脚本 process.exit(3) ⇒ spawn 成功拿到 pid，随后非 0 退出
+		// 这样才真正覆盖「spawn 成功 → 子进程死掉」这个场景。
+		const fakePkg = mkdtempSync(join(tmpdir(), "fake-pi-"));
+		writeFileSync(
+			join(fakePkg, "package.json"),
+			JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.0.0-fake" }),
+			"utf-8",
+		);
+		const fakeCli = join(fakePkg, "cli.js");
+		writeFileSync(fakeCli, "process.exit(3);\n", "utf-8");
+		const realBin = process.env.PI_MEMORY_SYSTEM_PI_BIN;
+		process.env.PI_MEMORY_SYSTEM_PI_BIN = fakeCli;
+
+		let fired: { code: number | null; pid: number } | null = null;
+		spawnSubagent({
+			agent: "l1-extractor",
+			task: "占位",
+			profilePath: profile,
+			agentDir: join(EX, ".."),
+			layer: "l1",
+			jobId: 910,
+			onEarlyExit: (i) => { fired = { code: i.code, pid: i.pid }; },
+		});
+		await new Promise((r) => setTimeout(r, 3000));
+		check("子进程非 0 退出触发 onEarlyExit", fired !== null,
+			fired ? `code=${fired.code} pid=${fired.pid}` : "未触发");
+		check("退出后运行记录已清除", readSubagentRun(profile, "l1", 910) === undefined);
+		if (realBin) process.env.PI_MEMORY_SYSTEM_PI_BIN = realBin;
+		rmSync(fakePkg, { recursive: true, force: true });
+	}
+	{
+		// 6b 退出码 0 ⇒ **不**触发回调（正常收尾：先 commit 再退出）
+		let fired0 = false;
+		// 用一个必然成功退出的廉价子进程验证「0 不回调」这条语义
+		// （走 spawnSubagent 的真实路径，但把 pi 入口换成 node -e 立即退出 0）
+		process.env.PI_MEMORY_SYSTEM_PI_BIN = "C:/temp/pi/_exit0.js";
+		spawnSubagent({
+			agent: "l1-extractor",
+			task: "占位",
+			profilePath: profile,
+			agentDir: join(EX, ".."),
+			layer: "l1",
+			jobId: 911,
+			onEarlyExit: () => { fired0 = true; },
+		});
+		await new Promise((r) => setTimeout(r, 2500));
+		check("退出码 0 不触发 onEarlyExit（正常收尾不误杀）", fired0 === false);
+		// 还原成真 pi 入口
+		if (existsSync(piCli)) process.env.PI_MEMORY_SYSTEM_PI_BIN = piCli;
+	}
 } catch (e) {
 	fail++;
 	console.log(`  FAIL  用例抛出异常: ${e instanceof Error ? e.message : String(e)}`);

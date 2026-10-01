@@ -240,7 +240,6 @@ export function setupL3Persona(
 
 		const db = getPipelineJobsDB(profilePath);
 		ctx.ui.setStatus("memory", forced ? "Memory ⚙L3 (manual)..." : "Memory ⚙L3...");
-		const abortCtl = new AbortController();
 		// 与 L1/L2 同款：真完成信号来自子代理的 `l3_commit`（completeRunningL3），
 		// **不是** `await runPiSubagent` 的返回 —— 那是 async:true 的 fire-and-forget，毫秒级返回。
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：软阈值只提示、硬上限**停掉子代理**（旧实现到点判死 + abort 会误判）。
@@ -271,6 +270,13 @@ export function setupL3Persona(
 				profilePath,
 				layer: "l3",
 				jobId: job.id,
+				// 早死检测：子进程非 0 退出且 job 仍 running ⇒ 立刻标 failed（详见 l1 同名注释）
+				onEarlyExit: (info) => {
+					if (db.getJob(job.id)?.status !== "running") return;
+					const why = `子进程异常退出（code=${info.code}, signal=${info.signal ?? "-"}, pid=${info.pid}）`;
+					db.complete(job.id, "failed", why);
+					logEvent("l3", `job ${job.id} ${why} ⇒ 立即标 failed，不再等硬上限`, profilePath);
+				},
 			});
 			// 派发失败立刻进 catch 释放 job，不干等活性门控（详见 failFastOnSpawnFailure 头注释）
 			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
@@ -292,7 +298,6 @@ export function setupL3Persona(
 				return "done";
 			}
 			if (after?.status === "skipped") {
-				abortCtl.abort();
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
@@ -304,7 +309,6 @@ export function setupL3Persona(
 				jobId: job.id,
 				reason: `L3 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
 			});
-			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
 			await spawnP.catch(() => {});
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
 			recordFailure(ctx, `子代理超过硬上限被停掉（job ${job.id}）`);
@@ -328,7 +332,6 @@ export function setupL3Persona(
 			});
 			return "failed";
 		} catch (err) {
-			abortCtl.abort();
 			recordFailure(ctx, `派发失败：${err instanceof Error ? err.message : String(err)}`);
 			const still = db.getJob(job.id);
 			if (still?.status === "running") db.complete(job.id, "failed", err instanceof Error ? err.message : String(err));

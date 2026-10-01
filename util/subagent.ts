@@ -15,6 +15,8 @@ export interface RunSubagentOptions {
 	jobId?: number;
 	/** 子进程工作目录；缺省取 ctx.cwd。 */
 	cwd?: string;
+	/** 子进程非 0 退出时的回调（早死检测）——由 `util/spawn.ts` 触发。 */
+	onEarlyExit?: (info: { code: number | null; signal: string | null; pid: number; runId: string }) => void;
 }
 
 /**
@@ -68,6 +70,7 @@ export async function runPiSubagent(
 		layer: opts.layer || layerOf(agent),
 		jobId: opts.jobId ?? 0,
 		cwd: opts.cwd || ctx?.cwd,
+		onEarlyExit: opts.onEarlyExit,
 	});
 	return spawned.pid;
 }

@@ -93,7 +93,6 @@ export function setupL1Extractor(
 
 		const db = getPipelineJobsDB(profilePath);
 		ctx.ui.setStatus("memory", job.source === "manual" ? "Memory ⚙L1 (manual)..." : "Memory ⚙L1...");
-		const abortCtl = new AbortController();
 		// 比子代理超时多给 30s 宽限：子代理在最后时刻调 l1_commit 时，落盘 + 写游标 + 入队 L2
 		// 仍需时间，同值会在这条尾巴上误判超时（2026-09-15）。
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：软阈值只提示、硬上限**停掉子代理**；
@@ -125,6 +124,16 @@ export function setupL1Extractor(
 				profilePath,
 				layer: "l1",
 				jobId: job.id,
+				// 早死检测：子进程非 0 退出且 job 仍 running ⇒ 立刻标 failed。
+				// 不这么做就得干等硬上限（45 分钟），期间串行队列全被这一个 job 堵死。
+				// 守卫「job 仍 running」不可省：正常时序是「先 commit（job 变 done）→ 再退出」，
+				// 那时退出码再非 0 也不能动它。
+				onEarlyExit: (info) => {
+					if (db.getJob(job.id)?.status !== "running") return;
+					const why = `子进程异常退出（code=${info.code}, signal=${info.signal ?? "-"}, pid=${info.pid}）`;
+					db.complete(job.id, "failed", why);
+					logEvent("l1", `job ${job.id} ${why} ⇒ 立即标 failed，不再等硬上限`, profilePath);
+				},
 			});
 			// 派发失败要立刻进下方 catch（那里已有计数 / 告警卡 / 释放 job 的完整处理），
 			// 不能只记日志后干等活性门控——子代理压根没起来时 job 会挂到硬阈值
@@ -145,7 +154,6 @@ export function setupL1Extractor(
 				return "done";
 			}
 			if (after?.status === "skipped") {
-				abortCtl.abort();
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
@@ -157,7 +165,6 @@ export function setupL1Extractor(
 				jobId: job.id,
 				reason: `L1 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
 			});
-			abortCtl.abort(); // 尽力而为：async 路径实测无效（见 subagent-kill.ts 头注释），杀靠 pid
 			await spawnP.catch(() => {});
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
 			const s2 = loadL1State();
@@ -181,7 +188,6 @@ export function setupL1Extractor(
 			saveL1State(s2);
 			return "failed";
 		} catch (err) {
-			abortCtl.abort();
 			const s2 = loadL1State();
 			s2.consecutiveFailures++;
 			const failMsg = err instanceof Error ? err.message : String(err);
