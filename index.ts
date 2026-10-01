@@ -58,6 +58,8 @@ import {
   resetNoticeDedup,
   setNoticeProfileResolver,
 } from "./util/notice.ts";
+import { initSubagentBridge } from "./util/subagent.ts";
+import { registerBundledAgentDefinitions, bundledAgentsDir } from "./util/agent-registry.ts";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -110,6 +112,25 @@ function extractMessageText(e: any): string {
 }
 
 export default function (pi: ExtensionAPI) {
+  // ── 子代理派发通道（2026-10-01 独立发布整改 P0-1/P0-2）────────────────────
+  // 必须在任何派发发生前完成，两件事各自独立、顺序无关：
+  //
+  // 1) initSubagentBridge：把 pi.events 交给 util/subagent.ts。L1/L2/L3/review/
+  //    skill-review 五条链的后台子代理派发全部经由 pi-subagents 的
+  //    `subagents:rpc:v1` 事件总线（上游官方给第三方扩展的集成面），**不再依赖
+  //    globalThis.__piSubagentExecutor** —— 后者是本机给 pi-subagents 源码打的
+  //    私有补丁，pi 升级即失效，是本插件无法独立发布的首要阻断项。
+  //
+  // 2) registerBundledAgentDefinitions：把插件自带的 agents/ 目录注册进
+  //    PI_SUBAGENT_EXTRA_AGENT_DIRS，让子代理定义随插件分发，而不是要求用户手动
+  //    往 ~/.pi/agent/agents/ 拷 6 个 md（那些 md 的 frontmatter 里还反向写死了
+  //    作者本机的插件绝对路径）。本插件自带的 6 个定义已去掉该字段，子进程改由
+  //    pi 的常规全局扩展发现（<agentDir>/extensions/）加载本插件的工具。
+  //
+  // 两者都是幂等的：/reload 或重复激活不会重复订阅、不会重复追加环境变量。
+  const bridgeReady = initSubagentBridge(pi);
+  const bundledAgents = registerBundledAgentDefinitions();
+
   const agentDir = getAgentDir();
   const manager = new MemoryManager(agentDir);
   // [DISABLED] workflow 保存系统控制器已禁用（保留代码，恢复时取消注释）
@@ -402,6 +423,40 @@ export default function (pi: ExtensionAPI) {
         title: `提示词模板缺失/损坏（${promptProblems.length} 项）`,
         lines: promptProblems.slice(0, 6),
         detail: promptProblems.join("\n"),
+      });
+    }
+
+    // 子代理派发通道自检（独立发布整改 P0-2/P0-3）：
+    // 插件自带的 agents/ 目录缺失或为空 ⇒ L1/L2/L3/review/skill-review 五条链
+    // 派发不出子代理（子代理定义随插件分发是它们能独立运行的必要条件）。
+    // 正常时不打扰，只在真出问题时发卡片——与上面提示词资产自检同一处理原则。
+    logEvent(
+      "store",
+      `[subagent-bridge] RPC 通道${bridgeReady ? "已注册" : "注册失败（宿主未提供 events 总线）"}；` +
+        `自带子代理定义 ${bundledAgents?.files.length ?? 0} 个` +
+        `（${bundledAgents?.dir ?? "未注册"}${bundledAgents?.alreadyRegistered ? "，此前已注册" : ""}）`,
+      profile?.path,
+    );
+    if (!bridgeReady || !bundledAgents) {
+      const problems: string[] = [];
+      if (!bridgeReady) {
+        problems.push("派发通道未注册：宿主未提供 events 总线（pi.events 缺失或不可用）");
+      }
+      if (!bundledAgents) {
+        problems.push(
+          `子代理定义缺失：${bundledAgentsDir()} 不存在或不含 .md 定义文件`,
+          "子代理定义需随插件分发，不能只存在于 ~/.pi/agent/agents/（发布包应含 agents/*.md 共 6 个）",
+        );
+      }
+      noticeCard({
+        level: "warning",
+        title: "子代理派发不可用，L1/L2/L3 记忆提取将无法运行",
+        lines: problems,
+        detail:
+          problems.join("\n") +
+          "\n\n派发通道依赖 pi-subagents 的 subagents:rpc:v1 事件总线；" +
+          "若通道已注册但仍失败，请确认 settings.json 的 packages 含 npm:pi-subagents。",
+        dedupKey: "subagent-bridge-unavailable",
       });
     }
 

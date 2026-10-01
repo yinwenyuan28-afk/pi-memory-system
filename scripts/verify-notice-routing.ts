@@ -32,6 +32,7 @@ import {
 import { setupL3Persona } from "../memory/l3/index.ts";
 import { closePipelineJobsDB, getPipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { getVectorStore } from "../memory/search/vector-store/store.ts";
+import { initSubagentBridge } from "../util/subagent.ts";
 
 let pass = 0;
 let fail = 0;
@@ -92,9 +93,21 @@ function makeFakePi(): {
 } {
 	const entries: Array<{ customType: string; data: unknown }> = [];
 	let renderer: ((entry: any, options: any, theme: any) => { render: (w: number) => string[] }) | undefined;
+	// 最小进程内事件总线：util/subagent.ts 的 RPC 派发通道需要它（见 installSubagentRpcStub）
+	const handlers = new Map<string, Array<(data: unknown) => void>>();
 	const pi = {
 		// L3 的 setup 需要 pi.on（本脚本只在第 9 组用到；其余组不依赖事件）
 		on: () => {},
+		events: {
+			on(channel: string, handler: (data: unknown) => void) {
+				if (!handlers.has(channel)) handlers.set(channel, []);
+				handlers.get(channel)!.push(handler);
+				return () => handlers.set(channel, (handlers.get(channel) ?? []).filter((h) => h !== handler));
+			},
+			emit(channel: string, data: unknown) {
+				for (const handler of [...(handlers.get(channel) ?? [])]) handler(data);
+			},
+		},
 		appendEntry: (customType: string, data: unknown) => entries.push({ customType, data }),
 		registerEntryRenderer: (_t: string, fn: unknown) => {
 			renderer = fn as never;
@@ -106,6 +119,40 @@ function makeFakePi(): {
 		return comp.render(120);
 	};
 	return { pi, entries, render };
+}
+
+/**
+ * 安装一个最小的 pi-subagents RPC 桥接桩，**接替旧的 globalThis.__piSubagentExecutor 桩**。
+ *
+ * util/subagent.ts 自 2026-10-01（独立发布整改 P0-1）起改走上游 `subagents:rpc:v1`
+ * 事件总线，不再读那个私有全局变量（它是本机给 pi-subagents 源码打的补丁）。
+ * 这里按上游协议（pi-subagents/src/extension/rpc.ts 的 registerSubagentRpcBridge）
+ * 实现 request→reply 的最小闭环，让 L3 通知卡测试仍能模拟「子代理跑完并落盘」。
+ *
+ * @param pi      带 events 总线的假 pi（makeFakePi 产出）
+ * @param initial 首次派发时执行的桩（模拟子代理干活：写文件 + complete job）
+ * @returns 换桩函数——对应旧代码「重新给全局变量赋一次值」的写法
+ */
+function installSubagentRpcStub(
+	pi: { events: { on: (c: string, h: (d: unknown) => void) => () => void; emit: (c: string, d: unknown) => void } },
+	initial: (params: { agent?: string; task?: string }) => void,
+): (next: (params: { agent?: string; task?: string }) => void) => void {
+	let current = initial;
+	pi.events.on("subagents:rpc:v1:request", (raw) => {
+		const req = raw as { requestId?: string; params?: { agent?: string; task?: string } };
+		const reply = (success: boolean, payload: Record<string, unknown>) =>
+			pi.events.emit(`subagents:rpc:v1:reply:${req.requestId}`, {
+				version: 1, requestId: req.requestId, success, ...payload,
+			});
+		try {
+			current(req.params ?? {});
+			reply(true, { data: { text: "Async: stub", details: { mode: "single", runId: `stub-${req.requestId}` } } });
+		} catch (e) {
+			reply(false, { error: { code: "execution_failed", message: e instanceof Error ? e.message : String(e) } });
+		}
+	});
+	initSubagentBridge(pi as never);
+	return (next) => { current = next; };
 }
 
 const profile = makeProfile();
@@ -370,11 +417,10 @@ const l3Group = (async () => {
 	const job = db.claim(queued.id)!;
 	// 桩子代理：把“规则乙”换成“规则丙”写进**提议稿**（2026-09-28 起 L3 只写 USER-temp.md），
 	// 然后写“真完成信号”（等价 l3_commit → completeRunningL3）
-	(globalThis as unknown as { __piSubagentExecutor?: unknown }).__piSubagentExecutor = async (id: string) => {
+	const setL3Stub = installSubagentRpcStub(l3Cards.pi as never, () => {
 		writeFileSync(join(l3Root, "USER-temp.md"), ["规则甲：中文输出", "规则丙：新增的画像规则"].join("\n§\n") + "\n", "utf-8");
 		db.complete(job.id, "done");
-		return id;
-	};
+	});
 	const l3Ctx = { ui: { notify: () => {}, setStatus: () => {} } };
 	const controls = setupL3Persona(l3Cards.pi as never, () => l3Root, {
 		enqueueL3: () => ({ id: 1, duplicate: false }),
@@ -395,10 +441,9 @@ const l3Group = (async () => {
 	// 第二轮：子代理什么都不改 → 也要有一张“无改动”卡片（证明 L3 确实跑过）
 	const q2 = db.enqueue("l3", "manual");
 	const job2 = db.claim(q2.id)!;
-	(globalThis as unknown as { __piSubagentExecutor?: unknown }).__piSubagentExecutor = async (id: string) => {
+	setL3Stub(() => {
 		db.complete(job2.id, "done");
-		return id;
-	};
+	});
 	const r2 = await controls.executeJob(l3Ctx as never, job2);
 	check("第二轮仍返回 done", r2 === "done", r2);
 	check("第二轮卡片注明本轮无改动", l3Cards.entries.length === 2 && (l3Cards.entries[1]?.data as NoticePayload)?.title.includes("无改动"));

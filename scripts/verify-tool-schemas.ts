@@ -51,6 +51,13 @@ async function main(): Promise<void> {
 			return t;
 		},
 		on: () => undefined,
+		// 扩展入口第一行会 initSubagentBridge(pi)（独立发布整改 P0-1），它读 pi.events。
+		// 这里给出最小可用总线，保证假 pi 与真实 ExtensionAPI 形状一致——否则测的是
+		// 「入口在残缺宿主下不崩」，而不是「工具 schema 是否合规」。
+		events: {
+			on: () => () => undefined,
+			emit: () => undefined,
+		},
 		registerCommand: (name: string) => {
 			commands.push(name);
 			return undefined;
