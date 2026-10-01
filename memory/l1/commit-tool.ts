@@ -4,6 +4,9 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_FILE, PROMPT_DIR, RECORDS_DIR_NAME, loadL1Config } from "./config.ts";
 import { applyVerdictsToBatch, loadChecklistFromFile, runValueCheck, splitBatch } from "./value-check.ts";
+// 标签契约模块（零 import 的纯函数）：只取归一化与归属决策两件事，
+// `SCOPE_HELP` 那一大段中文词表不进本模块——它由提示词侧（backfill 脚本 / l1-extractor.md）自己引用。
+import { normalizeScope, projectForScope } from "./project-scope.ts";
 import { loadRecallConfig } from "../search/recall-config.ts";
 import {
 	createSceneResolver,
@@ -245,25 +248,35 @@ export function registerL1CommitTool(
 					}
 				}
 
-				// ── cwd 由「会话级项目归属」决定（2026-09-30）────────────────────
-				// 语义变更：cwd 从"会话工作台（pi 从哪启动）"改成"这个会话实际在干活的项目目录"。
-				//   - flag:true  → 填判定出的 project，projectSource = 判定来源（init/code/llm/manual）
-				//   - 否则        → **退回 ctx.cwd**（不留空），projectSource = "fallback"
-				//     留空是缺陷不是偏好：44/91 个会话到不了判定点，在已经 36.5% 指错的字段上
-				//     再叠一层空洞，只会让"按 cwd 统计"彻底没法解释。
+				// ── 项目标签 `metadata.project`（2026-09-30，取代 9-30 早先那版 `cwd` 覆写）──
+				// 语义：**cwd 保持"会话工作台（pi 从哪启动）"，项目另开一个标签**。
+				//   - `metadata.project` = 判定出的项目目录；判定不可用时写 `""`（= 没有项目，不猜）
+				//   - `metadata.projectSource` = 判定来源（init/code/llm/manual），或 `"fallback"`
+				//   - `metadata.scope` 为 `global` / `unknown` ⇒ project 被**强制抹成 `""`**
+				//     （两档都走契约模块 `projectForScope`，写侧不自己判分支）
 				//
-				// 位置要求（三条都必要）：
+				// 位置要求（三条都必要，与上一版相同）：
 				//   ① 在 `isMainAgent` 块**之外** —— main-agent 与 subagent 两条路径都要经过；
 				//   ② 在确定性闸门（下一个区块）**之前** —— 形式不合格的批不该浪费一次查表；
-				//   ③ 在写锁内的场景解析**之前** —— 场景池要按最终的 cwd 登记。
+				//   ③ 在写锁内的场景解析**之前** —— 场景池登记的是 cwd，与本标签无关，但保持
+				//      "写盘前先把 metadata 定型"的顺序，便于将来在池侧复用 project。
 				//
 				// 键取 `r.sessionKey`（记录自带），**不从 ctx 派生**：子代理进程里
 				// `ctx.sessionManager.getSessionFile()` 恒为 `"session"`，派生必然查不到。
 				// 空 sessionKey（实测 8/554 条）走 fallback 分支。
 				//
-				// 墓碑行（deleted:true）**不改 cwd**：它是"旧记录被改写/删除"的标记，
-				// 不是一条新记忆，改它的 cwd 等于用新语义篡改历史行的归属
-				// （与 l1-fix / rewrite.mjs 逐字继承旧 cwd 是同一条原则，见 B15）。
+				// ⚠ **为什么不再覆写 `r.cwd`（2026-09-30 撤回上一版自己的改动）**：
+				//   上一版把判定出的 project 写进 `r.cwd`，但 `cwd` 在读侧有**另一套既定语义**——
+				//   `scene-pool.ts` 的 `addCwd(entry, cwd)` 会把它塞进 `entry.cwds`，而排序侧
+				//   `rankCwd` / `findMostRecentScene` 是拿 `entry.cwds` 去比 `batchCwd`
+				//   （= L0 消息 cwd 的众数 = **会话工作台**）。写侧塞项目、读侧比工作台，
+				//   两边对不上 ⇒「同 cwd 优先」对所有新记录**永不命中**，反而把池的 cwds 污染成混合语义。
+				//   项目归属既然已有 `metadata.project` 这条正路，`cwd` 就没有必要承担它。
+				//   ⇒ 现在这里**只对空值兜底**（见下），其余一律不动。
+				//
+				// 墓碑行（deleted:true）**不改**：`metadata` / `cwd` 都不碰 —— 它是"旧记录被改写/删除"
+				// 的标记，不是新记忆，改它的归属等于用新语义篡改历史行
+				// （与 l1-fix / rewrite.mjs 逐字继承旧字段是同一条原则，见 B15）。
 				//
 				// 为什么不写在 `recordsToWrite` 上（计划原写法）：那个变量声明在下面的
 				// `:310`，而这里在它之前 —— 引用它是 use-before-declaration。
@@ -277,6 +290,11 @@ export function registerL1CommitTool(
 					for (const row of records) {
 						const r = row as Record<string, unknown>;
 						if (r.deleted === true) continue;
+						// cwd 兜底：**只在缺字段或空串时**填会话工作台，不覆盖模型传上来的值。
+						// 理由：`cwd` 是场景池登记与「同 cwd 优先」排序的输入，留空会让新条目
+						// 少登记一个工作台；而覆写又会踩上面那条读写语义错配。两者之间，
+						// "缺了才补"是唯一同时满足两个约束的写法。
+						if (typeof r.cwd !== "string" || !r.cwd) r.cwd = fallbackCwd;
 						const rk = typeof r.sessionKey === "string" ? r.sessionKey : "";
 						let project = "";
 						let source = "fallback";
@@ -290,10 +308,40 @@ export function registerL1CommitTool(
 								}
 							}
 						}
-						// 覆写 LLM 传上来的 cwd —— 归属是服务端的事，不信模型自填
-						r.cwd = project || fallbackCwd;
 						const md = typeof r.metadata === "object" && r.metadata !== null ? (r.metadata as Record<string, unknown>) : {};
-						r.metadata = { ...md, projectSource: source };
+						// scope 归一失败（**没填** / 填了非法值，如存量脏值 `workflow` / `subtree`）时
+						// 按 **`unknown`** 处理 ⇒ project 被抹成 `""`。
+						//
+						// ⚠ **为什么缺省是 `unknown` 而不是 `self`**（2026-09-30 用户裁定）：
+						//   `unknown` 这一档存在的**全部意义**就是显式表达「判不了」。缺省成 `self` 等于
+						//   替模型做了它没做的判断：没填 scope = **没有表达任何范围信息**，而"没表达"绝
+						//   不等于"确定属于当前会话那个项目"。默认 `self` 会让所有忘了填 scope 的记录被
+						//   **静默**归到会话判定出的那个项目名下 —— 这正是 `unknown` 要消除的那种不可见：
+						//   数据里看不出"这条其实没判过"，召回侧也无从把它与真正的项目记忆区分开。
+						//   记 `unknown` 至少让它可计数、可被消费者识别（"不过滤，但标出来"）。
+						//   注意：`projectForScope` 会把 `unknown` 与 `global` 一视同仁地抹空 project ——
+						//   两者召回行为不同（`global` 无条件注入、`unknown` 只是不作过滤依据），
+						//   但都不该挂到一个模型没确认过的路径上。
+						//
+						// ⚠ **归一后的 scope 必须写回 metadata**（2026-10-01 修正，存量/新写入对齐体检发现）：
+						//   原实现「**只判不写**」，理由是"不代模型改写，免得把『判据没写』与『服务端改过』混成
+						//   一个结果"。**这个理由不成立** —— 「缺省」这件事本来就可以在 `projectSource`
+						//   上留痕（它已经记了来源），而**不写回**的直接后果是：没填 scope 的记录落盘后
+						//   **该字段完全消失**，而不是变成 `unknown`。那等于把刚立起来的弃权档在写入
+						//   路径上又废掉了——「判不了」重新变得不可见，`unknown` 成了只在存量回填里
+						//   存在的死值，与存量的取值空间也对不齐。
+						//   合法值原样写入（模型填对了不该被改），归一不了的**按 `unknown` 写入**
+						//   （含大小写/空白差异，`" SELF "` ⇒ `self`）：既保证闭集，也不再有脏值落盘。
+						const scope = normalizeScope(md.scope);
+						// metadata 用展开合并：`work_object` / `status` / `activity_start_time` /
+						// `sceneFallback` / `origin` / `valueCheck` 等既有键全部保留，
+						// 只覆盖 scope 并新增 project 两键。
+						r.metadata = {
+							...md,
+							scope: scope ?? "unknown",
+							project: projectForScope(scope ?? "unknown", project),
+							projectSource: source,
+						};
 					}
 				}
 
