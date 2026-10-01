@@ -16,7 +16,7 @@ import { isProcessAlive, killProcessTree, repairAfterKill, stopSubagent } from "
 import { isStopRequested, stopRequestPath } from "../memory/pipeline/stop-request.ts";
 import { forceReleaseWriteLock } from "../memory/l1/write-lock.ts";
 import { L2_CURSOR_FILE } from "../memory/paths.ts";
-import type { AsyncRunInfo } from "../memory/pipeline/subagent-liveness.ts";
+import type { StopTarget } from "../memory/pipeline/subagent-kill.ts";
 
 let pass = 0;
 let fail = 0;
@@ -189,12 +189,9 @@ async function main(): Promise<void> {
 		const child = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"], { stdio: "ignore", windowsHide: true });
 		const pid = child.pid as number;
 		// 假 run 指向我们自己起的靶子 —— 绝不触碰真实子代理
-		const fakeRun: AsyncRunInfo = {
-			asyncDir: join(root, "fake-run"),
-			runId: "fake-run",
+		const fakeRun: StopTarget = {
 			state: "running",
 			pid,
-			sessionFiles: [],
 		};
 		const hooksCalled: string[] = [];
 		const out = await stopSubagent({

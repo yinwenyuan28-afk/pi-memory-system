@@ -23,11 +23,24 @@ import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { join } from "node:path";
 import { BACKUP_DIR, L1_RECORDS_DIR, L2_CURSOR_FILE, L2_SCENE_DIR, L3_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.ts";
 import { clearStopRequest, writeStopRequest } from "./stop-request.ts";
-import { findAsyncRun, type AsyncRunInfo } from "./subagent-liveness.ts";
+import { readSubagentRun } from "./subagent-runs.ts";
 import { forceReleaseRunLock, isProcessAlive } from "./run-lock.ts";
 import { DEFAULT_HOLD_MS_UNCONFIRMED, DEFAULT_KILL_GRACE_MS } from "./timeout-config.ts";
 import { forceReleaseWriteLock } from "../l1/write-lock.ts";
 import { logEvent } from "../../util/notice.ts";
+
+/**
+ * 停止序列要定位的目标——**只需要 pid**（外加一个可选 state 供日志/卡片措辞用）。
+ *
+ * 2026-10-01 之前这里是 pi-subagents 的 `AsyncRunInfo`（7 字段：asyncDir / runId /
+ * state / pid / sessionFiles / …），靠扫它私有的 status.json 拿。自建 spawn 之后 pid
+ * 由本扩展 spawn 时就拿到并落在 `subagent-runs.ts` 的运行记录里，其余字段全部无用。
+ */
+export interface StopTarget {
+	pid: number;
+	/** 仅用于日志与告警卡措辞（如「已停掉子代理（pid X，state=running）」）。 */
+	state?: string;
+}
 
 /** 进程存活判定住在 `run-lock.ts`（那里是运行级锁的回收判据）；此处 re-export 保持旧引用可用。 */
 export { isProcessAlive };
@@ -263,14 +276,14 @@ export interface StopSubagentOptions {
 	hooks?: KillRepairHooks;
 	/** 注入 sleep（离线测用）。 */
 	sleep?: (ms: number) => Promise<void>;
-	/** 注入"找 run"（离线测用：默认扫 `%TEMP%`；测试注入假 run 才不会误杀真进程）。 */
-	findRun?: () => AsyncRunInfo | undefined;
+	/** 注入"找停止目标"（离线测用：测试注入假 pid 才不会误杀真进程）。默认读本扩展自己的运行记录。 */
+	findRun?: () => StopTarget | undefined;
 	/** 跳过标记/宽限（手动命令用："我已经确定它卡了"）。 */
 	skipGrace?: boolean;
 }
 
 export interface StopSubagentOutcome {
-	runInfo?: AsyncRunInfo;
+	runInfo?: StopTarget;
 	pid?: number;
 	killAttempted: boolean;
 	/** true = 已确认进程不存在（可以立即放行该层）；false = 停不下来（调用方应持有该层）。 */
@@ -296,11 +309,21 @@ export async function stopSubagent(opts: StopSubagentOptions): Promise<StopSubag
 	const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
 	writeStopRequest(profilePath, layer, jobId, reason);
-	const findRun = opts.findRun ?? (() => findAsyncRun({ parentSessionFile: opts.parentSessionFile }));
+	// 自建 spawn：pid 落在我们自己的运行记录里（spawn 时写、job 收尾时删）。
+	// 找不到记录通常意味着「派发从未成功」或「记录已被清」——两种都不该有活着的子进程。
+	const findRun = opts.findRun ?? (() => {
+		const rec = readSubagentRun(profilePath, layer, jobId);
+		return rec ? { pid: rec.pid, state: "running" } : undefined;
+	});
 	const runInfo = findRun();
 	const pid = runInfo?.pid;
 	if (!runInfo) {
-		logEvent("pipeline", `job ${jobId} 停止序列：未找到 async run 的 status.json（无法取 pid）`, profilePath);
+		logEvent(
+			"pipeline",
+			`job ${jobId} 停止序列：没找到本扩展的子代理运行记录（无法取 pid；` +
+			`通常意味着派发就没成功或记录已清理）`,
+			profilePath,
+		);
 	}
 	if (!opts.skipGrace) await sleep(graceMs);
 
