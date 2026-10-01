@@ -1,4 +1,4 @@
-import { runPiSubagent } from "../../util/subagent.ts";
+import { failFastOnSpawnFailure, runPiSubagent } from "../../util/subagent.ts";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -269,10 +269,10 @@ export function setupL3Persona(
 		});
 		try {
 			const spawnP = runPiSubagent("l3-persona-generator", task, ctx, L3_SUBAGENT_TIMEOUT_MS, abortCtl.signal);
-			void spawnP.catch((err) => {
+			// 派发失败立刻进 catch 释放 job，不干等活性门控（详见 failFastOnSpawnFailure 头注释）
+			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
 				logEvent("l3", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
 			});
-			const outcome = await waitP;
 
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {

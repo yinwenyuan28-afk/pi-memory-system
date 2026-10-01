@@ -1,4 +1,4 @@
-import { runPiSubagent } from "../../util/subagent.ts";
+import { failFastOnSpawnFailure, runPiSubagent } from "../../util/subagent.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	L1_INTERVAL,
@@ -120,10 +120,12 @@ export function setupL1Extractor(
 		});
 		try {
 			const spawnP = runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS, abortCtl.signal);
-			void spawnP.catch((err) => {
+			// 派发失败要立刻进下方 catch（那里已有计数 / 告警卡 / 释放 job 的完整处理），
+			// 不能只记日志后干等活性门控——子代理压根没起来时 job 会挂到硬阈值
+			// （默认 45 分钟），期间串行队列被单飞锁全堵死。
+			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
 				logEvent("l1", `spawn later: ${err instanceof Error ? err.message : String(err)}`);
 			});
-			const outcome = await waitP;
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
 				const s2 = loadL1State();

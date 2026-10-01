@@ -201,3 +201,50 @@ export async function runPiSubagent(
 		});
 	});
 }
+
+/**
+ * 把「派发子代理」与「等待 job 完成」赛跑：**派发失败要立刻冒泡，不能只记日志后干等。**
+ *
+ * ── 为什么需要它（2026-10-01 事故）──────────────────────────────────────────
+ * l1 / l2 / l3 三层此前都是这个写法：
+ *
+ * ```ts
+ * const spawnP = runPiSubagent(...);
+ * void spawnP.catch((err) => logEvent("l1", `spawn later: ${err.message}`));  // 只记日志
+ * const outcome = await waitP;                                                // 干等到硬阈值
+ * ```
+ *
+ * 派发失败（桥接层缺席 / ctx 失效 / 参数被拒）时，子代理压根没起来，job 永远等不到
+ * 完成信号，只能挂在 `running` 直到硬上限——**默认 45 分钟**。而管线是串行单飞的，
+ * 这段时间内 L2 / L3 全部堵在 `queued`。一个派发失败被放大成整条记忆管线停摆。
+ * 实测：L1 派发失败后 L2 卡在队列里，jobs.sqlite 里一个 running + 一个 queued。
+ *
+ * 改成赛跑后，派发失败立刻进调用方的 catch —— 那里本来就有完整的失败处理
+ * （失败计数 + 告警卡 + `db.complete(job.id,"failed")` 释放槽位），不用新写一套。
+ *
+ * ── 内部的 unhandled rejection 处理 ────────────────────────────────────────
+ * 两条 Promise 赛跑，**落败的那条**如果之后 reject，在 Node 里就是 unhandledRejection。
+ * 两种落败都要兜住：
+ * - `waitP` 落败（派发先失败）：`waitP` 之后若 reject 无人接 ⇒ 加 `.catch()`；
+ * - `spawnP` 落败（job 先完成）：`guard` 是 `spawnP` 的派生 Promise，reject 无人接 ⇒ 加 `.catch()`。
+ *
+ * @param spawnP  `runPiSubagent()` 的返回值（派发成功=已 spawn，失败=reject）
+ * @param waitP   等待 job 完成的 Promise（如 `waitJobWithLiveness`）
+ * @param onError 派发失败时的日志回调（无论它是否赢得赛跑都会调用，便于保留现场）
+ * @returns 与 `waitP` 相同的产出；派发失败则以派发的错误 reject
+ */
+export function failFastOnSpawnFailure<T>(
+	spawnP: Promise<unknown>,
+	waitP: Promise<T>,
+	onError?: (err: unknown) => void,
+): Promise<T> {
+	// 派发成功 → 永不 settle，把等待权完整交给 waitP；派发失败 → 以同一错误冒泡。
+	const guard: Promise<T> = spawnP.then(() => new Promise<never>(() => {}));
+	// 落败方的兜底。给 guard 挂的这一个 catch 同时干两件事：接住 reject（否则
+	// job 先完成、派发后失败时就是 unhandledRejection）+ 记日志保留现场。
+	void guard.catch((err: unknown) => {
+		onError?.(err);
+	});
+	void waitP.catch(() => {});
+	return Promise.race([waitP, guard]);
+}

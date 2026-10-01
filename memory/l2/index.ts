@@ -1,4 +1,4 @@
-import { runPiSubagent } from "../../util/subagent.ts";
+import { failFastOnSpawnFailure, runPiSubagent } from "../../util/subagent.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { L2_SUBAGENT_TIMEOUT_MS, buildL2Task, loadL2Cursor, L2_FAILURE_THRESHOLD, readAllRecords } from "./config.ts";
 import { holdUntilFrom, loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
@@ -90,10 +90,10 @@ export function setupL2Organizer(
 				jobId: job.id,
 			});
 			const spawnP = runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS, abortCtl.signal);
-			void spawnP.catch((err) => {
+			// 派发失败立刻进 catch 释放 job，不干等活性门控（详见 failFastOnSpawnFailure 头注释）
+			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
 				logEvent("l2", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
 			});
-			const outcome = await waitP;
 
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
@@ -167,6 +167,14 @@ export function setupL2Organizer(
 				ctx.ui.notify(l2CoolDownMessage(st.consecutiveFailures), "error");
 			}
 			saveL2State(st);
+			// 释放 job 槽位：光 return "failed" 不够——worker 只看 DB 里的 status，
+			// job 留在 running 会一直占着串行单飞的槽位，直到 recoverStuckRunning
+			// 满 10 分钟才回收，期间 L1/L3 全被堵在 queued。
+			// （L1 / L3 的 catch 一直有这一步，唯独 L2 漏了。）
+			// 注意：上面 try 块里的 `db` 是块级作用域，catch 里看不到，这里重新取。
+			const catchDb = getPipelineJobsDB(profilePath);
+			const still = catchDb.getJob(job.id);
+			if (still?.status === "running") catchDb.complete(job.id, "failed", l2FailMsg);
 			return "failed";
 		} finally {
 			stopHeartbeat();
