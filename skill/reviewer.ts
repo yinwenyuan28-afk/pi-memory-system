@@ -19,8 +19,10 @@ import { render as renderPrompt } from "../prompts/registry.ts";
 const REVIEW_INTERVAL = 20;
 const CURSOR_KEY = "skillReviewer";
 
-/** 后台审查子代理超时（毫秒）：10 分钟，防止 executor 卡死导致审查永久停摆（M7）。 */
-const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+// 注：原 SUBAGENT_TIMEOUT_MS（10 分钟）已随自建 spawn 移除——它是传给 executor 的
+// timeoutMs，而上游异步路径根本不接（runAsyncPath 解构的 16 个字段里既没有 signal 也没有
+// timeoutMs），那个值从来没生效过。审查子代理是 fire-and-forget，不进 jobs 队列，
+// 没有活性门控可等；真要限制时长得在任务文本里写明。
 
 export function setupSkillReviewer(
 	pi: ExtensionAPI,
@@ -107,7 +109,7 @@ export function setupSkillReviewer(
 			reviewScheduled = true;
 			ctx.ui.setStatus("memory", "Memory ⚙skill-review...");
 			try {
-				await runPiSubagent("skill-reviewer", built.task, ctx, SUBAGENT_TIMEOUT_MS);
+				await runPiSubagent("skill-reviewer", built.task, ctx);
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;
@@ -134,7 +136,7 @@ export function setupSkillReviewer(
 						extra: extra ? `\nExtra context: ${extra}` : "",
 					});
 					try {
-						await runPiSubagent("skill-reviewer", task, ctx, SUBAGENT_TIMEOUT_MS);
+						await runPiSubagent("skill-reviewer", task, ctx);
 					} finally {
 						reviewScheduled = false;
 					}
@@ -145,7 +147,7 @@ export function setupSkillReviewer(
 				return;
 			}
 			try {
-				await runPiSubagent("skill-reviewer", built.task + (extra ? `\nExtra context: ${extra}` : ""), ctx, SUBAGENT_TIMEOUT_MS);
+				await runPiSubagent("skill-reviewer", built.task + (extra ? `\nExtra context: ${extra}` : ""), ctx);
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;

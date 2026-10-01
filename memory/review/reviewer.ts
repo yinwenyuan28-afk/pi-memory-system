@@ -20,8 +20,10 @@ import { loadCursor, saveCursor } from "./review-cursor.ts";
 const REVIEW_INTERVAL = 20;
 const CURSOR_KEY = "memoryReviewer";
 
-/** 后台审查子代理超时（毫秒）：10 分钟，防止 executor 卡死导致审查永久停摆（M7）。 */
-const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+// 注：原 SUBAGENT_TIMEOUT_MS（10 分钟）已随自建 spawn 移除——它是传给 executor 的
+// timeoutMs，而上游异步路径根本不接（runAsyncPath 解构的 16 个字段里既没有 signal 也没有
+// timeoutMs），那个值从来没生效过。本审查器已停用（setupMemoryReviewer 未被 index.ts 挂载），
+// 留着这个常量只会让人以为超时在这里管着。
 
 export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryManager | undefined): () => string {
 	let turnCount = 0;
@@ -96,7 +98,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 			reviewScheduled = true;
 			ctx.ui.setStatus("memory", "Memory ⚙review...");
 			try {
-				await runPiSubagent("memory-reviewer", built.task, ctx, SUBAGENT_TIMEOUT_MS);
+				await runPiSubagent("memory-reviewer", built.task, ctx);
 				// 审查成功 → 游标推进到当前时间戳（下次从增量末尾开始）
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
@@ -126,7 +128,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 					if (l0Files.length > 0) {
 						const task = `L0Files: ${l0Files.join(",")}\nCursorPath: ${join(paths.profilePath, MEMORY_DB_DIR, L0_CURSOR_FILE)}\nReviewerCursor: \nProfilePath: ${paths.profilePath}`;
 						try {
-							await runPiSubagent("memory-reviewer", task, ctx, SUBAGENT_TIMEOUT_MS);
+							await runPiSubagent("memory-reviewer", task, ctx);
 						} finally {
 							reviewScheduled = false;
 						}
@@ -139,7 +141,7 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 				return;
 			}
 			try {
-				await runPiSubagent("memory-reviewer", built.task, ctx, SUBAGENT_TIMEOUT_MS);
+				await runPiSubagent("memory-reviewer", built.task, ctx);
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;

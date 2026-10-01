@@ -268,7 +268,11 @@ export function setupL3Persona(
 			jobId: job.id,
 		});
 		try {
-			const spawnP = runPiSubagent("l3-persona-generator", task, ctx, L3_SUBAGENT_TIMEOUT_MS, abortCtl.signal);
+			const spawnP = runPiSubagent("l3-persona-generator", task, ctx, {
+				profilePath,
+				layer: "l3",
+				jobId: job.id,
+			});
 			// 派发失败立刻进 catch 释放 job，不干等活性门控（详见 failFastOnSpawnFailure 头注释）
 			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
 				logEvent("l3", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);

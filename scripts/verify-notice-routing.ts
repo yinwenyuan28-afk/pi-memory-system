@@ -32,7 +32,7 @@ import {
 import { setupL3Persona } from "../memory/l3/index.ts";
 import { closePipelineJobsDB, getPipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { getVectorStore } from "../memory/search/vector-store/store.ts";
-import { initSubagentBridge } from "../util/subagent.ts";
+import { setSpawnImplForTest } from "../util/spawn.ts";
 
 let pass = 0;
 let fail = 0;
@@ -122,37 +122,27 @@ function makeFakePi(): {
 }
 
 /**
- * 安装一个最小的 pi-subagents RPC 桥接桩，**接替旧的 globalThis.__piSubagentExecutor 桩**。
+ * 安装一个**自建 spawn 的桩**，接替生产实现（真的会起一个 pi 子进程）。
  *
- * util/subagent.ts 自 2026-10-01（独立发布整改 P0-1）起改走上游 `subagents:rpc:v1`
- * 事件总线，不再读那个私有全局变量（它是本机给 pi-subagents 源码打的补丁）。
- * 这里按上游协议（pi-subagents/src/extension/rpc.ts 的 registerSubagentRpcBridge）
- * 实现 request→reply 的最小闭环，让 L3 通知卡测试仍能模拟「子代理跑完并落盘」。
+ * util/spawn.ts 自 2026-10-01（自建 spawn 计划）起由本扩展自己 `spawn` pi 子进程派发
+ * 子代理，不再经由 pi-subagents。这里通过 `setSpawnImplForTest` 换掉实现，
+ * 让 L3 通知卡测试能离线模拟「子代理跑完并落盘」而不必真起子进程。
  *
- * @param pi      带 events 总线的假 pi（makeFakePi 产出）
  * @param initial 首次派发时执行的桩（模拟子代理干活：写文件 + complete job）
  * @returns 换桩函数——对应旧代码「重新给全局变量赋一次值」的写法
  */
-function installSubagentRpcStub(
-	pi: { events: { on: (c: string, h: (d: unknown) => void) => () => void; emit: (c: string, d: unknown) => void } },
+function installSpawnStub(
 	initial: (params: { agent?: string; task?: string }) => void,
 ): (next: (params: { agent?: string; task?: string }) => void) => void {
 	let current = initial;
-	pi.events.on("subagents:rpc:v1:request", (raw) => {
-		const req = raw as { requestId?: string; params?: { agent?: string; task?: string } };
-		const reply = (success: boolean, payload: Record<string, unknown>) =>
-			pi.events.emit(`subagents:rpc:v1:reply:${req.requestId}`, {
-				version: 1, requestId: req.requestId, success, ...payload,
-			});
-		try {
-			current(req.params ?? {});
-			reply(true, { data: { text: "Async: stub", details: { mode: "single", runId: `stub-${req.requestId}` } } });
-		} catch (e) {
-			reply(false, { error: { code: "execution_failed", message: e instanceof Error ? e.message : String(e) } });
-		}
+	setSpawnImplForTest((opts) => {
+		current({ agent: opts.agent, task: opts.task });
+		// 返回一个假 pid：测试里不会真的 stopSubagent（没有子进程可杀）
+		return { runId: "stub-run", pid: 999999, command: "stub" };
 	});
-	initSubagentBridge(pi as never);
-	return (next) => { current = next; };
+	return (next) => {
+		current = next;
+	};
 }
 
 const profile = makeProfile();
@@ -417,7 +407,7 @@ const l3Group = (async () => {
 	const job = db.claim(queued.id)!;
 	// 桩子代理：把“规则乙”换成“规则丙”写进**提议稿**（2026-09-28 起 L3 只写 USER-temp.md），
 	// 然后写“真完成信号”（等价 l3_commit → completeRunningL3）
-	const setL3Stub = installSubagentRpcStub(l3Cards.pi as never, () => {
+	const setL3Stub = installSpawnStub(() => {
 		writeFileSync(join(l3Root, "USER-temp.md"), ["规则甲：中文输出", "规则丙：新增的画像规则"].join("\n§\n") + "\n", "utf-8");
 		db.complete(job.id, "done");
 	});

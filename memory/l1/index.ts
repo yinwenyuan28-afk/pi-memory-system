@@ -119,7 +119,11 @@ export function setupL1Extractor(
 			jobId: job.id,
 		});
 		try {
-			const spawnP = runPiSubagent("l1-extractor", task, ctx, SUBAGENT_TIMEOUT_MS, abortCtl.signal);
+			const spawnP = runPiSubagent("l1-extractor", task, ctx, {
+				profilePath,
+				layer: "l1",
+				jobId: job.id,
+			});
 			// 派发失败要立刻进下方 catch（那里已有计数 / 告警卡 / 释放 job 的完整处理），
 			// 不能只记日志后干等活性门控——子代理压根没起来时 job 会挂到硬阈值
 			// （默认 45 分钟），期间串行队列被单飞锁全堵死。

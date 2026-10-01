@@ -178,6 +178,24 @@ export const STOP_REQUEST_FILE_PREFIX = join("state", "stop-request-");
  * 从而不再依赖监督者判断"子代理何时算结束"（详见 `memory/pipeline/run-lock.ts`）。
  */
 export const RUN_LOCK_FILE_PREFIX = join("state", "run-lock-");
+/**
+ * 自建子代理的**运行记录**文件前缀（`{memoryDB}/state/subagent-run-<layer>-<jobId>.json`，
+ * 2026-10-01 自建 spawn 计划）。
+ *
+ * 用途：替代原先对 pi-subagents 私有布局的依赖（临时目录下
+ * `pi-subagents-<scope>/async-subagent-runs/<runId>/status.json`）。自建 spawn 之后
+ * 我们直接持有子进程 pid，这里落一份 pid ↔ jobId 的映射，供三处使用：
+ *   1. 停止序列取 pid（`memory/pipeline/subagent-kill.ts` 的 `findRun` 注入点）
+ *   2. 主进程重启后回收残留子进程（pid 还活着就停掉）
+ *   3. 手动停子代理命令 `/my-memory:subagent-kill`
+ *
+ * 之所以落盘而不是只存内存：主进程重启后内存态全丢，没有落盘记录就**无法清理残留子进程**。
+ */
+export const SUBAGENT_RUN_FILE_PREFIX = join("state", "subagent-run-");
+/** 自建子代理的 system prompt 暂存目录（`{memoryDB}/tmp/subagent-prompts/`，2026-10-01）。 */
+export const SUBAGENT_PROMPT_TMP_DIR = join("tmp", "subagent-prompts");
+/** 自建子代理的 session 文件目录（`{memoryDB}/subagent-sessions/`，2026-10-01），按 layer 分目录。 */
+export const SUBAGENT_SESSION_DIR = join("subagent-sessions");
 
 // ── 运行日志与跨进程通知 ────────────────────────────────────
 /**

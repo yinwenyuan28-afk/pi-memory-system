@@ -89,7 +89,11 @@ export function setupL2Organizer(
 				layer: "l2",
 				jobId: job.id,
 			});
-			const spawnP = runPiSubagent("l2-scene-organizer", task, ctx, L2_SUBAGENT_TIMEOUT_MS, abortCtl.signal);
+			const spawnP = runPiSubagent("l2-scene-organizer", task, ctx, {
+				profilePath,
+				layer: "l2",
+				jobId: job.id,
+			});
 			// 派发失败立刻进 catch 释放 job，不干等活性门控（详见 failFastOnSpawnFailure 头注释）
 			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
 				logEvent("l2", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
