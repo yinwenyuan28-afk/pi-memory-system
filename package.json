@@ -1,0 +1,57 @@
+{
+	"name": "pi-memory-system",
+	"version": "0.1.0",
+	"description": "L0–L3 记忆管线扩展：会话自动提取原子记忆、场景整合、用户画像，并按需召回注入",
+	"license": "MIT",
+	"type": "module",
+	"engines": {
+		"node": ">=22.13.0"
+	},
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"files": [
+		"index.ts",
+		"memory/",
+		"util/",
+		"skill/",
+		"workflow/",
+		"config/",
+		"prompts/",
+		"agents/",
+		"scripts/l1-admin/",
+		"README.md"
+	],
+	"scripts": {
+		"check-types": "node scripts/check-types.mjs",
+		"test": "node scripts/verify-prompt-contracts.mjs"
+	},
+	"dependencies": {
+		"better-sqlite3": "^13.0.3",
+		"sqlite-vec": "^0.1.9"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-agent-core": ">=0.80.0",
+		"@earendil-works/pi-ai": ">=0.80.0",
+		"@earendil-works/pi-coding-agent": ">=0.80.0"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-agent-core": {
+			"optional": true
+		},
+		"@earendil-works/pi-ai": {
+			"optional": true
+		},
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		}
+	},
+	"keywords": [
+		"pi",
+		"pi-extension",
+		"memory",
+		"pi-agent"
+	]
+}
