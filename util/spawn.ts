@@ -120,17 +120,54 @@ export function listBundledAgents(): string[] {
 }
 
 /**
+ * 判断一个 .js/.mjs 路径**是不是 pi CLI 的入口**——向上找 package.json，
+ * 要求 `name === "@earendil-works/pi-coding-agent"`。
+ *
+ * 为什么必须校验：`process.argv[1]` 只有在**跑在 pi 进程里**时才是 pi 的入口。
+ * 本文件自己的测试脚本、任何 jiti 直跑的脚本，它的 argv[1] 指向的是那个脚本自己。
+ * 不校验就会派发出 `node <某个不相干的脚本> <一串 pi 参数>`，那个脚本会把参数当
+ * 自己的 argv 跑起来——实测会让验证脚本递归派发自己。
+ * pi-subagents 的 resolvePiScript 也做了同样的校验（findPiPackageRootFromEntry）。
+ */
+function looksLikePiCli(scriptPath: string): boolean {
+	let dir = dirname(scriptPath);
+	for (let i = 0; i < 8; i++) {
+		const pj = join(dir, "package.json");
+		if (existsSync(pj)) {
+			try {
+				const meta = JSON.parse(readFileSync(pj, "utf-8")) as { name?: string };
+				return meta?.name === "@earendil-works/pi-coding-agent";
+			} catch {
+				return false;
+			}
+		}
+		const up = dirname(dir);
+		if (up === dir) break;
+		dir = up;
+	}
+	return false;
+}
+
+/**
  * 解析 pi 可执行入口。三级：环境变量 → `process.execPath` + `process.argv[1]` → PATH 的 `pi`。
  *
  * 为什么不能只查 PATH：本机 `pi` 位于 `~/AppData/Local/fnm_multishells/<会话哈希>/pi`，
  * 哈希随 pi 会话变化，换个窗口就找不到。而 memory-system 就跑在 pi 进程里，
- * `process.argv[1]` 正是 pi 自己的入口——用它最可靠。
+ * `process.argv[1]` 正是 pi 自己的入口——用它最可靠（但**必须先经 looksLikePiCli 校验**，
+ * 见该函数注释）。
  */
 export function resolvePiCommand(): { command: string; prefixArgs: string[] } {
 	const override = process.env.PI_MEMORY_SYSTEM_PI_BIN?.trim();
-	if (override) return { command: override, prefixArgs: [] };
+	if (override) {
+		// 允许直接指向 pi 的 cli.js —— 这样调用方（尤其是跑在 pi 之外的验证脚本）
+		// 能走**与生产完全相同**的那一档，而不是退到需要 shell 的 PATH 回落档。
+		if (/\.m?js$/i.test(override) && existsSync(override) && looksLikePiCli(override)) {
+			return { command: process.execPath, prefixArgs: [override] };
+		}
+		return { command: override, prefixArgs: [] };
+	}
 	const argv1 = process.argv[1];
-	if (argv1 && /\.m?js$/i.test(argv1) && existsSync(argv1)) {
+	if (argv1 && /\.m?js$/i.test(argv1) && existsSync(argv1) && looksLikePiCli(argv1)) {
 		return { command: process.execPath, prefixArgs: [argv1] };
 	}
 	return { command: "pi", prefixArgs: [] };
@@ -223,6 +260,15 @@ function spawnSubagentReal(opts: SpawnOptions): SpawnedSubagent {
 	const promptFile = join(promptDir, `${runId}.md`);
 	writeFileSync(promptFile, agentDef.body, "utf-8");
 
+	// task 也落文件，用 `@<path>` 交给 pi（pi 支持 `pi [@files...] [messages...]`）。
+	// 两个理由：
+	//   1. **命令注入**：task 内容来自 L0 会话（含用户原话）。若直接进 argv，回落到
+	//      `shell: true` 执行时（见 resolvePiCommand 的第三档）Node 不做转义，
+	//      内容里的 `"` `&` `|` 会被 cmd 当元字符解释。走文件就没有这个面。
+	//   2. **Windows 命令行长度上限**约 32K，task 长了会 spawn 失败（`EINVAL`）。
+	const taskFile = join(promptDir, `${runId}.task.txt`);
+	writeFileSync(taskFile, opts.task, "utf-8");
+
 	// session 目录按 layer 分，避免同名覆盖
 	const sessionDir = join(opts.profilePath, MEMORY_DB_DIR, SUBAGENT_SESSION_DIR, opts.layer);
 	mkdirSync(sessionDir, { recursive: true });
@@ -247,11 +293,21 @@ function spawnSubagentReal(opts: SpawnOptions): SpawnedSubagent {
 			// 不再起调度器/管线worker，避免与主进程抢队列。
 			extraExtensions: [join(EXT_ROOT, "index.ts")],
 		}),
-		opts.task,
+		`@${taskFile}`,
 	];
 
-	const stdoutFd = closeSync(openSync(stdoutPath, "a"));
-	const stderrFd = closeSync(openSync(stderrPath, "a"));
+	// 打开日志文件拿到 fd —— 传给 spawn 的 stdio，子进程直接继承这两个句柄。
+	// ⚠ 不要写成 closeSync(openSync(...))：closeSync 没有返回值，会把 fd 变成
+	// undefined，spawn 立刻抛 `The "fd" argument must be of type number`。
+	// 子进程拿到句柄后父进程即可关闭（spawn 内部已 dup），放在 finally 里防 fd 泄漏。
+	const stdoutFd = openSync(stdoutPath, "a");
+	const stderrFd = openSync(stderrPath, "a");
+
+	// 回落档（PATH 里的 `pi`）在 Windows 上是 shell 脚本 / .cmd，Node 不能直接 exec，
+	// 必须走 shell。这里是**唯一**需要 shell 的地方——而我们所有经 shell 传的参数
+	// 都是我们自己拼的常量（agent 名走 @file、路径无元字符），用户/会话内容一律走
+	// 文件，所以没有注入面。前两档（生产实际走的）都不经过 shell。
+	const useShell = prefixArgs.length === 0 && process.platform === "win32";
 
 	let child: ChildProcess;
 	try {
@@ -265,6 +321,7 @@ function spawnSubagentReal(opts: SpawnOptions): SpawnedSubagent {
 			},
 			detached: true,   // 独立进程组：主进程退出不影响子代理；停止时按组杀
 			windowsHide: true,
+			shell: useShell,  // 仅 PATH 回落档需要（见上方注释）；生产实际走的前两档为 false
 			stdio: ["ignore", stdoutFd, stderrFd],
 		});
 	} finally {
@@ -283,7 +340,7 @@ function spawnSubagentReal(opts: SpawnOptions): SpawnedSubagent {
 		runId,
 		agent: opts.agent,
 		startedAt: new Date().toISOString(),
-		command: `${command} ${args.slice(0, -1).join(" ")} "<task>"`,
+		command: `${command} ${args.slice(0, -1).join(" ")} @<taskFile>`,
 		stdoutPath,
 		stderrPath,
 	};

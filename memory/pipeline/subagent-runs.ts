@@ -25,8 +25,18 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { MEMORY_DB_DIR, SUBAGENT_RUN_FILE_PREFIX } from "../paths.ts";
+
+/**
+ * 运行记录文件名（不含目录）的前缀。
+ *
+ * ⚠ 必须从 SUBAGENT_RUN_FILE_PREFIX 派生，不能直接拿它去比对文件名：
+ * 该常量是 `join("state", "subagent-run-")`，在 Windows 上解析成 `state\subagent-run-`
+ * （带反斜杠）。拿它 `startsWith` 纯文件名（`subagent-run-l2-77.json`）永远不成立 ⇒
+ * listSubagentRuns 会一条都列不出来。basename 两种分隔符都能正确取末段。
+ */
+const RUN_NAME_PREFIX = basename(SUBAGENT_RUN_FILE_PREFIX);
 
 /** 一条运行记录。字段刻意保持最小——够定位 pid 与排查即可，不复制上游的 status.json。 */
 export interface SubagentRunRecord {
@@ -109,7 +119,7 @@ export function listSubagentRuns(profilePath: string): SubagentRunRecord[] {
 	if (!existsSync(dir)) return [];
 	const out: SubagentRunRecord[] = [];
 	for (const name of readdirSync(dir)) {
-		if (!name.startsWith(SUBAGENT_RUN_FILE_PREFIX) || !name.endsWith(".json")) continue;
+		if (!name.startsWith(RUN_NAME_PREFIX) || !name.endsWith(".json")) continue;
 		try {
 			const rec = JSON.parse(readFileSync(join(dir, name), "utf-8")) as SubagentRunRecord;
 			if (typeof rec?.pid === "number" && typeof rec?.layer === "string") out.push(rec);
