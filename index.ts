@@ -59,6 +59,7 @@ import {
   resetNoticeDedup,
   setNoticeProfileResolver,
 } from "./util/notice.ts";
+import { buildQueryText } from "./util/query-noise.ts";
 import { listBundledAgents, resolvePiCommand, BUNDLED_AGENTS_DIR } from "./util/spawn.ts";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -697,49 +698,75 @@ export default function (pi: ExtensionAPI) {
     currentTurnHitSet.clear();
     turnToken++;
 
-    // ── L1 召回 query 构造（2026-09-02 起条件式，取代无条件拼 10 条历史） ──
-    // 默认裸 prompt = 本轮意图信号（腾讯三端同款）。
-    // 仅当 contextExpansion=conditional 且 prompt 命中指代消解（含指代词 / 过短）时，
-    // 追加最近 1-2 条 role=user 消息（排除 assistant/toolResult，它们含报错堆栈/文件内容，
-    // 是向量稀释主因）。always 仅作 A/B 对照组，用于复现旧拼接行为。
-    // 注意：最终 queryText 只在 recallL1Records()（下方 L1 召回）使用；
-    // maybeRefreshKeywords 两个参数语义不变（话题检测用裸 prompt、关键词刷新用 queryText）。
+    // ── L1 召回 query 构造（2026-10-02 重构，取代 2026-09-02 的条件式拼接） ──
+    //
+    // 旧行为：裸 prompt，或（contextExpansion=conditional 且命中指代消解时）**追加**最近 2 条
+    // user 历史。缺陷（实测）：噪声 prompt（"同意"/"提交"/"需要"，L0 1897 条 user 消息里 109 条
+    // = 5.7%）**全部**因「过短 <12 字」命中指代消解，于是变成 `噪声原文 + 真实历史` 一起进
+    // embedding —— **噪声占掉一半权重，把真实意图稀释了**。向量检索永远返回 top-K，哪怕库全是
+    // 无关内容，所以噪声 query 照样拿 0.45–0.53 的「top-1 最佳命中」，看着像召回了，其实在捞
+    // 最不相关的那几条（采样实测 30 条）。
+    //
+    // 新行为：决策逻辑收进 `util/query-noise.ts`（纯函数、可回归），三档：
+    //   bare     —— prompt 有实质内容（conditional/always 时仍按旧行为追加历史，保持兼容）
+    //   replaced —— prompt 是噪声但历史里捞得到实质内容 ⇒ **用历史替代噪声**，不保留噪声原文
+    //                （同等 embedding 成本、信号强度提高；这是**提质**不是省时间）
+    //   skipped  —— 噪声且历史也捞不到 ⇒ queryText 空串，调用方直接不发 embedding
+    // replaced 必须同时看 user 与 assistant 历史：实测 8 个噪声样本有 4 个「前 3 条 user 内无
+    // 实质内容」（"提交" ← 上一轮 assistant 正在写「## 实施完成，验证全部通过…」），意图在
+    // assistant 那边，只看 user 会让一半场景无效。
     let queryText = event.prompt;
+    /** true ⇒ 本轮噪声且无历史可救，跳过召回（不发 embedding、不占闸门）。 */
+    let skipRecall = false;
     try {
       const recallCfg = loadRecallConfig(
         manager?.getProfileManager().getActiveProfile()?.path ?? ""
       );
-      if (recallCfg.contextExpansion === "always") {
-        const entries = ctx.sessionManager.getEntries();
-        const recentMessages = entries
-          .filter((e: any) => e.type === "message")
-          .slice(-10)
-          .map((e: any) => `[${e.message?.role}] ${extractMessageText(e)}`)
-          .filter(Boolean)
-          .join("\n");
-        if (recentMessages) queryText = `${event.prompt}\n${recentMessages}`;
-      } else if (recallCfg.contextExpansion === "conditional" && needsContextExpansion(event.prompt)) {
-        // 指代消解：只取最近 2 条 user 消息（slice(-3,-1) 排除本轮 prompt 自身），截断 200 字
-        const entries = ctx.sessionManager.getEntries();
-        const recentUser = entries
-          .filter((e: any) => e.type === "message" && e.message?.role === "user")
-          .slice(-3, -1)
+      const expandContext =
+        recallCfg.contextExpansion === "always" ||
+        (recallCfg.contextExpansion === "conditional" && needsContextExpansion(event.prompt));
+      const entries = ctx.sessionManager.getEntries();
+      // 最近 2 条 user 历史（slice(-3,-1) 排除本轮 prompt 自身），**倒序**供替代逻辑从近处挑
+      const recentUser = entries
+        .filter((e: any) => e.type === "message" && e.message?.role === "user")
+        .slice(-3, -1)
+        .map((e: any) => extractMessageText(e))
+        .filter(Boolean)
+        .slice(-2)
+        .reverse();
+      // 上一条 assistant（噪声轮次的意图常写在这里，见上方 replaced 说明）
+      const lastAssistant =
+        entries
+          .filter((e: any) => e.type === "message" && e.message?.role === "assistant")
+          .slice(-1)
           .map((e: any) => extractMessageText(e))
-          .filter(Boolean)
-          .slice(-2)
-          .join("\n")
-          .slice(0, 200);
-        if (recentUser) {
-          queryText = `${event.prompt}\n${recentUser}`;
-          logEvent(
-            "recall",
-            `contextExpansion 触发: q="${event.prompt.slice(0, 40)}…" + ${recentUser.length}字历史`,
-          );
-        }
+          .join("") ?? "";
+
+      const plan = buildQueryText({
+        prompt: event.prompt,
+        recentUser,
+        lastAssistant,
+        expandContext,
+      });
+      queryText = plan.text;
+      skipRecall = plan.kind === "skipped";
+
+      if (plan.kind === "replaced") {
+        logEvent(
+          "recall",
+          `噪声 query 已替代: p="${event.prompt.slice(0, 24)}…" → 来自 ${plan.from}（${plan.text.length}字）`,
+        );
+      } else if (skipRecall) {
+        logEvent("recall", `噪声 query 且无历史可救，跳过本轮召回: p="${event.prompt.slice(0, 24)}…"`);
+      } else if (expandContext && recallCfg.contextExpansion === "conditional" && needsContextExpansion(event.prompt)) {
+        logEvent(
+          "recall",
+          `contextExpansion 触发: q="${event.prompt.slice(0, 40)}…" + ${(queryText.length - event.prompt.length)}字历史`,
+        );
       }
-      // contextExpansion === "off" → queryText 保持裸 event.prompt
+      // contextExpansion === "off" → expandContext=false → 纯裸 prompt
     } catch {
-      // sessionManager / config 不可用 → fall back to prompt only
+      // sessionManager / config 不可用 → fall back to prompt only（fail-open，不跳过召回）
     }
 
     // 冻结快照（固定不变）→ system prompt 前缀稳定 → 命中 provider 前缀缓存
@@ -761,16 +788,19 @@ export default function (pi: ExtensionAPI) {
     //   · async：不等待，立即放行 agent loop；结果就绪后由 context 在后续调用前插入；
     //   · 命中计数**不在此处**做（`countHits: false`）——「召回返回」≠「真的注入」，
     //     改由 context 事件在块真正入列时计数（见下）。
-    // 短查询 / 质量门过滤：避免为 "1" / "/" / 纯符号等无意义 prompt 浪费向量调用
+//   短查询 / 质量门过滤：避免为 "1" / "/" / 纯符号等无意义 prompt 浪费向量调用。
+    //   ⚠ `length < 3` 这条已由 `util/query-noise.ts` 的噪声判定**取代**（它覆盖
+    //   "同意"/"提交"/"需要" 等 5.7% 的元指令，旧的 3 字门槛漏掉了它们）；
+    //   `skipRecall` 由上面的 buildQueryText 产出（噪声且历史救不回）。
+    //   `_isTrivialPrompt` 保留「斜杠命令 / 纯符号」两条 —— 那是**命令行语法**层面的判断，
+    //   与语义噪声是两回事（"/skill:plan-ex" 只有 2 字但有明确意图，必须走召回）。
     const _trimmedPrompt = (event.prompt || "").trim();
-    const _isTrivialPrompt =
-      !_trimmedPrompt ||
-      _trimmedPrompt.length < 3 ||
+    const _isSlashOrSymbol =
       _trimmedPrompt.startsWith("/") ||
       /^[\?？]+$/.test(_trimmedPrompt) ||
-      /^[^a-zA-Z0-9\u4e00-\u9fa5\s]{1,5}$/.test(_trimmedPrompt);
+      /^[^a-zA-Z0-9一-龥\s]{1,5}$/.test(_trimmedPrompt);
     const _activeProfile = manager?.getProfileManager().getActiveProfile();
-    if (!_isTrivialPrompt && _activeProfile) {
+    if (!_isSlashOrSymbol && !skipRecall && _activeProfile) {
       try {
         const recallCfg = loadRecallConfig(_activeProfile.path);
         const myTurn = turnToken;

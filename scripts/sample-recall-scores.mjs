@@ -177,7 +177,16 @@ function vecSearch(db, queryVec, k) {
        AND k = ${k} ORDER BY distance`
     )
     .all();
-  return rows.map((r) => 1 - r.distance); // score = 1 - distance
+  // ⚠ 2026-10-02 修正（本脚本此前与线上换算脱节，导致标定出来的阈值口径是错的）：
+  //   vec0 建表未声明 distance_metric，`ORDER BY distance` 返回的是 **L2 距离**，不是余弦。
+  //   向量入库前已 L2 归一化（模长恒 1），故 `cos = 1 - d²/2`。
+  //   旧写法 `1 - d` 不是余弦：实测真实 cos=0.616 会算成 0.124，被 minScore(0.2) 误杀 ——
+  //   即「配置写 0.2、实际卡在 cos≈0.68」，且全程无报错。
+  //
+  //   **必须与 `memory/search/vector-store/store.ts` 保持一致**，否则本脚本采样得到的分数
+  //   与线上 `hybrid-recall` 看到的 score 不是一个尺度，阈值会再次标歪。
+  //   （线上那处 2026-09-19 已修，本脚本当时漏改 —— 是 `filtered=0` 129 次零例外的根因之一。）
+  return rows.map((r) => 1 - (r.distance * r.distance) / 2);
 }
 
 // ── 5. 分位数 + 直方图 ──
