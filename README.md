@@ -26,6 +26,11 @@ pi install ./path/to/memory-system
 
 装完执行 `/reload`（或重启 pi）生效。
 
+> **`pi install` 不接受 `.tgz` 路径**（2026-10-02 实测）。喂 tarball 的话 pi 只是把
+> `xxx.tgz` 原样写进 `settings.packages` 的相对路径，加载器随后报
+> `Unknown file extension ".tgz"` —— 装是"成功"了，但扩展永远加载不上。
+> 要用 tarball 就先解包，再按**目录**装：`tar -xzf x.tgz && pi install ./package`。
+
 ### ⚠ 只用一种安装方式
 
 pi 会**同时**扫描 `~/.pi/agent/extensions/` 目录和 `settings.json` 的 `packages` 数组。如果扩展同时存在于两处，pi 会加载两次 ⇒ **同名工具重复注册**（pi 的去重按路径，两条路径不同不去重）。

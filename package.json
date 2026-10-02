@@ -15,6 +15,7 @@
 	"files": [
 		"index.ts",
 		"memory/",
+		"!memory/pipeline/jobs-db.test.mjs",
 		"util/",
 		"skill/",
 		"config/",
@@ -47,6 +48,16 @@
 			"optional": true
 		}
 	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://gitee.com/SunpayusChen/pi.git",
+		"directory": "agent/extensions/memory-system"
+	},
+	"homepage": "https://gitee.com/SunpayusChen/pi",
+	"bugs": {
+		"url": "https://gitee.com/SunpayusChen/pi/issues"
+	},
+	"author": "SunpayusChen",
 	"keywords": [
 		"pi",
 		"pi-extension",
