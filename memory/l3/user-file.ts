@@ -28,8 +28,16 @@ import { join } from "node:path";
 import { MEMORY_DB_DIR, USER_BACKUPS_DIR } from "../paths.ts";
 import { parseUserFile } from "./entries.ts";
 
-/** live 画像文件名（profile 根目录，**不在** memoryDB 下）。注入侧与去重读的都是它。 */
-export const USER_FILE = "USER.md";
+/**
+ * live 画像文件名（profile 根目录，**不在** memoryDB 下）。注入侧与去重读的都是它。
+ *
+ * 单源在 `core/types.ts`（P1-11：原先 store / user-file / profile 三处各写一遍，
+ * 而 `ensureProfileStructure()` 建目录用的是数组字面量、改名字只改一处就会
+ * 「建了目录却读不到文件」）。这里**再导出**是为了保住既有 import 路径 ——
+ * `l3/index.ts`、`l3/edit-tool.ts`、`scripts/verify-l3-commit.ts` 都从这里取。
+ */
+export { USER_FILE } from "../core/types.ts";
+import { USER_FILE } from "../core/types.ts";
 
 /** L3 的落盘目标（staging 提议稿，profile 根目录）。L3 只写它。 */
 export const USER_TEMP_FILE = "USER-temp.md";

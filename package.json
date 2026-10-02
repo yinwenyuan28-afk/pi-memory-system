@@ -17,7 +17,6 @@
 		"memory/",
 		"util/",
 		"skill/",
-		"workflow/",
 		"config/",
 		"prompts/",
 		"agents/",

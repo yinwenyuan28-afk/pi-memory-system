@@ -1,8 +1,1 @@
-[
-  {
-    "file": "workflow/commands.ts",
-    "code": "TS2304",
-    "ident": "WorkflowDetector",
-    "why": "workflow 系统整体 DISABLED（index.ts 里 setupWorkflowSystem 已注释），此文件不被加载；缺的是类型名，属死代码，不与门禁目标冲突"
-  }
-]
+[]

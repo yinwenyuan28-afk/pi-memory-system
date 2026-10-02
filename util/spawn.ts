@@ -27,17 +27,19 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { MEMORY_DB_DIR, SUBAGENT_PROMPT_TMP_DIR, SUBAGENT_SESSION_DIR } from "../memory/paths.ts";
 import { clearSubagentRun, writeSubagentRun, type SubagentRunRecord } from "../memory/pipeline/subagent-runs.ts";
 import { logEvent } from "./notice.ts";
+import { BUNDLED_AGENTS_DIR, PLUGIN_ROOT } from "./agent-dir.ts";
 
-/** 插件根目录（<插件>/util/spawn.ts → 上两级）。 */
-const EXT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-/** 自带子代理定义的目录（<插件>/agents）。 */
-export const BUNDLED_AGENTS_DIR = join(EXT_ROOT, "agents");
+/**
+ * `PLUGIN_ROOT` / `BUNDLED_AGENTS_DIR` 已收进 `util/agent-dir.ts`（路径单源，P1-7/P1-9）。
+ * 原来这里自己算了一份插件根、提示词那边又算了一份，两份漂移了没有任何东西能发现。
+ * 下游若需要这两个值，从本模块再导出一次即可（保持既有 import 路径可用）。
+ */
+export { BUNDLED_AGENTS_DIR, PLUGIN_ROOT };
 
 /** 一个已派发的子代理。 */
 export interface SpawnedSubagent {
@@ -300,7 +302,7 @@ function spawnSubagentReal(opts: SpawnOptions): SpawnedSubagent {
 			// 子进程必须能加载本扩展的工具（l1_commit / l2_commit / l3_edit / read_* 等）。
 			// 显式 -e 保证与 cwd 无关；子代理自己的 index.ts 顶部的子进程守卫会让它
 			// 不再起调度器/管线worker，避免与主进程抢队列。
-			extraExtensions: [join(EXT_ROOT, "index.ts")],
+			extraExtensions: [join(PLUGIN_ROOT, "index.ts")],
 		}),
 		`@${taskFile}`,
 	];

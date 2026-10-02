@@ -6,7 +6,7 @@
 //   2. 两级来源：内置默认（BUILTIN，TS 常量）← md 覆盖（prompts/ 下 md 文件）。
 //   3. 占位符强契约：模板声明 vars（md frontmatter / 分节标记），render() 传参
 //      缺失或多出即 throw（fail fast——死模板类问题的根因是静默）。
-//   4. 分节加载：key 含 "#" 时取 md 内 `## 节名`（先例：workflow/prompts.ts extractSection）。
+//   4. 分节加载：key 含 "#" 时取 md 内 `## 节名`。
 //   5. partial：`{{>key}}` 展开共享片段（片段必须零变量），避免跨文件重复。
 //
 // 性能模型：进程内首次消费时读一次磁盘（全部 md 共几十 KB），此后走缓存；
@@ -22,10 +22,8 @@
 // ============================================================================
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const PROMPTS_DIR = dirname(fileURLToPath(import.meta.url));
+import { join } from "node:path";
+import { PROMPTS_DIR } from "../util/agent-dir.ts";
 
 /** 无运行时兜底、md 缺失即 throw 的 key 前缀/全名（启动静态类）。 */
 const MD_ONLY_KEYS = ["injection/l1-contract"];
@@ -60,12 +58,12 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 		template:
 			"[L1 自纠提示] 若某条召回记忆与当前事实/代码矛盾且有可复核证据，可调 l1_fix 就地修正（需附 evidence）；仅可疑无证据时用 clear_invalid_l1_records 标记。",
 	},
-	"shared#protected-files": {
-		vars: [],
-		template:
-			"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (l1-extractor, l2-scene-organizer, l3-persona-generator, skill-reviewer) are protected. ONLY use edit, NEVER write on these files.\n" +
-			"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\extensions\\memory-system\\prompts\\ (all *.md templates, incl. subdirs shared/injection/tasks/tools/backends/retired) are protected. ONLY use edit, NEVER write on these files.",
-	},
+	// 原先这里有 "shared#protected-files"，2026-10-02（P1-9）删除：
+	// 它的内容（保护哪些文件）写死了本机绝对路径，且自建 spawn 之后指向的
+	// `~/.pi/agent/agents/` 早已不是真正在用的那一份。现在整段由
+	// `prompts/tool-vars.ts` 的 `buildProtectedFiles()` 在运行时拼好，
+	// 作为普通变量 `{{protectedFiles}}` 注入 `backends/tool-reminder`。
+	// 之所以不能继续用 partial：partial 按契约必须零变量（`expand()` 展开时固定传 `{}`）。
 
 	// ── injection：注入包裹骨架（Dynamic 内容经 vars 传入） ──
 	"injection/l1-records": {
@@ -177,7 +175,7 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 
 	// ── backends：后台/常驻提示词（整文件 key；Phase 3 自 memory/prompts/ 迁入） ──
 	"backends/tool-reminder": {
-		vars: ["autoInjectTopK", "toolRecallTopK"],
+		vars: ["autoInjectTopK", "toolRecallTopK", "protectedFiles"],
 		template:
 			"[Memory → L1] 你的持久记忆写入通道是 **`l1_commit`（`source: \"main-agent\"`）**；旧的 `memory` 工具已退役，不要再调它。\n" +
 			"RECORD when: 用户偏好/纠正/风格指令、根因结论（含\"因为…所以…\"因果结构）、非显然的约束或事实、用户拍板的决策（含理由与被否项）、踩坑经验、未定事项。\n" +
@@ -191,7 +189,7 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 			"How: call recall_l1_records with your own queryText (returns top-{{toolRecallTopK}}, broader than auto-inject). If a recalled record proves useless for the current task, call clear_invalid_l1_records with its recordId so its weight can be lowered.\n" +
 			"Limit: max 3 recall calls per turn. If 3 attempts return nothing relevant, the information is not in memory — answer from existing context and do not keep searching.\n" +
 			"\n" +
-			"{{>shared#protected-files}}",
+			"{{protectedFiles}}",
 	},
 };
 
@@ -363,7 +361,7 @@ const PREFLIGHT_KEYS = [
 	"shared#system-note-memory-context",
 	"shared#system-note-scene-context",
 	"shared#l1-selffix-hint",
-	"shared#protected-files",
+	// "shared#protected-files" 已于 2026-10-02 删除，理由见 BUILTIN 里那段注释
 	"injection/l1-records",
 	"injection/memory-context",
 	"injection/scene-context",

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { join } from "node:path";
 import { spliceJsonKey } from "../../util/json-edit.ts";
 import { DEFAULT_PROFILE, PROFILES_DIR_NAME, type Profile } from "./types.ts";
+import { MEMORY_FILE, ROUTES_FILE, USER_FILE } from "./types.ts";
 
 const PROFILES_DIR = PROFILES_DIR_NAME;
 const SETTINGS_FILE = "settings.json";
@@ -274,8 +275,9 @@ export class ProfileManager {
 		mkdirSync(join(path, "sub-memories", "global"), { recursive: true });
 		mkdirSync(join(path, ".staging"), { recursive: true });
 
-		// Create empty files if they don't exist
-		const files = ["MEMORY.md", "USER.md", "routes.md"];
+		// 文件名单源在 core/types.ts（P1-11）——原先这里是数组字面量、store 那边是私有常量，
+	// 改名字只改一处就会出现「建了目录却读不到文件」
+		const files = [MEMORY_FILE, USER_FILE, ROUTES_FILE];
 		for (const file of files) {
 			const filePath = join(path, file);
 			if (!existsSync(filePath)) {

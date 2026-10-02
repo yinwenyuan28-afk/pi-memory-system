@@ -2,9 +2,10 @@
  * 后台 LLM 调用公共封装（2026-08-19）。
  *
  * 背景：index.ts（inverted index filter）、memory/search/searcher.ts（关键词提取 /
- * 相关性过滤）、workflow/detector.ts、workflow/manager.ts 四处原本各自复制粘贴
+ * 相关性过滤）两处原本各自复制粘贴
  * 同一段样板——AbortController + setTimeout 超时 + completeSimple + content 提取
- * + catch 兜底。此处是单一真相源。
+ * + catch 兜底。此处是单一真相源。（原先还有 workflow/detector、workflow/manager
+ * 两处，2026-10-02 随 workflow 系统一并删除。）
  *
  * 职责边界：
  *   - 只做「超时 + content 提取 + 错误兜底」，返回**模型的文本输出**或 null；
@@ -61,8 +62,8 @@ function extractText(content: unknown): string {
 	// ⚠ **只要 text 段** —— 推理模型会先产出一大段 `thinking`（本机配置的
 	// `deepseek/deepseek-v4.1-flash` 就是），把它一起 JSON.stringify 出去等于
 	// 让调用方 `JSON.parse` 到一个**分片数组**而不是模型自己的 JSON 答案。
-	// 三个既有调用点（workflow/detector、workflow/manager、migrate-sub-memories）
-	// 全都是 `JSON.parse(raw)` 期望模型输出，所以这不是新需求，是修一个一直存在的错。
+	// 既有调用点（migrate-sub-memories、judg-session-project）全都是
+	// `JSON.parse(raw)` 期望模型输出，所以这不是新需求，是修一个一直存在的错。
 	return content
 		.filter((p) => p && typeof p === "object" && (p as { type?: string }).type === "text")
 		.map((p) => String((p as { text?: unknown }).text ?? ""))

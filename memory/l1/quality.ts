@@ -40,6 +40,7 @@
 import { loadAllL1Records, type L1Record } from "../search/embedding/record-loader.ts";
 import { getL1HitStatsDB, type L1HitStat } from "../stats/l1-hit-stats-db.ts";
 import { activeDayKeysToTimestamps, countActiveDaysAfter, loadActiveDayKeys, startOfLocalDay } from "./active-days.ts";
+import { PROTECTED_L1_TYPES } from "./record-types.ts";
 
 /** 质量分计算结果 */
 export interface QualityScore {
@@ -81,8 +82,8 @@ export const PRUNE_RULES = {
   protectedPercentile: 75,
 } as const;
 
-/** 受保护的类型：编码方法类记忆低曝光是常态，不能按曝光量判定生死 */
-const PROTECTED_TYPES: readonly string[] = ["work_method"];
+/** 受保护的类型：编码方法类记忆低曝光是常态，不能按曝光量判定生死（单源见 record-types.ts） */
+const PROTECTED_TYPES: readonly string[] = PROTECTED_L1_TYPES;
 
 /**
  * 读取活跃会话日时间戳（升序，本地日 0 点）

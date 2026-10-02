@@ -10,7 +10,7 @@
 //   - effective_hits：有效命中次数 = hits - invalid_hits（同事务维护，永不为负）
 //
 // 存储：{profile}/memoryDB/l1/hit-stats.sqlite
-//   技术：node:sqlite 内置 DatabaseSync（零原生依赖，与 workflow/db.ts 同款）
+//   技术：node:sqlite 内置 DatabaseSync（零原生依赖）
 //         WAL + busy_timeout 应对多进程并发写（后台子代理 + 主代理）
 //   与 vector-store 的 l1-vectors.sqlite（better-sqlite3 + sqlite-vec）物理隔离，互不干扰。
 //

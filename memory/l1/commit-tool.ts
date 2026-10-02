@@ -8,6 +8,7 @@ import { applyVerdictsToBatch, loadChecklistFromFile, runValueCheck, splitBatch 
 // `SCOPE_HELP` 那一大段中文词表不进本模块——它由提示词侧（backfill 脚本 / l1-extractor.md）自己引用。
 import { normalizeScope, projectForScope } from "./project-scope.ts";
 import { loadRecallConfig } from "../search/recall-config.ts";
+import { L1_RECORD_TYPES_TEXT, isL1RecordType } from "./record-types.ts";
 import {
 	createSceneResolver,
 	findSceneByNameOrAlias,
@@ -228,7 +229,7 @@ export function registerL1CommitTool(
 							return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].content is required (non-empty string)` }) }], details: {} };
 						}
 						if (typeof r.type !== "string" || !r.type.trim()) {
-							return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].type is required (work_fact/work_task/work_method/work_artifact)` }) }], details: {} };
+							return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].type is required (${L1_RECORD_TYPES_TEXT})` }) }], details: {} };
 						}
 						if (typeof r.id !== "string" || !/^l1_\d+_/.test(r.id)) {
 							r.id = `l1_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
@@ -362,7 +363,6 @@ export function registerL1CommitTool(
 				let priorityMissing = 0;
 				// 写锁句柄在 execute 作用域声明（见函数开头）：catch 里的 `writeLock?.release()` 才看得到
 				{
-					const RECORD_TYPES = new Set(["work_fact", "work_task", "work_method", "work_artifact"]);
 					const recallBudget = loadRecallConfig(profilePath).maxCharsPerRecord;
 					for (let i = 0; i < records.length; i++) {
 						const r = records[i] as Record<string, unknown>;
@@ -371,9 +371,9 @@ export function registerL1CommitTool(
 							return { content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].content 必须是非空字符串` }) }], details: {} };
 						}
 						const t = typeof r.type === "string" ? r.type.trim() : "";
-						if (!RECORD_TYPES.has(t)) {
+						if (!isL1RecordType(t)) {
 							return {
-								content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].type 越出枚举：${JSON.stringify(r.type)}（只能是 work_fact/work_task/work_method/work_artifact）` }) }],
+								content: [{ type: "text", text: JSON.stringify({ success: false, error: `records[${i}].type 越出枚举：${JSON.stringify(r.type)}（只能是 ${L1_RECORD_TYPES_TEXT}）` }) }],
 								details: {},
 							};
 						}

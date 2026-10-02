@@ -19,8 +19,9 @@
  *   - 工具链：regen-golden / verify-prompt-contracts 用同一张表渲染
  * 两边共用 ⇒ 工具链不可能与生产渲染出不同的文本，golden 基线才有意义。
  *
- * 依赖方向：本文件只 import config/thresholds.ts（零依赖），不碰任何业务模块——
- * 否则会把 sqlite / 向量库 / 任务队列拖进轻量的提示词工具链。
+ * 依赖方向：本文件只 import config/thresholds.ts（零依赖叶子模块）与 util/agent-dir.ts
+ * （零依赖路径单源）——不碰任何业务模块，否则会把 sqlite / 向量库 / 任务队列 / spawn
+ * 机制拖进轻量的提示词工具链。
  */
 
 import {
@@ -30,17 +31,45 @@ import {
 	FIX_MIN_EVIDENCE_CHARS,
 	TOOL_RECALL_TOP_K_DEFAULT,
 } from "../config/thresholds.ts";
+import { BUNDLED_AGENTS_DIR, PROMPTS_DIR, listBundledAgentNames } from "../util/agent-dir.ts";
+
+/**
+ * 拼出「受保护文件」声明（P1-9）。
+ *
+ * 原文是硬编码的 `C:\Users\leaf\.pi\agent\agents\*.md` 与
+ * `C:\Users\leaf\.pi\agent\extensions\memory-system\prompts\`，有两个问题：
+ *
+ * 1. **指错了地方**。自建 spawn 之后子代理定义**只**从 `<插件>/agents/` 读
+ *    （`util/spawn.ts` 的 `BUNDLED_AGENTS_DIR`），`~/.pi/agent/agents/` 下那 6 个文件
+ *    早已不被使用 —— 提示词却在让模型「保护」它们，真正在跑的 6 个反而没被保护到。
+ * 2. **换个安装位置就失效**。npm 装到别处时这两条路径都不对。
+ *
+ * 所以路径改成从运行时推导，agent 名单改成按目录列举（以后增删定义自动跟上）。
+ *
+ * 注意它**不是 registry 的 partial**：partial 按契约必须零变量（`registry.ts` 的
+ * `expand()` 展开 `{{>key}}` 时固定传 `{}`），所以这里把整段拼好当**普通变量值**
+ * 塞进 `backends/tool-reminder`，由该模板的 `{{protectedFiles}}` 占位。
+ */
+function buildProtectedFiles(): string {
+	const names = listBundledAgentNames();
+	const suffix = names.length ? ` (${names.join(", ")})` : "";
+	return (
+		`[Protected Files] ${BUNDLED_AGENTS_DIR}\\*.md${suffix} are protected. ONLY use edit, NEVER write on these files.\n` +
+		`[Protected Files] ${PROMPTS_DIR}\\ (all *.md templates, incl. subdirs shared/injection/tasks/tools/backends/retired) are protected. ONLY use edit, NEVER write on these files.`
+	);
+}
 
 /**
  * 需要变量的模板 key → 变量值表。
  *
- * 只有**确实含数字**的模板才登记；零变量模板不在表里，`promptVarsFor` 返回空对象，
- * 与 registry 的契约一致（声明为空、传入为空）。
+ * 只有**确实含数字或运行时路径**的模板才登记；零变量模板不在表里，
+ * `promptVarsFor` 返回空对象，与 registry 的契约一致（声明为空、传入为空）。
  */
 export const PROMPT_VARS: Record<string, Record<string, string>> = {
 	"backends/tool-reminder": {
 		autoInjectTopK: String(AUTO_INJECT_TOP_K),
 		toolRecallTopK: String(TOOL_RECALL_TOP_K_DEFAULT),
+		protectedFiles: buildProtectedFiles(),
 	},
 	"tools#recall_l1_records": {
 		autoInjectTopK: String(AUTO_INJECT_TOP_K),

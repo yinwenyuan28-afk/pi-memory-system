@@ -8,8 +8,6 @@ import {
 } from "./skill/index.ts";
 import { setupMemoryReviewer } from "./memory/review/reviewer.ts";
 import { setupSkillReviewer } from "./skill/reviewer.ts";
-// [DISABLED] workflow 保存系统已禁用（保留代码，恢复时取消注释即可）
-// import { setupWorkflowSystem } from "./workflow/index.ts";
 import { archiveSessionIncrement } from "./memory/l0/index.ts";
 import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.ts";
 import { loadL1Config, setupL1Extractor } from "./memory/l1/index.ts";
@@ -133,15 +131,10 @@ export default function (pi: ExtensionAPI) {
 
   const agentDir = getAgentDir();
   const manager = new MemoryManager(agentDir);
-  // [DISABLED] workflow 保存系统控制器已禁用（保留代码，恢复时取消注释）
-  // const workflowController = setupWorkflowSystem(pi, {
-  //   getProfilePath: () => manager?.getProfileManager().getActiveProfile()?.path,
-  //   getSessionId: () => sessionId,
-  // });
   let skillManager: SkillManager | undefined;
   let profileSkillsPath: string | undefined;
   let loadedSkillsThisSession: Set<string> = new Set();
-  // 当前 session id（workflow 模块用，session_start 写入）
+  // 当前 session id（judg-session-project 等消费者用，session_start 写入）
   let sessionId = "";
   // M8：reviewer 只注册一次（防 session_start 重复触发时重复监听）
   let reviewersInitialized = false;

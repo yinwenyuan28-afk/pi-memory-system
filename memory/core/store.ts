@@ -6,13 +6,13 @@ import {
 	DEFAULT_MEMORY_CHAR_LIMIT,
 	DEFAULT_USER_CHAR_LIMIT,
 	ENTRY_DELIMITER,
+	MEMORY_FILE,
+	USER_FILE,
 	type MemoryEntry,
 	type MemoryManagerConfig,
 	type Target,
 } from "./types.ts";
 
-const MEMORY_FILE = "MEMORY.md";
-const USER_FILE = "USER.md";
 const SUB_MEMORIES_DIR = "sub-memories";
 
 interface MemoryOperationResult {

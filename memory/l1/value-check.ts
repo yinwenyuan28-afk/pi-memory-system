@@ -25,6 +25,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render as renderPrompt } from "../../prompts/registry.ts";
+import { L1_RECORD_TYPE_SET } from "./record-types.ts";
 
 /**
  * 循环函数类型。**只做类型导入**：`util/agent-loop.ts` 会静态拉进 `@earendil-works/pi-agent-core`，
@@ -55,7 +56,9 @@ export interface ValueCheckOutcome {
 	raw?: string;
 }
 
-const RECORD_TYPES = new Set(["work_fact", "work_task", "work_method", "work_artifact"]);
+// 取值空间的单一定义见 record-types.ts（P1-12：原先此处与 commit-tool 各抄一份，
+// 加一个合法 type 漏改一处不会报错，「模型能产出的」与「写得进库的」就悄悄分叉）
+const RECORD_TYPES = L1_RECORD_TYPE_SET;
 
 /** 判据段落标记 → 终止条件。标记是字面量，改提取规则时这里会被回归盯住。 */
 const CHECKLIST_SECTIONS: Array<{ start: string; kind: "bracket" | "heading" }> = [

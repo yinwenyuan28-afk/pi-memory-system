@@ -178,10 +178,6 @@ console.log("── 1c) backends/tool-reminder 回归（Protected Files 白名�
 		"[Protected Files] <placeholder-l1>",
 		"[Protected Files] <placeholder-l2>",
 	].join("\n");
-	const NEW_PROTECTED = [
-		"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\agents\\*.md (l1-extractor, l2-scene-organizer, l3-persona-generator, skill-reviewer) are protected. ONLY use edit, NEVER write on these files.",
-		"[Protected Files] C:\\Users\\leaf\\.pi\\agent\\extensions\\memory-system\\prompts\\ (all *.md templates, incl. subdirs shared/injection/tasks/tools/backends/retired) are protected. ONLY use edit, NEVER write on these files.",
-	].join("\n");
 	const norm = (s) => s.replace(/\[Protected Files\][^\n]*\n\[Protected Files\][^\n]*$/, "<PROTECTED_FILES>");
 
 	let out;
@@ -191,13 +187,48 @@ console.log("── 1c) backends/tool-reminder 回归（Protected Files 白名�
 		fail(`backends/tool-reminder: render 抛错 ${e.message}`);
 		out = null;
 	}
+
+	// Protected Files 两行的断言**不能再拿字符串逐字节比**（2026-10-02 / P1-9）：
+	// 那两行的路径已改成运行时推导（`tool-vars.ts` 的 `buildProtectedFiles()`），
+	// 硬编码的期望值在别的安装位置 / 别的机器上必然对不上 —— 那样的门禁要么在所有人
+	// 机器上恒红，要么被人随手改掉，等于没有。改为断言**形状与来源**：
+	// 两行、分别指向插件自带的 agents/ 与 prompts/、agent 名单与目录实际内容一致。
+	const pf = promptVarsFor("backends/tool-reminder").protectedFiles ?? "";
+	const pfLines = pf.split("\n");
+	const bs = (p) => p.replace(/\//g, "\\");
+	const agentsDir = bs(join(EXT_ROOT, "agents"));
+	const promptsDir = bs(join(EXT_ROOT, "prompts"));
 	if (out !== null) {
 		if (norm(out) === norm(LOCKED_BACKEND)) console.log(`  ok  backends/tool-reminder（除 Protected Files 外与已审定文案一致，${out.length} chars）`);
 		else fail(`backends/tool-reminder: 除 Protected Files 外的内容与已审定文案不一致\n--- expected ---\n${JSON.stringify(norm(LOCKED_BACKEND))}\n--- actual ---\n${JSON.stringify(norm(out))}`);
-		if (out.endsWith(NEW_PROTECTED)) console.log("  ok  Protected Files 两行为已拍板新文本");
-		else fail(`Protected Files 两行与已拍板文本不符\n--- expected(tail) ---\n${JSON.stringify(NEW_PROTECTED)}\n--- actual(tail) ---\n${JSON.stringify(out.slice(-NEW_PROTECTED.length - 20))}`);
-		if (/\{\{[a-zA-Z>]/.test(out)) fail("backends/tool-reminder: 渲染产物含未展开占位符");
 	}
+	if (pfLines.length === 2) console.log("  ok  Protected Files 为两行");
+	else fail(`Protected Files 应为两行，实为 ${pfLines.length} 行：${JSON.stringify(pf)}`);
+	if (pfLines[0]?.startsWith(`[Protected Files] ${agentsDir}\\*.md `)) {
+		console.log("  ok  Protected Files 第 1 行指向插件自带 agents/");
+	} else {
+		fail(`Protected Files 第 1 行应指向 ${agentsDir}\\*.md，实为：${JSON.stringify(pfLines[0])}`);
+	}
+	if (pfLines[1]?.startsWith(`[Protected Files] ${promptsDir}\\ `)) {
+		console.log("  ok  Protected Files 第 2 行指向插件自带 prompts/");
+	} else {
+		fail(`Protected Files 第 2 行应指向 ${promptsDir}\\ ，实为：${JSON.stringify(pfLines[1])}`);
+	}
+	// agent 名单必须是 agents/ 目录的实际内容 —— 这条正是原硬编码文案漏了
+	// memory-organizer / memory-reviewer 的那个缺口
+	const expectedNames = readdirSync(join(EXT_ROOT, "agents"))
+		.filter((f) => f.endsWith(".md"))
+		.map((f) => f.slice(0, -3))
+		.sort();
+	const listed = (pfLines[0]?.match(/\(([^)]*)\)/)?.[1] ?? "").split(", ").filter(Boolean);
+	if (expectedNames.length > 0 && JSON.stringify(listed) === JSON.stringify(expectedNames)) {
+		console.log(`  ok  Protected Files 的 agent 名单与 agents/ 目录一致（${expectedNames.length} 个）`);
+	} else {
+		fail(`Protected Files 的 agent 名单与 agents/ 目录不一致\n--- 目录 ---\n${JSON.stringify(expectedNames)}\n--- 文案 ---\n${JSON.stringify(listed)}`);
+	}
+	if (pf.length > 0 && out !== null && out.endsWith(pf)) console.log("  ok  Protected Files 已渲染进 tool-reminder");
+	else fail("backends/tool-reminder: 末尾不是 protectedFiles 变量的值");
+	if (out !== null && /\{\{[a-zA-Z>]/.test(out)) fail("backends/tool-reminder: 渲染产物含未展开占位符");
 }
 
 // ══ 1d) 工具 description 逐字节回归（vs 迁移前提取的 golden 基线） ═══════
