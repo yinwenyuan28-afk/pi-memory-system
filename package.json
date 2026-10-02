@@ -32,22 +32,7 @@
 		"better-sqlite3": "^13.0.3",
 		"sqlite-vec": "^0.1.9"
 	},
-	"peerDependencies": {
-		"@earendil-works/pi-agent-core": ">=0.80.0",
-		"@earendil-works/pi-ai": ">=0.80.0",
-		"@earendil-works/pi-coding-agent": ">=0.80.0"
-	},
-	"peerDependenciesMeta": {
-		"@earendil-works/pi-agent-core": {
-			"optional": true
-		},
-		"@earendil-works/pi-ai": {
-			"optional": true
-		},
-		"@earendil-works/pi-coding-agent": {
-			"optional": true
-		}
-	},
+	"_peerDependenciesNote": "刻意不声明 @earendil-works/* 的 peerDependencies（2026-10-02）。pi 的扩展加载器给扩展做了 jiti 别名映射与 Bun 虚拟模块：@earendil-works/pi-agent-core / pi-ai / pi-ai/compat / pi-coding-agent 等一律指向 pi **自己 bundle 的副本**（loader.js 的 VIRTUAL_MODULES），扩展 import 它们根本不落 node_modules。实测：发布产物装在一条向上五级都没有 node_modules 的路径上，仍 0 错误加载、18 工具 + 16 命令全在位 —— 能满足那些 import 的只有别名机制。声明 peer 反而会让 pi-ai 低于声明下限的用户收到无意义的 peer 冲突警告。宿主版本要求写在 README「环境要求」表里。",
 	"repository": {
 		"type": "git",
 		"url": "git+https://gitee.com/SunpayusChen/pi.git",
