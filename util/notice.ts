@@ -17,7 +17,8 @@
  * 光标账本失步 → 残留野行、TUI 内容错位；且这些信息既不落会话也不落盘，事后无从回查
  * （实例：`hybrid-recall.ts` 的召回观测行每 turn 在输入框上方留一行）。
  *
- * 跨进程（本模块的核心复杂度）：L1/L2/L3 子代理跑在**独立进程**（pi-subagents `spawn` + `--mode json`），
+ * 跨进程（本模块的核心复杂度）：L1/L2/L3 子代理跑在**独立进程**（我们自建 spawn 的
+ * `pi --mode text` 子进程，见 `util/spawn.ts`；2026-10-01 之前是 pi-subagents 的 spawn + `--mode json`），
  * 那里 `appendEntry` 只会写进子代理自己的 session，用户看不到。所以子代理进程里的 `noticeCard()`
  * 改为把载荷追加到 `{memoryDB}/logs/notices.jsonl`，由主进程 `drainNoticeCards()` 原子取走
  * （rename → 读 → 删）后再渲染成真正的聊天区卡片。drain 挂在 pipeline worker 每个 job 收尾 +
@@ -83,7 +84,7 @@ function currentProfilePath(): string | undefined {
 	}
 }
 
-/** 是否身处子代理进程（pi-subagents 注入 PI_SUBAGENT_CHILD=1）。 */
+/** 是否身处子代理进程（`util/spawn.ts` 在 spawn 时注入 `PI_SUBAGENT_CHILD=1`）。 */
 function isSubagentChild(): boolean {
 	return process.env.PI_SUBAGENT_CHILD === "1";
 }

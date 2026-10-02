@@ -34,6 +34,7 @@ import { getPipelineJobsDB, type PipelineJob } from "./memory/pipeline/jobs-db.t
 import { clearSubagentRun, listSubagentRuns, readSubagentRun } from "./memory/pipeline/subagent-runs.ts";
 import { stopSubagent } from "./memory/pipeline/subagent-kill.ts";
 import { loadSubagentTimeouts } from "./memory/pipeline/timeout-config.ts";
+import { resolveAgentDir } from "./util/agent-dir.ts";
 import { holdUntilFrom, loadFailureState, saveFailureState } from "./memory/failure-state.ts";
 import { registerL2CommitTool, repairSceneMembers, syncSceneIndex } from "./memory/l2/commit-tool.ts";
 import { setupL3Persona } from "./memory/l3/index.ts";
@@ -401,7 +402,7 @@ export default function (pi: ExtensionAPI) {
     manager.initialize();
     const profile = manager.getProfileManager().getActiveProfile();
     // 设置主代理进程的 profile 环境变量（供 recall_l1_records / embed_and_search 等工具用）
-    // 子代理进程由 pi-subagents 注入，主代理进程需要在此显式设置
+    // 子代理进程由 util/spawn.ts 注入该变量，主代理进程需要在此显式设置
     if (profile) {
       process.env.PI_PROFILE_PATH = profile.path;
     }
@@ -642,7 +643,7 @@ export default function (pi: ExtensionAPI) {
     // （去重=行号游标；降噪=SanitizeRule 规则集；分片=本地日期；cwd=ctx.cwd 精确值）。
     // 同步执行（毫秒级），异常不阻塞主流程。
     //
-    // 子代理进程守卫：pi-subagents 启动子代理时设 PI_SUBAGENT_CHILD=1，子代理加载本扩展后
+    // 子代理进程守卫：util/spawn.ts 派发子代理时设 PI_SUBAGENT_CHILD=1，子代理加载本扩展后
     // 同样会触发 before_agent_start。若不守卫，子代理自己的 sessionFile（长路径：
     // {sessionId}/{runId}/run-0/session.jsonl）会被当主会话归档，导致 L0 分片污染
     // （子代理的 thinking / tool_call / l1_commit 响应都进入 conversations/），
@@ -691,7 +692,7 @@ export default function (pi: ExtensionAPI) {
   const MEMORY_TOOL_REMINDER = renderPrompt("backends/tool-reminder", promptVarsFor("backends/tool-reminder"));
 
   pi.on("before_agent_start", async (event, ctx) => {
-    // [subagent-guard] 子代理进程守卫：pi-subagents 启动子代理时设 PI_SUBAGENT_CHILD=1。
+    // [subagent-guard] 子代理进程守卫：util/spawn.ts 派发子代理时设 PI_SUBAGENT_CHILD=1。
     // 子代理 turn 不应吃主代理注入 / 建 _pendingContext / 计 L1 命中（否则执行痕迹污染命中统计）。
     // 与 L0 归档守卫同款判断；此处显式返回原 systemPrompt（pi 要求 before_agent_start 返回对象）。
     if (process.env.PI_SUBAGENT_CHILD === "1") {
@@ -1592,7 +1593,12 @@ export default function (pi: ExtensionAPI) {
 //  Helpers
 // ══════════════════════════════════════════════════════════════
 
+/**
+ * 宿主 agent 根目录。解析规则收敛在 `util/agent-dir.ts`（P1-7）——
+ * 原先这里、`memory/l1/config.ts`、`util/judg-session-project/llm.ts` 各写一份，
+ * 三份对「`PI_CODING_AGENT_DIR` 给的是 agent 根还是家目录」的假设并不一致，
+ * 其中一份因此拼出 `~/.pi/agent/.pi/agent/sessions` 而静默返回空列表。
+ */
 function getAgentDir(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || process.env.HOMEDRIVE + process.env.HOMEPATH || "";
-  return process.env.PI_CODING_AGENT_DIR || `${home}/.pi/agent`;
+  return resolveAgentDir();
 }

@@ -11,8 +11,13 @@ import { render as renderPrompt } from "../../prompts/registry.ts";
 
 /** P4 记忆阈值（L2 尚未稳定，高于腾讯默认 20）。 */
 export const L3_INTERVAL = 30;
-/** 子代理超时。 */
-export const L3_SUBAGENT_TIMEOUT_MS = 600_000;
+/**
+ * ~~子代理超时常量 `L3_SUBAGENT_TIMEOUT_MS = 600_000`~~ **2026-10-01 删除（P1-10）**。
+ *
+ * 与 L2 同因：`memory/l3/index.ts` 只 import 未使用，L3 的实际超时走
+ * `loadSubagentTimeouts(profilePath)`（`memory/pipeline/timeout-config.ts`，读配置中心
+ * `subagent` 节）。留着它等于给一个改不动的东西起个看起来能调的名字。
+ */
 /**
  * USER.md 总长预算 —— 单源是 `core/types.ts`（用户 2026-09-16 拍板 1375 → 2200）。
  * 这里只是给 L3 模块一个本地名字，**不要**再写一遍字面量。

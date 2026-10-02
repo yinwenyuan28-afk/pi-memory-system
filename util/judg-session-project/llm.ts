@@ -25,6 +25,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveAgentDir } from "../agent-dir.ts";
 import { callLLM } from "../llm.ts";
 import { readConfig } from "../../config/model-config.ts";
 import { parseJsonc } from "../jsonc.ts";
@@ -257,7 +258,12 @@ export interface JudgeModel {
  * @returns 解析结果；配置或文件缺失时返回 null
  */
 export function resolveJudgeModel(profilePath: string, agentHome?: string): JudgeModel | null {
-	const home = agentHome ?? process.env.PI_AGENT_HOME ?? join(process.env.USERPROFILE ?? "", ".pi", "agent");
+	// 2026-10-01（P1-8）：原先是 `join(process.env.USERPROFILE ?? "", ".pi", "agent")`。
+	// `USERPROFILE` 在服务化启动 / 部分 CI 里根本没设，那时得到的是**相对路径** `.pi/agent`，
+	// 跟着进程 cwd 跑偏 —— 评测脚本会读到另一个 agent 根的 models.json，静默拿错模型或返回 null。
+	// 现统一走 `resolveAgentDir()`，与 index.ts / l1/config.ts 同一份实现。
+	// 本函数额外认 `PI_AGENT_HOME`（脚本专用覆盖），优先级在环境变量之上、显式入参之下。
+	const home = agentHome ?? process.env.PI_AGENT_HOME ?? resolveAgentDir();
 	const cfg = readConfig(profilePath);
 	if (!cfg) return null;
 	const modelsFile = join(home, "models.json");

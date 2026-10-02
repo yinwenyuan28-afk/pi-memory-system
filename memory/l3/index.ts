@@ -6,7 +6,6 @@ import {
 	buildL3Task,
 	L3_CURSOR_FILE,
 	L3_FAILURE_THRESHOLD,
-	L3_SUBAGENT_TIMEOUT_MS,
 	loadL3Cursor,
 	saveL3Cursor,
 } from "./config.ts";

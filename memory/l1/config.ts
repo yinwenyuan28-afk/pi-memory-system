@@ -7,6 +7,7 @@ import { L1_CURSOR_FILE, L1_RECORDS_DIR, L0_CONVERSATIONS_DIR, MEMORY_DB_DIR } f
 import { buildScenePoolLines, readScenePool, SCENE_POOL_INJECT_LIMIT } from "./scene-pool.ts";
 import { loadAppProps, saveAppSection } from "../../config/app-config.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
+import { resolveSessionsDir } from "../../util/agent-dir.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 配置 / 游标 / 分片清单（纯函数，无 pi 依赖，可单测）
@@ -317,16 +318,19 @@ export function buildL1Task(profilePath: string): string | null {
 }
 
 /**
- * 枚举 ~/.pi/agent/sessions/ 下所有 cwd（跨前后端多项目场景：session 工作目录
+ * 枚举 agent 根的 `sessions/` 下所有 cwd（跨前后端多项目场景：session 工作目录
  * 可能与被操作代码目录不同，子代理按消息内容匹配 KnownProjects 修正记忆归属）。
  *
  * 优先读 session 文件第一行（type=session 的 header.cwd，真实精确值）；
  * 读不到时回退 decodeCwdFromSessionPath（启发式解码，含 `-` 的路径会失真）。
+ *
+ * ⚠ `PI_CODING_AGENT_DIR` **已经是 agent 根**（`~/.pi/agent`，见 index.ts 的 getAgentDir），
+ * 2026-10-01 修：原实现无条件在它后面再拼一段 `.pi/agent`，于是设了该环境变量时得到
+ * `~/.pi/agent/.pi/agent/sessions` —— 不存在 ⇒ 静默返回 `[]` ⇒ L1/L2 的项目归属判定
+ * 整体失效且无任何报错。现在按「该变量给什么就用什么」处理。
  */
 export function listKnownProjects(): string[] {
-	const home = process.env.PI_CODING_AGENT_DIR ||
-		process.env.HOME || process.env.USERPROFILE || "";
-	const sessionsDir = join(home, ".pi", "agent", "sessions");
+	const sessionsDir = resolveSessionsDir();
 	if (!existsSync(sessionsDir)) return [];
 	const result: string[] = [];
 	try {
