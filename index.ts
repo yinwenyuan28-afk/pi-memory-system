@@ -18,6 +18,7 @@ import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
 import { setupJudgSessionProject } from "./util/judg-session-project/setup.ts";
 import { registerL1ProjectGetTool } from "./util/judg-session-project/tool.ts";
+import { readSessionJudg } from "./util/judg-session-project/index.ts";
 import { registerReadL0IncrementTool, readL0Increment } from "./memory/l1/read-tool.ts";
 import { countNewRecords, countSceneBlocks, loadL2Config, loadL2Cursor } from "./memory/l2/config.ts";
 import { acquireRunLock, isProcessAlive, runLockBusyMessage } from "./memory/pipeline/run-lock.ts";
@@ -74,6 +75,12 @@ interface RecallPayload {
   countHits?: boolean;
   /** turn 级命中去重集合（工具路径需要；自动注入路径的计数在 context 处另做）。 */
   hitDedupSet?: Set<string>;
+  /**
+   * 当前会话判定的项目路径（2026-10-02 项目加权排序用）。
+   * **空串 / 缺省 = 无判定 ⇒ 系数全 1.0，完全退回项目加权上线前的行为。**
+   * 只有判定表 `flag===true` 时才填（`flag=false` 是弃权，不是「不属于任何项目」）。
+   */
+  sessionProject?: string;
 }
 
 /** L1 召回候选（结构同 hybrid-recall 的返回元素；此处结构化声明避免循环依赖）。 */
@@ -181,6 +188,8 @@ export default function (pi: ExtensionAPI) {
           hitDedupSet: payload.hitDedupSet,
           countHits: payload.countHits,
           signal,
+          // 项目加权排序（2026-10-02）：payload 里没有 project ⇒ 系数全 1.0，退回原行为
+          sessionProject: payload.sessionProject,
         });
         return r.l1Records.length > 0 ? r.l1Records : null;
       },
@@ -800,6 +809,23 @@ export default function (pi: ExtensionAPI) {
       /^[\?？]+$/.test(_trimmedPrompt) ||
       /^[^a-zA-Z0-9一-龥\s]{1,5}$/.test(_trimmedPrompt);
     const _activeProfile = manager?.getProfileManager().getActiveProfile();
+    // ⚠ 2026-10-02：项目加权排序需要「当前会话属于哪个项目」。
+    //   从判定表读，**只有 `flag===true` 才用** —— `flag=false` 是判定器弃权
+    //   （没能判出项目），拿弃权当证据去压低别的项目的记忆是误伤。
+    //   读不到 / 弃权 ⇒ 空串 ⇒ 召回侧系数全 1.0，**完全退回改造前行为**。
+    let _sessionProject = "";
+    try {
+      const _sf = ctx.sessionManager?.getSessionFile?.();
+      if (_sf && _activeProfile) {
+        // sessionKey 取文件名去后缀（与 judg-session-project 的键口径一致）
+        const _basename = _sf.replace(/\\/g, "/").split("/").pop() ?? "";
+        const _key = _basename.replace(/\.jsonl$/i, "");
+        const _e = readSessionJudg(_activeProfile.path, _key);
+        if (_e?.flag === true && _e.project) _sessionProject = _e.project;
+      }
+    } catch {
+      // 判定表不可读 ⇒ 保持空串（fail-safe：退回改造前行为）
+    }
     if (!_isSlashOrSymbol && !skipRecall && _activeProfile) {
       try {
         const recallCfg = loadRecallConfig(_activeProfile.path);
@@ -826,6 +852,8 @@ export default function (pi: ExtensionAPI) {
             topK: AUTO_INJECT_TOP_K,
             source: "inject",
             countHits: false, // 计数改由 context 真入列时做（见 context 事件）
+            // 项目加权排序（2026-10-02）：空串 = 无判定 ⇒ 系数全 1.0，行为与改造前一致
+            sessionProject: _sessionProject,
           },
         });
 

@@ -24,6 +24,17 @@ import { getVectorStore } from "./vector-store/store.ts";
 import type { HitSource } from "../stats/l1-hit-stats-db.ts";
 import { logEvent } from "../../util/notice.ts";
 import { TOOL_RECALL_TOP_K_DEFAULT } from "../../config/thresholds.ts";
+import { CROSS_PROJECT_WEIGHT, scoreRecord } from "../../util/recall-score.ts";
+
+/**
+ * 项目加权时的**检索放大倍数**（2026-10-02）。
+ *
+ * 为什么：加权会把同项目记忆往前提，被压后的异项目记忆落到 topK 之外。
+ * 若仍只取 topK，被压下去的同项目记忆就永远没机会参与竞争。
+ * 取 2× 是折中 —— 向量库单次检索成本几乎不随 K 增长，但也不能无限放大
+ * （后面闸门 2 的字符预算会按顺序截断，放大倍数只影响「参与排序的池子大小」）。
+ */
+export const PROJECT_WEIGHT_FETCH_MULTIPLIER = 2;
 
 /** L1 record 召回候选 */
 export interface L1RecordCandidate {
@@ -74,6 +85,20 @@ export interface RecallL1RecordsOptions {
    * 超时/被新请求覆盖/profile 切换时 abort → 取消底层 embedding HTTP，避免悬留请求。
    */
   signal?: AbortSignal;
+  /**
+   * **当前会话判定的项目路径**（2026-10-02，项目加权排序用）。
+   *
+   * 来源：`state/judg-session-project.json` 里本 sessionKey 的条目，且**仅 `flag===true` 才传**。
+   * 传空串 / 不传 ⇒ 全程系数 1.0，行为与项目加权上线前**完全一致**（安全回退）。
+   *
+   * 为什么不用 `flag=false` 的占位值：那意味着「判定器没能判出项目」（弃权），
+   * 而不是「判定为不属于任何项目」——拿弃权当证据压低别人的记忆是误伤。
+   */
+  sessionProject?: string;
+  /**
+   * 异项目权重系数（默认 {@link CROSS_PROJECT_WEIGHT} = 0.75）。仅供测试/A-B 覆盖。
+   */
+  crossProjectWeight?: number;
 }
 
 /**
@@ -96,6 +121,13 @@ export async function recallL1Records(
   if (!queryText || !profilePath) return result;
 
   const topK = options.topK ?? TOOL_RECALL_TOP_K_DEFAULT;
+  /**
+   * 会话项目（2026-10-02 项目加权用）。**空串 = 无判定 ⇒ 系数全 1.0，退回改造前行为。**
+   * 调用方（index.ts / 调度闸门）只应在判定表 `flag===true` 时传入。
+   */
+  const sessionProject = (options.sessionProject ?? "").trim();
+  /** 异项目系数（允许 A-B 覆盖；默认 0.75，实测平台期起点）。 */
+  const crossWeight = options.crossProjectWeight ?? CROSS_PROJECT_WEIGHT;
   // 闸门参数来源：recall-config.json（profile 级可覆盖），options 显式传参优先
   const cfg = loadRecallConfig(profilePath);
   const minScore = options.minScore ?? cfg.minScore;
@@ -112,15 +144,48 @@ export async function recallL1Records(
 
     if (await vecStore.isAvailable() && (await vecStore.count()) > 0) {
       const queryVec = await embService.embed(queryText, { signal: options.signal });
-      const hits = await vecStore.search(queryVec, topK);
+      // ⚠ 2026-10-02：项目加权排序需要**比 topK 更多的候选**。
+      //   原来 topK=3 直接取前 3，加权后跨项目记忆被压后，留在候选里的同项目记忆
+      //   可能不够 3 条（实测平台期：异项目被压到 6.7%），导致注入条数变少。
+      //   故放大检索量再排序截断；放大倍数 2×，向量库单次检索的成本几乎不随 K 增长。
+      const fetchK = sessionProject ? topK * PROJECT_WEIGHT_FETCH_MULTIPLIER : topK;
+      const hits = await vecStore.search(queryVec, fetchK);
 
-      // ── 闸门 1：相关性阈值 ─────────────────────────────
+      // ── 闸门 1：相关性阈值（**加权前**，按真余弦卡） ─────────
       // shadowMode=true：只统计会被滤掉多少，不真剔除（标定期观察用）
       let kept = hits;
       let filtered = 0;
       if (minScore > 0) {
         filtered = hits.filter((h) => h.score < minScore).length;
         if (!shadowMode) kept = hits.filter((h) => h.score >= minScore);
+      }
+
+      // ── 项目加权排序（2026-10-02）─────────────────────────
+      // 必须在闸门 1 **之后**、字符预算**之前**：minScore 卡的是真实余弦（用户可调），
+      // 加权分只用于**相对排序**（同一批候选内部），两者语义不同不能混用同一阈值。
+      //
+      // 实测依据与权重取值见 `util/recall-score.ts` 文件头（25 条真 query 离线模拟，
+      // w=0.75 是平台期起点，跨项目占比 24.0% → 6.7%）。
+      // 会话 project 拿不到时（无判定 / flag=false）**全程系数 1.0**，行为与改造前一致。
+      let classTally: Record<string, number> = { match: 0, mismatch: 0, generic: 0 };
+      if (sessionProject) {
+        const scored: { hit: (typeof hits)[number]; adj: number }[] = [];
+        for (const hit of kept) {
+          const rec = await loadL1RecordById(hit.recordId, profilePath);
+          if (!rec || rec.deleted) continue;
+          const md = (typeof rec.metadata === "object" && rec.metadata !== null ? rec.metadata : {}) as Record<string, unknown>;
+          const r = scoreRecord(
+            hit.score,
+            sessionProject,
+            { scope: md.scope, project: md.project },
+            crossWeight,
+          );
+          classTally[r.cls]++;
+          scored.push({ hit, adj: r.score });
+        }
+        // 分数降序后截断回 topK
+        scored.sort((a, b) => b.adj - a.adj);
+        kept = scored.slice(0, topK).map((s) => ({ ...s.hit, score: s.adj }));
       }
 
       // ── 闸门 2：字符预算（单条截断 + 总量封顶） ─────────
@@ -149,13 +214,27 @@ export async function recallL1Records(
       // 观测日志：调 minScore 的唯一依据（filtered 多 → 阈值偏低；0 且全进 → 可下调）
       // 2026-09-19 改道：原 console.log 在 interactive 下绕开 TUI 渲染器直接写终端
       //（实测在输入框上方留野行），且不落盘、事后无法查。现只落文件。
+      //
+      // ⚠ 2026-10-02 增补逐条明细：原日志只有汇总（recall/filtered/kept/minScore），
+      // **看不到每条命中各是多少分**。于是「项目标签该不该参与排序、权重给多少」这类问题
+      // 只能用猜的答案定权重 —— 而实测证明余弦本身分不开项目（得分密集在 0.4–0.8 无分界线），
+      // 所以必须用真实分布算，不能拍。这里补打 `| hits: id@score …` 段。
+      //
+      // ⚠ `pf:` 段是**项目加权的观测口**（同日加）：`pf=启用/关闭(match=..,mismatch=..,generic=..)`。
+      // 上线后靠它核对两件事：① 过滤是否真的生效（`pf=off` 说明会话没拿到 project）
+      //   ② 实测的 mismatch 占比是不是接近离线模拟的 6.7%。**没有它就看不出加权在跑没跑。**
+      const pfInfo = sessionProject
+        ? `pf=on(w=${crossWeight},m=${classTally.match},x=${classTally.mismatch},g=${classTally.generic})`
+        : "pf=off";
       if (hits.length > 0) {
+        const detail = hits.map((h) => `${h.recordId}@${h.score.toFixed(4)}`).join(" ");
         logEvent(
           "recall",
           `recall=${hits.length} filtered=${filtered}` +
             ` kept=${result.l1Records.length} minScore=${minScore}` +
             (shadowMode ? " (shadow)" : "") +
-            ` q="${queryText.slice(0, 40)}${queryText.length > 40 ? "…" : ""}"`,
+            ` q="${queryText.slice(0, 40)}${queryText.length > 40 ? "…" : ""}"` +
+            ` | hits: ${detail} | ${pfInfo}`,
           profilePath,
         );
       }
