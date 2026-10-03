@@ -1,0 +1,17 @@
+# 依赖（含原生模块 better-sqlite3 的编译产物）
+node_modules/
+
+# 开发期备份与快照（体积大、非源码）
+backups/
+
+# Python 工具的字节码缓存（scripts/ 下有几个 .py）
+__pycache__/
+*.pyc
+
+# 原子写的临时文件残留（tmp + rename 中途被杀会留下）
+*.tmp-*
+.tmp_*
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
