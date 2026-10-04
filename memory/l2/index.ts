@@ -8,7 +8,7 @@ import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-livene
 import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { repairSceneMembers, syncSceneIndex } from "./commit-tool.ts";
-import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
@@ -27,26 +27,24 @@ export function setupL2Organizer(
 ): {
 	reset: () => void;
 	triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
-	executeJob: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
+	executeJob: (ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope) => Promise<PipelineJobResult>;
 	isCooledDown: () => boolean;
 } {
 	// 【2026-09-11】read_l1_increment 注册已上移至 index.ts 模块顶层（子代理可达）；
 	// 本函数仅在主进程 session_start 后执行，若在此注册将造成子代理缺工具（死线，已修）。
 
-	function loadL2State(): LayerFailureState {
-		const p = getProfilePath();
+	function loadL2State(p = getProfilePath()): LayerFailureState {
 		return p ? loadFailureState(p).l2 : { consecutiveFailures: 0, cooledDown: false };
 	}
-	function saveL2State(s: LayerFailureState): void {
-		const p = getProfilePath();
+	function saveL2State(s: LayerFailureState, p = getProfilePath()): void {
 		if (!p) return;
 		const all = loadFailureState(p);
 		all.l2 = s;
 		saveFailureState(p, all);
 	}
 
-	async function executeJob(ctx: ExtensionContext, job: PipelineJob): Promise<PipelineJobResult> {
-		const profilePath = getProfilePath();
+	async function executeJob(ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope): Promise<PipelineJobResult> {
+		const profilePath = scope?.profilePath ?? getProfilePath();
 		if (!profilePath) return "failed";
 		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
 		const staged = readAllRecords(profilePath).filter((r) => r.epoch > watermark);
@@ -70,6 +68,8 @@ export function setupL2Organizer(
 					`Memory ⚙L2 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`,
 				),
 		});
+		let watchingExit = true;
+		let waitP: ReturnType<typeof waitJobWithLiveness> | undefined;
 		try {
 			const task = buildL2Task(profilePath, undefined, true);
 			// 真完成信号 = 子代理里的 l2_commit 调 completeRunningL2()（把本 job 标 done）。
@@ -80,24 +80,24 @@ export function setupL2Organizer(
 			// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
 			const to = loadSubagentTimeouts(profilePath);
-			const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
+			waitP = waitJobWithLiveness(() => watchingExit ? db.getJob(job.id) : undefined, {
 				softMs: to.softMs,
 				hardMs: to.hardMs,
 				profilePath,
 				layer: "l2",
 				jobId: job.id,
-				// 早死检测：子进程非 0 退出且 job 仍 running ⇒ 立刻标 failed（详见 l1 同名注释）
-				onEarlyExit: (info) => {
-					if (db.getJob(job.id)?.status !== "running") return;
-					const why = `子进程异常退出（code=${info.code}, signal=${info.signal ?? "-"}, pid=${info.pid}）`;
-					db.complete(job.id, "failed", why);
-					logEvent("l2", `job ${job.id} ${why} ⇒ 立即标 failed，不再等硬上限`, profilePath);
-				},
 			});
 			const spawnP = runPiSubagent("l2-scene-organizer", task, ctx, {
 				profilePath,
 				layer: "l2",
 				jobId: job.id,
+				// 回调属于派发选项；放在等待选项中不会被调用。
+				onEarlyExit: (info) => {
+					if (!watchingExit || db.getJob(job.id)?.status !== "running") return;
+					const why = `子进程异常退出（code=${info.code}, signal=${info.signal ?? "-"}, pid=${info.pid}）`;
+					db.complete(job.id, "failed", why);
+					logEvent("l2", `job ${job.id} ${why} ⇒ 立即标 failed，不再等硬上限`, profilePath);
+				},
 			});
 			// 派发失败立刻进 catch 释放 job，不干等活性门控（详见 failFastOnSpawnFailure 头注释）
 			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
@@ -106,9 +106,9 @@ export function setupL2Organizer(
 
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
-				const st = loadL2State();
+				const st = loadL2State(profilePath);
 				st.consecutiveFailures = 0;
-				saveL2State(st);
+				saveL2State(st, profilePath);
 				logEvent(
 					"l2",
 					`job ${job.id} 完成：${(outcome.elapsedMs / 1000).toFixed(0)}s` +
@@ -121,6 +121,7 @@ export function setupL2Organizer(
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
+			if (after?.status === "failed") throw new Error(after.error ?? "L2 子代理任务失败");
 			// 到硬上限仍是 running ⇒ 停掉子代理（先拦 → 宽限 → 杀进程树 → 杀后修复）
 			const stop = await stopSubagent({
 				graceMs: to.killGraceMs,
@@ -128,11 +129,11 @@ export function setupL2Organizer(
 				layer: "l2",
 				jobId: job.id,
 				reason: `L2 超过硬上限（${(to.hardMs / 60000).toFixed(0)} 分钟）未提交`,
-				hooks: { rebuildSceneIndex, repairSceneMembers },
+				hooks: { rebuildSceneIndex: syncSceneIndex, repairSceneMembers },
 			});
 			await spawnP.catch(() => {});
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
-			const st = loadL2State();
+			const st = loadL2State(profilePath);
 			st.consecutiveFailures++;
 			if (!stop.killConfirmed) {
 				// 停不下来就不能放新 L2 进来（两个写者会同时改场景块）⇒ 持有该层
@@ -140,7 +141,7 @@ export function setupL2Organizer(
 			}
 			const l2StopDetail = `job ${job.id}，${stop.note}`;
 			logEvent("l2", `organize stopped at hard cap (${l2StopDetail})`, profilePath);
-			noticeCard({
+			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
 				title: "L2 场景组织已在硬上限被停掉",
 				lines: [
@@ -154,14 +155,14 @@ export function setupL2Organizer(
 				st.cooledDown = true;
 				ctx.ui.notify(l2CoolDownMessage(st.consecutiveFailures), "error");
 			}
-			saveL2State(st);
+			saveL2State(st, profilePath);
 			return "failed";
 		} catch (err) {
-			const st = loadL2State();
+			const st = loadL2State(profilePath);
 			st.consecutiveFailures++;
 			const l2FailMsg = err instanceof Error ? err.message : String(err);
 			logEvent("l2", `organize failed: ${l2FailMsg}`, profilePath);
-			noticeCard({
+			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
 				title: "L2 场景组织派发失败",
 				lines: [`job ${job.id}，连续失败 ${st.consecutiveFailures}/${L2_FAILURE_THRESHOLD}`],
@@ -171,7 +172,7 @@ export function setupL2Organizer(
 				st.cooledDown = true;
 				ctx.ui.notify(l2CoolDownMessage(st.consecutiveFailures), "error");
 			}
-			saveL2State(st);
+			saveL2State(st, profilePath);
 			// 释放 job 槽位：光 return "failed" 不够——worker 只看 DB 里的 status，
 			// job 留在 running 会一直占着串行单飞的槽位，直到 recoverStuckRunning
 			// 满 10 分钟才回收，期间 L1/L3 全被堵在 queued。
@@ -182,7 +183,9 @@ export function setupL2Organizer(
 			if (still?.status === "running") catchDb.complete(job.id, "failed", l2FailMsg);
 			return "failed";
 		} finally {
+			watchingExit = false;
 			stopHeartbeat();
+			await waitP?.catch(() => {});
 		}
 	}
 

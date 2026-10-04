@@ -18,7 +18,7 @@ import { readSubagentRun } from "../pipeline/subagent-runs.ts";
 import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
 import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
-import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { readL3Proposal, USER_TEMP_FILE } from "./user-file.ts";
 
@@ -113,7 +113,7 @@ export interface L3Controls {
 	onL1Committed: (recordCount: number) => void;
 	triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
 	reset: () => void;
-	executeJob: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
+	executeJob: (ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope) => Promise<PipelineJobResult>;
 	isCooledDown: () => boolean;
 }
 
@@ -128,7 +128,7 @@ export interface L3Controls {
  *
  * 现在 L3 是 `pipeline/jobs.sqlite` 的第三种 job（`type='l3'`）：
  *   · 本模块只负责**触发判定**（五级门控）与**入队**，不再直接 spawn；
- *   · 由 worker 串行 claim/执行，`hasAnyRunning()` 保证跨进程/跨层单飞；
+ *   · 由 worker 串行 claim/执行，原子 `claim()` 保证跨进程/跨层单飞；
  *   · 真完成信号 = 子代理 `l3_commit` 里的 `completeRunningL3()`（与 L1/L2 同款，
  *     取代"主进程观察游标"——那是 `async:true` 时代没有队列时的替代品）；
  *   · 排队优先级最低（`jobs-db.listQueued` 的排序）：L3 的输入是 L1/L2 的产物，不该插队到积压前面。
@@ -161,12 +161,10 @@ export function setupL3Persona(
 		logEvent("l3", `未触发：${reason}`, getProfilePath());
 	}
 
-	function loadL3State(): LayerFailureState {
-		const p = getProfilePath();
+	function loadL3State(p = getProfilePath()): LayerFailureState {
 		return p ? loadFailureState(p).l3 : { consecutiveFailures: 0, cooledDown: false };
 	}
-	function saveL3State(s: LayerFailureState): void {
-		const p = getProfilePath();
+	function saveL3State(s: LayerFailureState, p = getProfilePath()): void {
 		if (!p) return;
 		const all = loadFailureState(p);
 		all.l3 = s;
@@ -174,11 +172,11 @@ export function setupL3Persona(
 	}
 
 	/** 熔断/失败记账（与 L1/L2 同款：连败 3 次自动暂停，手动触发可复位）。 */
-	function recordFailure(ctx: ExtensionContext, detail: string): void {
-		const st = loadL3State();
+	function recordFailure(ctx: ExtensionContext, detail: string, profilePath: string, visible: boolean): void {
+		const st = loadL3State(profilePath);
 		st.consecutiveFailures++;
-		logEvent("l3", `persona failed (${st.consecutiveFailures}/${L3_FAILURE_THRESHOLD}): ${detail}`, getProfilePath());
-		noticeCard({
+		logEvent("l3", `persona failed (${st.consecutiveFailures}/${L3_FAILURE_THRESHOLD}): ${detail}`, profilePath);
+		if (visible) noticeCard({
 			level: "warning",
 			title: "L3 画像更新失败",
 			lines: [`连续失败 ${st.consecutiveFailures}/${L3_FAILURE_THRESHOLD}`, detail.slice(0, 80)],
@@ -188,15 +186,15 @@ export function setupL3Persona(
 			st.cooledDown = true;
 			ctx.ui.notify(l3CoolDownMessage(st.consecutiveFailures), "error");
 		}
-		saveL3State(st);
+		saveL3State(st, profilePath);
 	}
 
-	function recordSuccess(): void {
-		const st = loadL3State();
+	function recordSuccess(profilePath: string): void {
+		const st = loadL3State(profilePath);
 		if (st.consecutiveFailures === 0 && !st.cooledDown) return;
 		st.consecutiveFailures = 0;
 		st.cooledDown = false;
-		saveL3State(st);
+		saveL3State(st, profilePath);
 	}
 
 	/**
@@ -205,8 +203,8 @@ export function setupL3Persona(
 	 * 门控在 **claim 时**重估一次，而不是沿用入队时的结论：job 可能排在队尾等了很久，
 	 * 期间场景块/游标都可能已经变（例如前一个 L2 刚提交、或另一轮 L3 已把画像更新过）。
 	 */
-	async function executeJob(ctx: ExtensionContext, job: PipelineJob): Promise<PipelineJobResult> {
-		const profilePath = getProfilePath();
+	async function executeJob(ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope): Promise<PipelineJobResult> {
+		const profilePath = scope?.profilePath ?? getProfilePath();
 		if (!profilePath) return "failed";
 
 		const forced = job.source === "manual";
@@ -256,21 +254,24 @@ export function setupL3Persona(
 		});
 		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
-		const to = loadSubagentTimeouts(profilePath);
-		const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
+		let watchingExit = true;
+		let waitP: ReturnType<typeof waitJobWithLiveness> | undefined;
+		try {
+			const to = loadSubagentTimeouts(profilePath);
+			waitP = waitJobWithLiveness(() => watchingExit ? db.getJob(job.id) : undefined, {
 				softMs: to.softMs,
 				hardMs: to.hardMs,
-			profilePath,
-			layer: "l3",
-			jobId: job.id,
-		});
-		try {
+				profilePath,
+				layer: "l3",
+				jobId: job.id,
+			});
 			const spawnP = runPiSubagent("l3-persona-generator", task, ctx, {
 				profilePath,
 				layer: "l3",
 				jobId: job.id,
 				// 早死检测：子进程非 0 退出且 job 仍 running ⇒ 立刻标 failed（详见 l1 同名注释）
 				onEarlyExit: (info) => {
+					if (!watchingExit) return;
 					if (db.getJob(job.id)?.status !== "running") return;
 					const why = `子进程异常退出（code=${info.code}, signal=${info.signal ?? "-"}, pid=${info.pid}）`;
 					db.complete(job.id, "failed", why);
@@ -284,7 +285,7 @@ export function setupL3Persona(
 
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
-				recordSuccess();
+				recordSuccess(profilePath);
 				logEvent(
 					"l3",
 					`本轮完成（job ${job.id}，${gate.reason}，${(outcome.elapsedMs / 1000).toFixed(0)}s` +
@@ -293,13 +294,14 @@ export function setupL3Persona(
 				);
 				// 画像提议卡片：这是本系统唯一会改用户画像的层，提了什么必须可见
 				//（2026-09-19 之前完全静默：连“跑完了没改任何东西”都无从得知）。
-				reportProposalDiff(userEntriesBefore, readProposalEntries(profilePath));
+				if (!scope || scope.isCurrent()) reportProposalDiff(userEntriesBefore, readProposalEntries(profilePath));
 				return "done";
 			}
 			if (after?.status === "skipped") {
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
+			if (after?.status === "failed") throw new Error(after.error ?? "L3 子代理任务失败");
 			// 到硬上限仍是 running ⇒ 停掉子代理（先拦 → 宽限 → 杀进程树 → 杀后修复）
 			const stop = await stopSubagent({
 				graceMs: to.killGraceMs,
@@ -310,7 +312,7 @@ export function setupL3Persona(
 			});
 			await spawnP.catch(() => {});
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
-			recordFailure(ctx, `子代理超过硬上限被停掉（job ${job.id}）`);
+			recordFailure(ctx, `子代理超过硬上限被停掉（job ${job.id}）`, profilePath, !scope || scope.isCurrent());
 			if (!stop.killConfirmed) {
 				// 停不下来就不能放新 L3 进来（它会写 USER-temp.md，而停不下来的那个还在写同一份文件）⇒ 持有该层
 				const st3 = loadFailureState(profilePath);
@@ -318,7 +320,7 @@ export function setupL3Persona(
 				saveFailureState(profilePath, st3);
 			}
 			logEvent("l3", `round stopped at hard cap (job ${job.id}，${stop.note})`, profilePath);
-			noticeCard({
+			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
 				title: "L3 画像更新已在硬上限被停掉",
 				lines: [
@@ -331,12 +333,14 @@ export function setupL3Persona(
 			});
 			return "failed";
 		} catch (err) {
-			recordFailure(ctx, `派发失败：${err instanceof Error ? err.message : String(err)}`);
+			recordFailure(ctx, `派发失败：${err instanceof Error ? err.message : String(err)}`, profilePath, !scope || scope.isCurrent());
 			const still = db.getJob(job.id);
 			if (still?.status === "running") db.complete(job.id, "failed", err instanceof Error ? err.message : String(err));
 			return "failed";
 		} finally {
+			watchingExit = false;
 			stopHeartbeat();
+			await waitP?.catch(() => {});
 			ctx.ui.setStatus("memory", "Memory");
 		}
 	}

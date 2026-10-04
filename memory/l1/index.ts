@@ -15,7 +15,7 @@ import { readSubagentRun } from "../pipeline/subagent-runs.ts";
 import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
 import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
-import { decideManualTrigger, type PipelineJobResult, type PipelineWorker } from "../pipeline/worker.ts";
+import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l1CoolDownMessage(failures: number): string {
@@ -34,17 +34,15 @@ export function setupL1Extractor(
 ): {
 	reset: () => void;
 	triggerManual: (ctx?: ExtensionContext) => void;
-	executeJob: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
+	executeJob: (ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope) => Promise<PipelineJobResult>;
 	isCooledDown: () => boolean;
 } {
 	let turnCount = 0;
 
-	function loadL1State(): LayerFailureState {
-		const p = getProfilePath();
+	function loadL1State(p = getProfilePath()): LayerFailureState {
 		return p ? loadFailureState(p).l1 : { consecutiveFailures: 0, cooledDown: false };
 	}
-	function saveL1State(s: LayerFailureState): void {
-		const p = getProfilePath();
+	function saveL1State(s: LayerFailureState, p = getProfilePath()): void {
 		if (!p) return;
 		const all = loadFailureState(p);
 		all.l1 = s;
@@ -85,8 +83,8 @@ export function setupL1Extractor(
 		if (queued && !queued.duplicate) pipeline.kick();
 	});
 
-	async function executeJob(ctx: ExtensionContext, job: PipelineJob): Promise<PipelineJobResult> {
-		const profilePath = getProfilePath();
+	async function executeJob(ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope): Promise<PipelineJobResult> {
+		const profilePath = scope?.profilePath ?? getProfilePath();
 		if (!profilePath) return "failed";
 		const task = buildL1Task(profilePath);
 		if (!task) return "skipped";
@@ -111,15 +109,17 @@ export function setupL1Extractor(
 		});
 		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
-		const to = loadSubagentTimeouts(profilePath);
-		const waitP = waitJobWithLiveness(() => db.getJob(job.id), {
+		let watchingExit = true;
+		let waitP: ReturnType<typeof waitJobWithLiveness> | undefined;
+		try {
+			const to = loadSubagentTimeouts(profilePath);
+			waitP = waitJobWithLiveness(() => watchingExit ? db.getJob(job.id) : undefined, {
 				softMs: to.softMs,
 				hardMs: to.hardMs,
-			profilePath,
-			layer: "l1",
-			jobId: job.id,
-		});
-		try {
+				profilePath,
+				layer: "l1",
+				jobId: job.id,
+			});
 			const spawnP = runPiSubagent("l1-extractor", task, ctx, {
 				profilePath,
 				layer: "l1",
@@ -129,6 +129,7 @@ export function setupL1Extractor(
 				// 守卫「job 仍 running」不可省：正常时序是「先 commit（job 变 done）→ 再退出」，
 				// 那时退出码再非 0 也不能动它。
 				onEarlyExit: (info) => {
+					if (!watchingExit) return;
 					if (db.getJob(job.id)?.status !== "running") return;
 					const why = `子进程异常退出（code=${info.code}, signal=${info.signal ?? "-"}, pid=${info.pid}）`;
 					db.complete(job.id, "failed", why);
@@ -139,17 +140,18 @@ export function setupL1Extractor(
 			// 不能只记日志后干等活性门控——子代理压根没起来时 job 会挂到硬阈值
 			// （默认 45 分钟），期间串行队列被单飞锁全堵死。
 			const outcome = await failFastOnSpawnFailure(spawnP, waitP, (err) => {
-				logEvent("l1", `spawn later: ${err instanceof Error ? err.message : String(err)}`);
+				logEvent("l1", `spawn later: ${err instanceof Error ? err.message : String(err)}`, profilePath);
 			});
 			const after = db.getJob(job.id);
 			if (after?.status === "done") {
-				const s2 = loadL1State();
+				const s2 = loadL1State(profilePath);
 				s2.consecutiveFailures = 0;
-				saveL1State(s2);
+				saveL1State(s2, profilePath);
 				logEvent(
 					"l1",
 					`job ${job.id} 完成：${(outcome.elapsedMs / 1000).toFixed(0)}s` +
 						`${outcome.longestTurnMs !== undefined ? `，最长单轮 ${(outcome.longestTurnMs / 1000).toFixed(0)}s` : ""}`,
+					profilePath,
 				);
 				return "done";
 			}
@@ -157,6 +159,7 @@ export function setupL1Extractor(
 				await spawnP.catch(() => {});
 				return "skipped";
 			}
+			if (after?.status === "failed") throw new Error(after.error ?? "L1 子代理任务失败");
 			// 到硬上限仍是 running ⇒ 停掉子代理（先拦 → 宽限 → 杀进程树 → 杀后修复）
 			const stop = await stopSubagent({
 				graceMs: to.killGraceMs,
@@ -167,11 +170,11 @@ export function setupL1Extractor(
 			});
 			await spawnP.catch(() => {});
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
-			const s2 = loadL1State();
+			const s2 = loadL1State(profilePath);
 			s2.consecutiveFailures++;
 			if (!stop.killConfirmed) s2.holdUntil = holdUntilFrom(Date.now(), to.holdMsUnconfirmed);
-			logEvent("l1", `extract stopped at hard cap (job ${job.id}，${stop.note})`);
-			noticeCard({
+			logEvent("l1", `extract stopped at hard cap (job ${job.id}，${stop.note})`, profilePath);
+			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
 				title: "L1 提取已在硬上限被停掉",
 				lines: [
@@ -185,14 +188,14 @@ export function setupL1Extractor(
 				s2.cooledDown = true;
 				ctx.ui.notify(l1CoolDownMessage(s2.consecutiveFailures), "error");
 			}
-			saveL1State(s2);
+			saveL1State(s2, profilePath);
 			return "failed";
 		} catch (err) {
-			const s2 = loadL1State();
+			const s2 = loadL1State(profilePath);
 			s2.consecutiveFailures++;
 			const failMsg = err instanceof Error ? err.message : String(err);
-			logEvent("l1", `extract failed: ${failMsg}`);
-			noticeCard({
+			logEvent("l1", `extract failed: ${failMsg}`, profilePath);
+			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
 				title: "L1 提取派发失败",
 				lines: [`job ${job.id}，连续失败 ${s2.consecutiveFailures}/${L1_FAILURE_THRESHOLD}`],
@@ -202,12 +205,14 @@ export function setupL1Extractor(
 				s2.cooledDown = true;
 				ctx.ui.notify(l1CoolDownMessage(s2.consecutiveFailures), "error");
 			}
-			saveL1State(s2);
+			saveL1State(s2, profilePath);
 			const still = db.getJob(job.id);
 			if (still?.status === "running") db.complete(job.id, "failed", err instanceof Error ? err.message : String(err));
 			return "failed";
 		} finally {
+			watchingExit = false;
 			stopHeartbeat();
+			await waitP?.catch(() => {}); // 派发失败时也等落败的轮询停止，再让 worker 释放连接。
 			ctx.ui.setStatus("memory", "Memory");
 		}
 	}

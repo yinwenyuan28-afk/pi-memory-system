@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { join } from "node:path";
 import { MEMORY_DB_DIR, PIPELINE_JOBS_FILE } from "../paths.ts";
+import { logEvent } from "../../util/notice.ts";
 
 export type PipelineJobType = "l1" | "l2" | "l3";
 /**
@@ -84,9 +85,11 @@ function mapRow(r: Row): PipelineJob {
  */
 export class PipelineJobsDB {
 	private db: DatabaseSync;
+	private readonly profilePath: string;
 	readonly dbPath: string;
 
 	constructor(profilePath: string) {
+		this.profilePath = profilePath;
 		const memDir = join(profilePath, MEMORY_DB_DIR);
 		mkdirSync(memDir, { recursive: true });
 		this.dbPath = join(memDir, PIPELINE_JOBS_FILE);
@@ -102,14 +105,29 @@ export class PipelineJobsDB {
 
 	/** 已有同 type 的 queued 则不插入；running 也视为 duplicate（不堆第二条）。 */
 	enqueue(type: PipelineJobType, source: PipelineJobSource): EnqueueResult {
-		const existing = this.db
-			.prepare("SELECT * FROM jobs WHERE type = ? AND status IN ('queued', 'running') ORDER BY id ASC LIMIT 1")
-			.get(type) as Row | undefined;
-		if (existing) return { id: existing.id, duplicate: true };
+		return this.transaction(() => {
+			const existing = this.db
+				.prepare("SELECT * FROM jobs WHERE type = ? AND status IN ('queued', 'running') ORDER BY id ASC LIMIT 1")
+				.get(type) as Row | undefined;
+			if (existing) return { id: existing.id, duplicate: true };
 
-		const now = new Date().toISOString();
-		const info = this.db.prepare("INSERT INTO jobs (type, source, status, created_at) VALUES (?, ?, 'queued', ?)").run(type, source, now);
-		return { id: Number(info.lastInsertRowid), duplicate: false };
+			const now = new Date().toISOString();
+			const info = this.db.prepare("INSERT INTO jobs (type, source, status, created_at) VALUES (?, ?, 'queued', ?)").run(type, source, now);
+			return { id: Number(info.lastInsertRowid), duplicate: false };
+		});
+	}
+
+	/** 写事务保护读后写；失败时保留原始错误，并释放 SQLite 写锁。 */
+	private transaction<T>(run: () => T): T {
+		this.db.exec("BEGIN IMMEDIATE");
+		try {
+			const result = run();
+			this.db.exec("COMMIT");
+			return result;
+		} catch (err) {
+			try { this.db.exec("ROLLBACK"); } catch { /* 不覆盖原始错误 */ }
+			throw err;
+		}
 	}
 
 	/**
@@ -128,12 +146,15 @@ export class PipelineJobsDB {
 		return rows.map(mapRow);
 	}
 
-	/** queued → running；id 已被别人 claim 则返回 undefined。 */
+	/** queued → running 与全局空闲检查是同一条写语句，跨进程也只能认领一个。 */
 	claim(id: number): PipelineJob | undefined {
 		const now = new Date().toISOString();
-		const info = this.db.prepare("UPDATE jobs SET status = 'running', started_at = ? WHERE id = ? AND status = 'queued'").run(now, id);
-		if (info.changes !== 1) return undefined;
-		return this.getJob(id);
+		const row = this.db.prepare(
+			`UPDATE jobs SET status = 'running', started_at = ?
+			 WHERE id = ? AND status = 'queued'
+			 AND NOT EXISTS (SELECT 1 FROM jobs WHERE status = 'running') RETURNING *`,
+		).get(now, id) as Row | undefined;
+		return row ? mapRow(row) : undefined;
 	}
 
 	getJob(id: number): PipelineJob | undefined {
@@ -188,19 +209,25 @@ export class PipelineJobsDB {
 	 * 把当前 running 的指定层标 done（子代理提交成功时调用；没有匹配行返回 0）。
 	 */
 	completeRunning(type: PipelineJobType): number {
-		const now = new Date().toISOString();
-		const info = this.db
-			.prepare("UPDATE jobs SET status = 'done', finished_at = ? WHERE type = ? AND status = 'running'")
-			.run(now, type);
-		return Number(info.changes);
+		return this.transaction(() => {
+			const rows = this.db.prepare("SELECT id FROM jobs WHERE type = ? AND status = 'running' LIMIT 2").all(type) as { id: number }[];
+			if (rows.length > 1) {
+				const message = `multiple running ${type} jobs: refuse ambiguous completion (${rows.map((r) => r.id).join(", ")})`;
+				logEvent("pipeline", message, this.profilePath);
+				throw new Error(message);
+			}
+			if (!rows.length) return 0;
+			const info = this.db.prepare("UPDATE jobs SET status = 'done', finished_at = ? WHERE id = ? AND status = 'running'")
+				.run(new Date().toISOString(), rows[0].id);
+			return Number(info.changes);
+		});
 	}
 
 	/**
 	 * 是否有**任何** job 处于 running（跨层、跨进程）。
 	 *
-	 * 用途：串行执行器 claim 下一个 job 前先看它。`peekNext()` 只挑 `queued`，
-	 * 所以两个 pi 进程同时开着时各自都能 claim 走一条 queued → 两个子代理并发。
-	 * 有这个判断后，"同一时刻只有一个 L1/L2/L3 子代理"才在**全局**成立，而不只是单进程内。
+	 * 用于调度前快速退出；查询结果可能立即过时。
+	 * 跨进程互斥由 claim() 内部的原子条件 UPDATE 保证。
 	 */
 	hasAnyRunning(): boolean {
 		const row = this.db.prepare("SELECT 1 AS n FROM jobs WHERE status = 'running' LIMIT 1").get() as
@@ -282,24 +309,45 @@ export class PipelineJobsDB {
 	}
 }
 
-const instances = new Map<string, PipelineJobsDB>();
+interface DatabaseEntry { db: PipelineJobsDB; users: number; closeRequested: boolean }
+const instances = new Map<string, DatabaseEntry>();
 
 export function getPipelineJobsDB(profilePath?: string): PipelineJobsDB {
 	const p = profilePath ?? process.env.PI_PROFILE_PATH ?? "";
 	if (!p) throw new Error("PipelineJobsDB: profilePath 未提供且 PI_PROFILE_PATH 未设置");
-	let db = instances.get(p);
-	if (!db) {
-		db = new PipelineJobsDB(p);
-		instances.set(p, db);
+	let entry = instances.get(p);
+	if (!entry) {
+		entry = { db: new PipelineJobsDB(p), users: 0, closeRequested: false };
+		instances.set(p, entry);
 	}
-	return db;
+	return entry.db;
 }
 
-export function closePipelineJobsDB(profilePath?: string): void {
+/** 会话与在途执行各持一个租约；reset 不得关掉仍有执行器/轮询使用的连接。 */
+export function retainPipelineJobsDB(profilePath: string): { db: PipelineJobsDB; release: () => void } {
+	const db = getPipelineJobsDB(profilePath);
+	const entry = instances.get(profilePath)!;
+	entry.users++;
+	entry.closeRequested = false;
+	let released = false;
+	return { db, release: () => {
+		if (released) return;
+		released = true;
+		entry.users--;
+		if (entry.users === 0 && entry.closeRequested && instances.get(profilePath) === entry) {
+			db.close();
+			instances.delete(profilePath);
+		}
+	} };
+}
+
+export function closePipelineJobsDB(profilePath?: string, expected?: PipelineJobsDB): void {
 	const p = profilePath ?? process.env.PI_PROFILE_PATH ?? "";
-	const db = instances.get(p);
-	if (db) {
-		db.close();
+	const entry = instances.get(p);
+	if (entry && (!expected || entry.db === expected)) {
+		entry.closeRequested = true;
+		if (entry.users > 0) return;
+		entry.db.close();
 		instances.delete(p);
 	}
 }

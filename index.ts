@@ -28,8 +28,8 @@ import { registerReadSceneBlocksTool } from "./memory/l2/scene-read-tool.ts";
 import { registerL2ArchiveGuideTool } from "./memory/l2/archive-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
-import { setupPipelineWorker, type PipelineExecutors, type PipelineJobResult, type PipelineWorker } from "./memory/pipeline/worker.ts";
-import { getPipelineJobsDB, type PipelineJob } from "./memory/pipeline/jobs-db.ts";
+import { setupPipelineWorker, type PipelineExecutors, type PipelineWorker } from "./memory/pipeline/worker.ts";
+import { getPipelineJobsDB } from "./memory/pipeline/jobs-db.ts";
 import { clearSubagentRun, listSubagentRuns, readSubagentRun } from "./memory/pipeline/subagent-runs.ts";
 import { stopSubagent } from "./memory/pipeline/subagent-kill.ts";
 import { loadSubagentTimeouts } from "./memory/pipeline/timeout-config.ts";
@@ -231,13 +231,7 @@ export default function (pi: ExtensionAPI) {
   // L3 persona 调度器（单次注册）：由 pipeline 队列串行消费（`type='l3'`）——
   // 本模块只做五级门控 + 入队，spawn 在 worker 里（2026-09-19 并入，取代 l3/run.lock 自单飞）。
   let l3Initialized = false;
-  let l3Controls: {
-    onL1Committed: (recordCount: number) => void;
-    triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
-    reset: () => void;
-    executeJob: (ctx: ExtensionContext, job: PipelineJob) => Promise<PipelineJobResult>;
-    isCooledDown: () => boolean;
-  } | undefined;
+  let l3Controls: ReturnType<typeof setupL3Persona> | undefined;
 
   // ── Tool schema normalization（修复严格 OpenAI 兼容 provider 报错）────────────
   // pi 在转发工具给 OpenAI 兼容接口时，把 tool.parameters 原样当作函数 JSON Schema
@@ -508,7 +502,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (profile) {
       try {
-        const n = getPipelineJobsDB(profile.path).recoverStuckRunning();
+        const n = pipelineWorker?.ownsJob(profile.path) ? 0 : getPipelineJobsDB(profile.path).recoverStuckRunning();
         if (n > 0) logEvent("pipeline", `recovered ${n} leftover running job(s)`, profile.path);
       } catch (err) {
         logEvent("pipeline", `recover failed: ${err instanceof Error ? err.message : String(err)}`, profile.path);
@@ -521,6 +515,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const orphans = listSubagentRuns(profile.path);
         for (const rec of orphans) {
+          if (pipelineWorker?.ownsJob(profile.path, rec.jobId)) continue;
           if (isProcessAlive(rec.pid)) {
             const out = await stopSubagent({
               profilePath: profile.path,
@@ -575,16 +570,14 @@ export default function (pi: ExtensionAPI) {
 
     if (l1Controls && l2Controls && l3Controls) {
       pipelineExecutors = {
-        runL1: (ctx, job) => l1Controls!.executeJob(ctx, job),
-        runL2: (ctx, job) => l2Controls!.executeJob(ctx, job),
-        runL3: (ctx, job) => l3Controls!.executeJob(ctx, job),
+        runL1: (ctx, job, scope) => l1Controls!.executeJob(ctx, job, scope),
+        runL2: (ctx, job, scope) => l2Controls!.executeJob(ctx, job, scope),
+        runL3: (ctx, job, scope) => l3Controls!.executeJob(ctx, job, scope),
         isCooledDown: (type) =>
           type === "l1" ? l1Controls!.isCooledDown() : type === "l2" ? l2Controls!.isCooledDown() : l3Controls!.isCooledDown(),
         // L1 收尾后由 worker 决定下一步（2026-09-19）：还有 L0 积压就继续排 L1，
         // 排空了且有新记录才排 L2 —— 对应"多个 L1 串行跑完才轮到 L2"。
-        hasL1Remaining: () => {
-          const p = manager?.getProfileManager().getActiveProfile()?.path;
-          if (!p) return false;
+        hasL1Remaining: (p) => {
           try {
             const cursor = loadL1Cursor(p);
             const files = listL0Files(p, cursor);
@@ -595,9 +588,7 @@ export default function (pi: ExtensionAPI) {
             return false;
           }
         },
-        hasNewRecordsForL2: () => {
-          const p = manager?.getProfileManager().getActiveProfile()?.path;
-          if (!p) return false;
+        hasNewRecordsForL2: (p) => {
           try {
             return countNewRecords(p, loadL2Cursor(p).lastProcessedAt) > 0;
           } catch {
@@ -620,13 +611,13 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    pipelineWorker?.reset(); // 先使旧会话的 UI/派发失效，在途任务租约仍保留数据库。
     manager.shutdown();
     skillManager = undefined;
     profileSkillsPath = undefined;
     l1Controls?.reset();
     l2Controls?.reset();
     l3Controls?.reset();
-    pipelineWorker?.reset();
     recallScheduler.reset(); // 清召回闸门：在飞/排队请求以 reset settle（避免悬挂）
     // [DISABLED] workflowController.shutdown();
   });
@@ -1225,6 +1216,10 @@ export default function (pi: ExtensionAPI) {
         try {
           manager.switchProfile(parts[1]);
           const profile = manager.getProfileManager().getActiveProfile();
+          process.env.PI_PROFILE_PATH = profile.path;
+          pipelineWorker?.reset();
+          pipelineWorker?.setCachedCtx(ctx);
+          pipelineWorker?.kick();
           skillManager = new SkillManager(profile.path, [
             resolve(agentDir, "skills"),
           ]);
