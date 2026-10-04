@@ -21,6 +21,7 @@ import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { readL3Proposal, USER_TEMP_FILE } from "./user-file.ts";
+import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } from "../pipeline/status.ts";
 
 function incrementMemoriesSince(profilePath: string, count: number): void {
 	const filePath = join(profilePath, MEMORY_DB_DIR, L3_CURSOR_FILE);
@@ -153,6 +154,7 @@ export function setupL3Persona(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
 	pipeline: PipelineWorker,
+	status?: PipelineStatusReporter,
 ): L3Controls {
 	function logSkip(reason: string): void {
 		// 静默是曾经最难查的根因之一：触发没发生却查不到原因，只能翻会话日志。
@@ -236,7 +238,7 @@ export function setupL3Persona(
 		saveL3Cursor(profilePath, { ...cursor, lastTriggeredAt: new Date().toISOString() });
 
 		const db = getPipelineJobsDB(profilePath);
-		ctx.ui.setStatus("memory", forced ? "Memory ⚙L3 (manual)..." : "Memory ⚙L3...");
+		setPipelineStatus(status, ctx, "l3", forced ? "⚙L3 (manual)..." : "⚙L3...", scope);
 		// 与 L1/L2 同款：真完成信号来自子代理的 `l3_commit`（completeRunningL3），
 		// **不是** `await runPiSubagent` 的返回 —— 那是 async:true 的 fire-and-forget，毫秒级返回。
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：软阈值只提示、硬上限**停掉子代理**（旧实现到点判死 + abort 会误判）。
@@ -247,10 +249,7 @@ export function setupL3Persona(
 			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
 			getPid: () => readSubagentRun(profilePath, "l3", job.id)?.pid,
 			onTick: (info) =>
-				ctx.ui.setStatus(
-					"memory",
-					`Memory ⚙L3 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`,
-				),
+				setPipelineStatus(status, ctx, "l3", `⚙L3 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`, scope),
 		});
 		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
@@ -341,7 +340,7 @@ export function setupL3Persona(
 			watchingExit = false;
 			stopHeartbeat();
 			await waitP?.catch(() => {});
-			ctx.ui.setStatus("memory", "Memory");
+			clearPipelineStatus(status, ctx, "l3", scope);
 		}
 	}
 

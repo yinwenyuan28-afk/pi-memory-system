@@ -16,6 +16,7 @@ import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-livene
 import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
+import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } from "../pipeline/status.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l1CoolDownMessage(failures: number): string {
@@ -31,11 +32,13 @@ export function setupL1Extractor(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
 	pipeline: PipelineWorker,
+	status?: PipelineStatusReporter,
 ): {
 	reset: () => void;
 	triggerManual: (ctx?: ExtensionContext) => void;
 	executeJob: (ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope) => Promise<PipelineJobResult>;
 	isCooledDown: () => boolean;
+	getTurnStatus: () => { remaining: number; paused: boolean; queued: boolean };
 } {
 	let turnCount = 0;
 
@@ -61,7 +64,10 @@ export function setupL1Extractor(
 
 	pi.on("input", (event) => {
 		if (event.source !== "interactive") return;
-		if (!hasActiveL1()) turnCount++;
+		if (!hasActiveL1()) {
+			turnCount++;
+			status?.refresh();
+		}
 	});
 
 	pi.on("agent_settled", (_event, ctx) => {
@@ -76,10 +82,13 @@ export function setupL1Extractor(
 		// 导致同一轮两次全目录同步读（且两次注入的锚点可能不一致）。
 		if (listL0Files(profilePath, loadL1Cursor(profilePath)).length === 0) {
 			turnCount = 0;
+			status?.refresh(ctx);
 			return;
 		}
 		turnCount = 0;
+		status?.refresh(ctx);
 		const queued = pipeline.enqueueL1("interval");
+		status?.refresh(ctx);
 		if (queued && !queued.duplicate) pipeline.kick();
 	});
 
@@ -90,7 +99,7 @@ export function setupL1Extractor(
 		if (!task) return "skipped";
 
 		const db = getPipelineJobsDB(profilePath);
-		ctx.ui.setStatus("memory", job.source === "manual" ? "Memory ⚙L1 (manual)..." : "Memory ⚙L1...");
+		setPipelineStatus(status, ctx, "l1", job.source === "manual" ? "⚙L1 (manual)..." : "⚙L1...", scope);
 		// 比子代理超时多给 30s 宽限：子代理在最后时刻调 l1_commit 时，落盘 + 写游标 + 入队 L2
 		// 仍需时间，同值会在这条尾巴上误判超时（2026-09-15）。
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：软阈值只提示、硬上限**停掉子代理**；
@@ -102,10 +111,7 @@ export function setupL1Extractor(
 			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
 			getPid: () => readSubagentRun(profilePath, "l1", job.id)?.pid,
 			onTick: (info) =>
-				ctx.ui.setStatus(
-					"memory",
-					`Memory ⚙L1 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`,
-				),
+				setPipelineStatus(status, ctx, "l1", `⚙L1 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`, scope),
 		});
 		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
@@ -213,7 +219,7 @@ export function setupL1Extractor(
 			watchingExit = false;
 			stopHeartbeat();
 			await waitP?.catch(() => {}); // 派发失败时也等落败的轮询停止，再让 worker 释放连接。
-			ctx.ui.setStatus("memory", "Memory");
+			clearPipelineStatus(status, ctx, "l1", scope);
 		}
 	}
 
@@ -240,7 +246,9 @@ export function setupL1Extractor(
 				s0.cooledDown = false;
 				s0.consecutiveFailures = 0;
 				saveL1State(s0);
+				turnCount = 0;
 				if (ctx) pipeline.setCachedCtx(ctx);
+				status?.refresh(ctx);
 				pipeline.kick();
 				logEvent("l1", "manual trigger: 复位熔断，队列中的 job 将执行", profilePath);
 				if (ctx) ctx.ui.notify("L1 已复位熔断，排队中的任务将执行", "info");
@@ -258,6 +266,7 @@ export function setupL1Extractor(
 		s2.cooledDown = false;
 		s2.consecutiveFailures = 0;
 		saveL1State(s2);
+		turnCount = 0;
 		if (ctx) pipeline.setCachedCtx(ctx);
 		const queued = pipeline.enqueueL1("manual");
 		if (!queued) {
@@ -269,6 +278,7 @@ export function setupL1Extractor(
 			return;
 		}
 		if (ctx) ctx.ui.notify("L1 提取已入队", "info");
+		status?.refresh(ctx);
 		pipeline.kick();
 	};
 
@@ -279,6 +289,16 @@ export function setupL1Extractor(
 		triggerManual,
 		executeJob,
 		isCooledDown: () => loadL1State().cooledDown,
+		getTurnStatus: () => ({
+			remaining: Math.max(0, L1_INTERVAL - turnCount),
+			paused: loadL1State().cooledDown,
+			queued: (() => {
+				const p = getProfilePath();
+				if (!p) return false;
+				try { return getPipelineJobsDB(p).listQueued().some((job) => job.type === "l1"); }
+				catch { return false; }
+			})(),
+		}),
 	};
 }
 

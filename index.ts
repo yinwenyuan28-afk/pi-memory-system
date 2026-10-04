@@ -6,14 +6,13 @@ import {
   SkillManager,
   setBundledSkillsPaths,
 } from "./skill/index.ts";
-import { setupMemoryReviewer } from "./memory/review/reviewer.ts";
-import { setupSkillReviewer } from "./skill/reviewer.ts";
+import { setupSkillReviewer, SKILL_REVIEW_INTERVAL } from "./skill/reviewer.ts";
 import { archiveSessionIncrement } from "./memory/l0/index.ts";
 import { archiveSkillFeedIncrement } from "./skill/feed-cleaner.ts";
 import { loadL1Config, setupL1Extractor } from "./memory/l1/index.ts";
 // saveL1Mode 的真实定义在 config.ts（l1/index.ts 不转出它）——2026-09-20 类型检查发现：
 // 旧写法从 l1/index.ts 导入得到 undefined，/my-memory:l1-mode 一调用就 TypeError。
-import { listL0Files, loadL1Cursor, saveL1Mode } from "./memory/l1/config.ts";
+import { L1_INTERVAL, listL0Files, loadL1Cursor, saveL1Mode } from "./memory/l1/config.ts";
 import { registerL1CommitTool } from "./memory/l1/commit-tool.ts";
 import { registerListL1ScenesTool } from "./memory/l1/scene-tool.ts";
 import { setupJudgSessionProject } from "./util/judg-session-project/setup.ts";
@@ -29,7 +28,8 @@ import { registerL2ArchiveGuideTool } from "./memory/l2/archive-tool.ts";
 import { registerReadSkillFeedIncrementTool } from "./skill/feed-reader.ts";
 import { setupL2Organizer } from "./memory/l2/index.ts";
 import { setupPipelineWorker, type PipelineExecutors, type PipelineWorker } from "./memory/pipeline/worker.ts";
-import { getPipelineJobsDB } from "./memory/pipeline/jobs-db.ts";
+import { getPipelineJobsDB, type PipelineJobType } from "./memory/pipeline/jobs-db.ts";
+import { formatPipelineStatus, type PipelineStatusReporter } from "./memory/pipeline/status.ts";
 import { clearSubagentRun, listSubagentRuns, readSubagentRun } from "./memory/pipeline/subagent-runs.ts";
 import { stopSubagent } from "./memory/pipeline/subagent-kill.ts";
 import { loadSubagentTimeouts } from "./memory/pipeline/timeout-config.ts";
@@ -196,9 +196,29 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  // 提供懒引用给 reviewer，避免循环依赖
-  let getMemoryStatus: () => string = () => "0t";
-  let getSkillStatus: () => string = () => "0t";
+  // 所有状态共用 Pi 的 `memory` 项；用单一渲染器合并 L1/L2/L3 与 Skill，避免互相覆盖。
+  let getSkillStatus: () => string = () => `${SKILL_REVIEW_INTERVAL}t`;
+  let statusCtx: ExtensionContext | undefined;
+  let activePipelineStatus: { layer: PipelineJobType; detail: string } | undefined;
+  function refreshStatus(ctx = statusCtx): void {
+    if (!ctx) return;
+    const l1 = l1Controls?.getTurnStatus() ?? { remaining: L1_INTERVAL, paused: false };
+    ctx.ui.setStatus("memory", formatPipelineStatus(l1, activePipelineStatus, getSkillStatus()));
+  }
+  const pipelineStatus: PipelineStatusReporter = {
+    set: (ctx, layer, detail, scope) => {
+      if (scope && !scope.isCurrent()) return;
+      activePipelineStatus = { layer, detail };
+      refreshStatus(ctx);
+    },
+    clear: (ctx, layer, scope) => {
+      if (scope && !scope.isCurrent()) return;
+      if (activePipelineStatus?.layer === layer) activePipelineStatus = undefined;
+      refreshStatus(ctx);
+    },
+    refresh: (ctx) => refreshStatus(ctx),
+  };
+  const refreshSkillStatus = () => refreshStatus();
 
 
 
@@ -396,6 +416,7 @@ export default function (pi: ExtensionAPI) {
   registerFixTool(pi, () => manager?.getProfileManager()?.getActiveProfile()?.path);
 
   pi.on("session_start", async (_event, ctx) => {
+    statusCtx = ctx;
     manager.initialize();
     const profile = manager.getProfileManager().getActiveProfile();
     // 设置主代理进程的 profile 环境变量（供 recall_l1_records / embed_and_search 等工具用）
@@ -466,10 +487,9 @@ export default function (pi: ExtensionAPI) {
     // 初始化审查子代理调度器（单次注册，M8 guard）
     if (!reviewersInitialized) {
       // [DISABLED 2026-09-11] memory-reviewer 停用：旧写入通道整体退役，其 `/remember` 命令、
-      // 每 20 轮自动审查、memory 工具调用随之关闭。getMemoryStatus 保持默认值（状态栏显示 0t）。
-      // memory-organizer 无代码调度入口，一并作废（见 agents/*.md 顶部停用横幅）。如需回退，取消注释。
-      // getMemoryStatus = setupMemoryReviewer(pi, () => manager);
-      getSkillStatus = setupSkillReviewer(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+      // 每 20 轮自动审查、memory 工具调用随之关闭。状态栏 Memory 项改为显示 L1 触发计数。
+      // memory-organizer 无代码调度入口，一并作废（见 agents/*.md 顶部停用横幅）。
+      getSkillStatus = setupSkillReviewer(pi, () => manager?.getProfileManager().getActiveProfile()?.path, refreshSkillStatus);
       reviewersInitialized = true;
     }
 
@@ -538,12 +558,12 @@ export default function (pi: ExtensionAPI) {
 
     // L2 先于 L1：executors 需要两边的 executeJob
     if (!l2Initialized && pipelineWorker) {
-      l2Controls = setupL2Organizer(pi, getProfilePath, pipelineWorker);
+      l2Controls = setupL2Organizer(pi, getProfilePath, pipelineWorker, pipelineStatus);
       l2Initialized = true;
     }
 
     if (!l1Initialized && pipelineWorker) {
-      l1Controls = setupL1Extractor(pi, getProfilePath, pipelineWorker);
+      l1Controls = setupL1Extractor(pi, getProfilePath, pipelineWorker, pipelineStatus);
       l1Initialized = true;
     }
 
@@ -564,6 +584,7 @@ export default function (pi: ExtensionAPI) {
         pi,
         () => manager?.getProfileManager().getActiveProfile()?.path,
         pipelineWorker,
+        pipelineStatus,
       );
       l3Initialized = true;
     }
@@ -603,7 +624,8 @@ export default function (pi: ExtensionAPI) {
     // [DISABLED] 初始化工作流保存系统已禁用（保留代码，恢复时取消注释）
     // workflowController.init(ctx);
 
-    ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
+    statusCtx = ctx;
+    refreshStatus(ctx);
 
     // 2026-09-12：旧检索链（searcher 关键词设计 + 倒排索引接线）退役 —— 其产出只被已注释的
     // sub-memory / get_memory 路径消费，三处"关键词刷新"钩子（session_start / agent_settled /
@@ -611,6 +633,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    activePipelineStatus = undefined;
+    statusCtx = undefined;
     pipelineWorker?.reset(); // 先使旧会话的 UI/派发失效，在途任务租约仍保留数据库。
     manager.shutdown();
     skillManager = undefined;
@@ -632,7 +656,8 @@ export default function (pi: ExtensionAPI) {
   // ── 状态显示 ──────────────────────────────────────────────
 
   pi.on("agent_settled", async (_event, ctx) => {
-    ctx.ui.setStatus("memory", `Memory ${getMemoryStatus()} | Skill ${getSkillStatus()}`);
+    statusCtx = ctx;
+    refreshStatus(ctx);
 
     // L0 净化归档：每轮增量把 session 新消息写入 {profile}/conversations/YYYY-MM-DD.jsonl
     // （去重=行号游标；降噪=SanitizeRule 规则集；分片=本地日期；cwd=ctx.cwd 精确值）。
@@ -1216,6 +1241,8 @@ export default function (pi: ExtensionAPI) {
         try {
           manager.switchProfile(parts[1]);
           const profile = manager.getProfileManager().getActiveProfile();
+          statusCtx = ctx;
+          activePipelineStatus = undefined;
           process.env.PI_PROFILE_PATH = profile.path;
           pipelineWorker?.reset();
           pipelineWorker?.setCachedCtx(ctx);
@@ -1224,6 +1251,7 @@ export default function (pi: ExtensionAPI) {
             resolve(agentDir, "skills"),
           ]);
           profileSkillsPath = profile.path;
+          refreshStatus(ctx);
           // 切 profile：召回闸门重置（清 in-flight/队列，避免跨 profile 混用召回结果）
           recallScheduler.reset();
           turnToken++;

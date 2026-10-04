@@ -10,6 +10,7 @@ import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { repairSceneMembers, syncSceneIndex } from "./commit-tool.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
+import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } from "../pipeline/status.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l2CoolDownMessage(failures: number): string {
@@ -24,6 +25,7 @@ export function setupL2Organizer(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
 	pipeline: PipelineWorker,
+	status?: PipelineStatusReporter,
 ): {
 	reset: () => void;
 	triggerManual: (ctx?: ExtensionContext) => void | Promise<void>;
@@ -52,7 +54,7 @@ export function setupL2Organizer(
 			logEvent("l2", "skip: no new records", profilePath);
 			return "skipped";
 		}
-		ctx.ui.setStatus("memory", job.source === "manual" ? `Memory ⚙L2 (manual, ${staged.length} records)...` : "Memory ⚙L2...");
+		setPipelineStatus(status, ctx, "l2", job.source === "manual" ? `⚙L2 (manual, ${staged.length} records)...` : "⚙L2...", scope);
 		// 2026-09-26（SUBAGENT_LIVENESS_FIX）：不再"到点判死"，改为**软阈值只提示、硬上限停掉子代理**。
 		// 旧实现到 600+30s 就标 failed + abort，实测把"跑了 987 秒还在长生成"的子代理误判四次
 		// （jobs 55/61/64/68），并**提前释放队列槽位**（子代理仍在写场景块）。
@@ -63,10 +65,7 @@ export function setupL2Organizer(
 			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
 			getPid: () => readSubagentRun(profilePath, "l2", job.id)?.pid,
 			onTick: (info) =>
-				ctx.ui.setStatus(
-					"memory",
-					`Memory ⚙L2 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`,
-				),
+				setPipelineStatus(status, ctx, "l2", `⚙L2 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`, scope),
 		});
 		let watchingExit = true;
 		let waitP: ReturnType<typeof waitJobWithLiveness> | undefined;
@@ -186,6 +185,7 @@ export function setupL2Organizer(
 			watchingExit = false;
 			stopHeartbeat();
 			await waitP?.catch(() => {});
+			clearPipelineStatus(status, ctx, "l2", scope);
 		}
 	}
 

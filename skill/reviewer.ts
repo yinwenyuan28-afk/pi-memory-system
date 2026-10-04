@@ -16,7 +16,7 @@ import { render as renderPrompt } from "../prompts/registry.ts";
  * 保留工具决策链供 skill 提取（M4，2026-08-19 改造）。
  */
 
-const REVIEW_INTERVAL = 20;
+export const SKILL_REVIEW_INTERVAL = 20;
 const CURSOR_KEY = "skillReviewer";
 
 // 注：原 SUBAGENT_TIMEOUT_MS（10 分钟）已随自建 spawn 移除——它是传给 executor 的
@@ -27,9 +27,11 @@ const CURSOR_KEY = "skillReviewer";
 export function setupSkillReviewer(
 	pi: ExtensionAPI,
 	getProfilePath: () => string | undefined,
+	onStatusChange: (ctx?: ExtensionContext) => void = () => {},
 ): () => string {
 	let turnCount = 0;
 	let reviewScheduled = false;
+	let waitingForReply = false;
 
 	function prepareReviewPaths(ctx: ExtensionContext): { sessionPath: string; profilePath: string } | null {
 		const sessionFile = ctx.sessionManager.getSessionFile();
@@ -80,10 +82,11 @@ export function setupSkillReviewer(
 				} catch { continue; }
 			}
 			if (!hasCompleteReply) {
-				ctx.ui.setStatus("memory", "Skill skip(进行中)");
+				waitingForReply = true;
 				return null;
 			}
 		}
+		waitingForReply = false;
 
 		const reviewerCursor = cursor && cursor.sessionPath ? cursor.sessionPath : "";
 		const task = renderPrompt("tasks/skill-review#main", {
@@ -98,21 +101,26 @@ export function setupSkillReviewer(
 
 	pi.on("input", (event) => {
 		if (event.source !== "interactive") return;
-		if (!reviewScheduled) turnCount++;
+		if (!reviewScheduled) {
+			turnCount++;
+			waitingForReply = false;
+			onStatusChange();
+		}
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
-		if (turnCount >= REVIEW_INTERVAL && !reviewScheduled) {
+		if (turnCount >= SKILL_REVIEW_INTERVAL && !reviewScheduled) {
 			turnCount = 0;
 			const built = buildReviewTask(ctx);
-			if (!built) return;
+			if (!built) { onStatusChange(ctx); return; }
 			reviewScheduled = true;
-			ctx.ui.setStatus("memory", "Memory ⚙skill-review...");
+			onStatusChange(ctx);
 			try {
 				await runPiSubagent("skill-reviewer", built.task, ctx);
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;
+				onStatusChange(ctx);
 			}
 		}
 	});
@@ -125,6 +133,7 @@ export function setupSkillReviewer(
 				return;
 			}
 			reviewScheduled = true;
+			onStatusChange(ctx);
 			const extra = (args || "").trim();
 			const built = buildReviewTask(ctx);
 			if (!built) {
@@ -139,9 +148,11 @@ export function setupSkillReviewer(
 						await runPiSubagent("skill-reviewer", task, ctx);
 					} finally {
 						reviewScheduled = false;
+						onStatusChange(ctx);
 					}
 				} else {
 					reviewScheduled = false;
+					onStatusChange(ctx);
 				}
 				ctx.ui.notify("Learning skill from your request...", "info");
 				return;
@@ -151,10 +162,11 @@ export function setupSkillReviewer(
 				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
 			} finally {
 				reviewScheduled = false;
+				onStatusChange(ctx);
 			}
 			ctx.ui.notify("Learning skill from your request...", "info");
 		},
 	});
 
-	return () => (reviewScheduled ? "⚙skill" : `${REVIEW_INTERVAL - turnCount}t`);
+	return () => reviewScheduled ? "⚙审查" : waitingForReply ? "等待完整回复" : `${SKILL_REVIEW_INTERVAL - turnCount}t`;
 }

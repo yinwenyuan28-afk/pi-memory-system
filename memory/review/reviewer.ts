@@ -67,7 +67,6 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 				} catch { continue; }
 			}
 			if (!hasCompleteReply) {
-				ctx.ui.setStatus("memory", "Memory skip(进行中)");
 				return null;
 			}
 		}
@@ -96,7 +95,6 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 			const built = buildReviewTask(ctx);
 			if (!built) return;
 			reviewScheduled = true;
-			ctx.ui.setStatus("memory", "Memory ⚙review...");
 			try {
 				await runPiSubagent("memory-reviewer", built.task, ctx);
 				// 审查成功 → 游标推进到当前时间戳（下次从增量末尾开始）
@@ -116,7 +114,6 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 				return;
 			}
 			reviewScheduled = true;
-			ctx.ui.setStatus("memory", "Memory ⚙remember...");
 			ctx.ui.notify("Memory review started via pi-subagents", "info");
 			const built = buildReviewTask(ctx);
 			if (!built) {
