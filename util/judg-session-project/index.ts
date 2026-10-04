@@ -5,7 +5,7 @@
  *
  * 每个**正在使用的会话**一条记录，回答「这段会话实际在哪个项目目录上干活」。
  * 它的唯一生产者是主进程（`setupJudgSessionProject`），消费方有两个：
- *   ① `l1_commit` —— 记忆的 `cwd` 由它决定（见 `memory/l1/commit-tool.ts`）
+ *   ① `l1_commit` —— 无逐条归属证据时的项目候选（cwd 始终保留会话工作台）
  *   ② `l1_project_get` —— L1 提取子代理的只读工具，让它知道自己在哪个项目里
  *
  * ── 设计边界（刻意收窄）──
@@ -55,7 +55,7 @@ export interface Evidence {
 export interface SessionJudg {
 	/** 这个会话实际在哪个**目录**上干活。落盘统一**正斜杠**。非绝对路径拒收。 */
 	project: string;
-	/** 能不能用。`false` ⇒ 消费方按"未核对"处理，`l1_commit` 退回 `ctx.cwd`。 */
+	/** 能不能用作项目候选。false 的占位值不得用于记忆归属。 */
 	flag: boolean;
 	decidedBy: DecidedBy;
 	/**

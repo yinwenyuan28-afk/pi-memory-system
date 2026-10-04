@@ -20,7 +20,7 @@ export interface ParsedSessionMessage {
 	role: string;
 	/** 文本内容：字符串 content 直接取；数组 content 只拼 type="text" 块。 */
 	content: string;
-	/** message.id（若存在，供 L0 记录溯源）。 */
+	/** 外层 message entry.id（若存在，供 L0 记录溯源）。 */
 	id?: string;
 	/** 时间戳（epoch ms）：优先 entry.timestamp，回退 message.timestamp。 */
 	timestamp?: number;
@@ -98,7 +98,7 @@ export function parseSessionLines(lines: string[], startLine = 1): ParsedSession
 			line: startLine + i,
 			role,
 			content: content.trim(),
-			id: typeof msg.id === "string" && msg.id ? msg.id : undefined,
+			id: typeof entry.id === "string" && entry.id ? entry.id : undefined,
 			timestamp,
 			hasText,
 			hasToolCall,

@@ -29,7 +29,7 @@ import { readSessionJudg } from "./index.ts";
 interface ProjectGetResult {
 	/** 判定出的项目目录（正斜杠）。`flag:false` 时**保留原值但不可用**。 */
 	project: string;
-	/** 能不能用。`false` ⇒ 服务端会把 `cwd` 退回会话工作台。 */
+	/** 能不能用作项目候选。cwd 始终是会话工作台，不因项目判定改变。 */
 	flag: boolean;
 	/** 证据集中度（0–1），**不是**模型置信度。 */
 	confidence: number;
@@ -79,7 +79,7 @@ export function registerL1ProjectGetTool(
 					flag: false,
 					confidence: 0,
 					decidedBy: "none",
-					note: "这个会话还没有项目归属记录（或判定尚未完成）。照常提取即可：服务端会把 cwd 退回会话工作台，不影响你填写 metadata.scope —— 那时按\"这个项目\"泛指。",
+					note: "这个会话尚无可用项目候选。按每条消息的证据判 scope；显式 self 项目需附 projectEvidence，证据不足则 unknown。不要用 cwd 猜项目。",
 				});
 			}
 			return out({

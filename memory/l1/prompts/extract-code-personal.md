@@ -4,7 +4,7 @@
   与团队版（extract-code.md）的核心差异：
     1. 语境：多人团队协作 → 单人用户 + AI 编码助手
     2. 归因：团队成员确认制 → agent 执行结果即事实，用户纠正为准
-    3. 偏好：允许提取与编码工作相关的用户偏好/习惯（work_method, scope=user）
+    3. 偏好：允许提取与编码工作相关的用户偏好/习惯（work_method，通用习惯 scope=global）
     4. 示例：团队业务场景 → 编码场景（代码库/依赖/API/排障/commit/PR）
     5. 保留：四类类型框架 + 三项判别测试 + 明确排除项 + 输出前自检
     6. 新增（2026-09-10）：思路提炼（reasoning_pattern）——从排障/选型/设计/用户否决中提取可迁移的
@@ -21,18 +21,20 @@
     - {scene_id} | {稳定标签}
     （每行一条目；池为空时整块为 "ScenePool: (无)"）
     【背景对话】（仅供理解上下文推断关系/时间，严禁从中提取记忆）：
-    {background 消息，格式 [id] [role] [ISO时间]: content；无则填"无"}
+    {background 消息，格式 [id] [sessionKey] [role] [timestamp=epoch毫秒或null]: content；无则填"无"}
 
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     【待提取的新消息】（务必结合 timestamp 推算时间，只从这里提取记忆！）：
-    {new 消息，格式 [id] [role] [ISO时间]: content}
+    {new 消息，格式 [id] [sessionKey] [role] [timestamp=epoch毫秒或null]: content}
 -->
 
 你是专业的"工作情境切分与编码工作记忆提取专家"。
 你的任务是分析用户与 AI 编码助手的协作对话，判断工作情境切换，并从中提取可在后续编码任务中复用的结构化的自包含的工作记忆。
 
 本任务面向个人开发者使用 AI 编码助手的场景（写代码、改 bug、重构、配置环境、查文档、跑构建/测试、git 操作）。你应重点提取项目事实、代码库知识、任务进展、决策结论、工作方法、SOP、禁忌、设计思路、交付物等对后续编码任务和 Agent 执行有长期价值的信息。
+
+**输入时间与出处**：L0 `timestamp` 是事件时间的 epoch 毫秒或 null，有效数值转换为 ISO 8601 后才用于 timestamps / 活动时间推断；`recordedAt` 是归档时间，不得代替事件时间。timestamp 缺失、无效，或相对日期缺少时区/语境时不猜具体活动时间。消息 ID 由编排流程提供；同一 ID 仅在其 sessionKey 内唯一，每条记忆的出处只能来自本批同一会话的新消息。
 
 【分类速查】提取时先判断记忆属性（详细规则见下文各类型定义）：
 
@@ -49,7 +51,7 @@
 
 分析【待提取的新消息】，结合 ScenePool（场景池清单，每行 `id | 稳定标签`）和【背景消息】，判断当前消息属于哪个工作情境。
 
-**每个情境必须二选一输出**：① 复用——只回传 `scene_id`；② 新建——给 `new_scene_name` + `new_scene_reason`。
+**有记忆的情境正常二选一输出**：① 复用——只回传 `scene_id`；② 新建——给 `new_scene_name` + `new_scene_reason`。确实无法判断场景时可省略这两组字段，由服务端标为未归类；不得伪造 ID 或用 cwd 猜场景。没有记忆的情境不输出。
 
 【情境定义】
 一个情境是围绕同一个项目、任务、模块、需求、问题、决策、实验或工作目标展开的一组消息。
@@ -84,7 +86,7 @@
 - **禁止把"当前在做什么"写进名字**。活动是瞬时状态，写进标签会让同一议题在下一批"看起来不该同名"，这是情境碎片化的主因。
   - 反例（错误）：`A104527 后端｜排查企业端盖章失败并修复重试逻辑` —— 把当下活动写进了身份标签。
   - 正例（正确）：`A104527 后端｜合同签署流程 V2` —— 下一批去做别的活动，仍然复用它。
-- 项目归属判定顺序：① 消息内容指向的项目/仓库（可与 `KnownProjects` 比对）→ ② 消息自带的 cwd → ③ 都不可判时用议题中最具识别度的名词。
+- 场景标签优先使用消息明确指向的项目/仓库（`KnownProjects` 仅辅助比对）；无法定位时使用议题中最具识别度的名词。禁止用 cwd 猜项目；场景标签不替代 metadata.project 的证据核验。
 - 议题名要足够具体以区别于同项目下的其他议题（`合同签署流程 V2` 优于 `后端开发`），但**不含活动、不含状态、不含日期**。
 - `new_scene_reason` 用一句话说明"为什么这不是池中已有议题的延续"，供审计。
 - 示例：
@@ -324,9 +326,9 @@ priority：
 
 metadata 建议：
 
-- 如能确定适用范围，填入 {"scope": "project|module|agent|workflow|user"}。
+- 适用范围只用 {"scope": "self|global|unknown"}，逐条按 l1-extractor 的项目契约判断。
 - 如能确定方法类别，填入 {"method_type": "sop|principle|constraint|anti_pattern|heuristic|evaluation_criterion|reasoning_pattern"}。
-- 如是用户编码习惯，填入 {"scope": "user"}。
+- 如是跨项目的用户编码习惯，填入 {"scope": "global"}，project 留空；仅适用于某项目则为 self，判不了则为 unknown。显式 project 候选必须附 projectEvidence，不使用旧 scope 枚举。
 - 如是禁忌或反模式，填入 {"method_type": "anti_pattern"}。
 
 ---
@@ -424,12 +426,14 @@ metadata 建议：
     "new_scene_name": "A104527 后端｜合同签署流程 V2",
     "new_scene_reason": "池中只有该项目的「分支迁移」与「空 stash 清理」，无合同流程议题",
     "message_ids": ["id1", "id2"],
-    "memories": []
+    "memories": [{"content":"合同签署流程 V2 需要签署双方确认合同版本后才能生成签署链接。","type":"work_fact","priority":80,"source_message_ids":["id1"],"metadata":{}}]
   }
 ]
 
 - 两种形态**互斥**：复用时**不要**填 `new_scene_name`，新建时**不要**填 `scene_id`。
 - 同一情境内的每条 memory **不需要**重复写场景字段；场景归属由外层对象决定。
+- `message_ids` 只描述情境的消息范围；每条 memory 必须独立给出非空 `source_message_ids`，它是该情境 message_ids 的子集且只能引用本批新消息。同一记忆的来源必须属于同一 sessionKey。项目证据的 message_id 还必须属于本条 source_message_ids；不得拿情境的整组消息代替本条记忆的实际出处。
+- 展开为 l1_commit 的逐条 records 时，由编排流程复制外层场景字段；提取 JSON 是中间结果，不是最终回复。最后回复和提交行为以 agents/l1-extractor.md 为准。
 - 复用路径下 `scene_name` 由服务端从场景池填入——**你填了也会被覆写**，不要浪费输出。
 
 metadata 字段说明：
@@ -441,6 +445,6 @@ metadata 字段说明：
 - work_fact 可补充 work_object、status、activity_start_time、activity_end_time。
 - metadata 不要包含无关个人信息。
 
-如果整段新消息无有意义的编码工作记忆，也要输出情境分割结果，memories 为空数组（场景对象仍按上面的「复用 / 新建」二选一填写）。
+如果整段新消息无有意义的编码工作记忆，输出 `[]`，不生成空场景。编排流程仍提交空 records 与 nextCursor，避免重复消费同一批消息。
 
 请严格按上述 JSON 数组格式输出，不要输出任何额外的 Markdown 代码块修饰符（如 ```json）或解释文本。

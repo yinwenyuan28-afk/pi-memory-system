@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { buildScenePoolLines, readScenePool, SCENE_POOL_INJECT_LIMIT } from "./s
 import { loadAppProps, saveAppSection } from "../../config/app-config.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 import { resolveSessionsDir } from "../../util/agent-dir.ts";
+import { emptyL1Cursor, parseL1CursorFile, type L1CursorInput } from "./cursor.ts";
 
 // ══════════════════════════════════════════════════════════════
 //  L1 配置 / 游标 / 分片清单（纯函数，无 pi 依赖，可单测）
@@ -36,7 +37,7 @@ export const SCENE_BATCH_CWD_MAX_FILES = 3;
 
 /** 配置文件名（mode 持久化）。 */
 export const CONFIG_FILE = "l1-config.json"; // [DEPRECATED 2026-09-14] 旧独立配置文件已迁入 config/application-propertis.json；本常量仅作 loadL1Config 的迁移期兜底（文件实际已不存在）
-/** 游标文件名（全局 lastRecordedAt，子代理回写）。 */
+/** 游标文件名（按 L0 分片记录已消费的字节位置）。 */
 export const CURSOR_FILE = L1_CURSOR_FILE; // 单一来源见 paths.ts（2026-09-14 收束）
 /** L0 分片目录名（{profilePath}/memoryDB/l0/conversations，单一来源见 paths.ts）。 */
 export const L0_DIR_NAME = L0_CONVERSATIONS_DIR;
@@ -140,23 +141,22 @@ export function saveL1Mode(profilePath: string, mode: L1Mode): void {
 	saveAppSection(profilePath, "l1", merged);
 }
 
-/** 读取 L1 游标 lastRecordedAt（ISO 字符串；无则返回空串）。 */
-export function loadL1Cursor(profilePath: string): string {
+/** 读取 L1 游标；旧版 lastRecordedAt 字符串由 read_l0_increment 首次读取时迁移。 */
+export function loadL1Cursor(profilePath: string): L1CursorInput {
 	const filePath = join(profilePath, MEMORY_DB_DIR, CURSOR_FILE);
-	if (!existsSync(filePath)) return "";
+	if (!existsSync(filePath)) return emptyL1Cursor();
 	try {
-		const data = JSON.parse(readFileSync(filePath, "utf-8")) as { lastRecordedAt?: string };
-		return typeof data.lastRecordedAt === "string" ? data.lastRecordedAt : "";
+		return parseL1CursorFile(JSON.parse(readFileSync(filePath, "utf-8")));
 	} catch {
-		return "";
+		return emptyL1Cursor();
 	}
 }
 
 /**
  * 计算本次 L1 要处理的分片文件清单。
- * 游标为空 → 全部；有游标 → 只列游标日期及之后的分片（子代理再按行级 recordedAt 过滤）。
+ * 新游标下只列仍有未读字节的追加分片；旧时间游标迁移时扫描全部分片一次。
  */
-export function listL0Files(profilePath: string, lastRecordedAt: string): string[] {
+export function listL0Files(profilePath: string, cursor: L1CursorInput): string[] {
 	const l0Dir = join(profilePath, MEMORY_DB_DIR, L0_DIR_NAME);
 	if (!existsSync(l0Dir)) return [];
 	let files: string[];
@@ -167,10 +167,20 @@ export function listL0Files(profilePath: string, lastRecordedAt: string): string
 	} catch {
 		return [];
 	}
-	// 游标日期：lastRecordedAt 前 10 字符即 YYYY-MM-DD
-	const cursorDate = lastRecordedAt.length >= 10 ? lastRecordedAt.slice(0, 10) : "";
-	if (!cursorDate) return files.map((f) => join(l0Dir, f));
-	return files.filter((f) => f.slice(0, 10) >= cursorDate).map((f) => join(l0Dir, f));
+	if (typeof cursor === "string") return files.map((f) => join(l0Dir, f));
+	const pending: string[] = [];
+	for (const filename of files) {
+		const path = join(l0Dir, filename);
+		try {
+			const size = statSync(path).size;
+			const offset = cursor.files[filename] ?? 0;
+			if (size > offset || size < offset) pending.push(path);
+		} catch {
+			// 分片消失或不可读时仍交给读取工具处理并报告，不在清单层静默跳过。
+			pending.push(path);
+		}
+	}
+	return pending;
 }
 
 /**

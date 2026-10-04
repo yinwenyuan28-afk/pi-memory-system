@@ -589,7 +589,8 @@ export default function (pi: ExtensionAPI) {
             const cursor = loadL1Cursor(p);
             const files = listL0Files(p, cursor);
             if (files.length === 0) return false;
-            return readL0Increment(files.join(","), cursor).messages.length > 0;
+            const cursorToken = typeof cursor === "string" ? cursor : JSON.stringify(cursor);
+            return readL0Increment(files.join(","), cursorToken).messages.length > 0;
           } catch {
             return false;
           }

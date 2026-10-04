@@ -7,6 +7,8 @@ import { applyVerdictsToBatch, loadChecklistFromFile, runValueCheck, splitBatch 
 // 标签契约模块（零 import 的纯函数）：只取归一化与归属决策两件事，
 // `SCOPE_HELP` 那一大段中文词表不进本模块——它由提示词侧（backfill 脚本 / l1-extractor.md）自己引用。
 import { normalizeScope, projectForScope } from "./project-scope.ts";
+import { createProjectEvidenceVerifier } from "./project-evidence.ts";
+import { parseL1CursorToken, type L1CursorState } from "./cursor.ts";
 import { loadRecallConfig } from "../search/recall-config.ts";
 import { L1_RECORD_TYPES_TEXT, isL1RecordType } from "./record-types.ts";
 import {
@@ -94,15 +96,10 @@ function contentHash(content: string): string {
 const MAIN_AGENT_SCENE_FALLBACK = "main-agent-live";
 
 /** 原子写 l1/cursor.json（tmp + rename）。 */
-function saveCursor(profilePath: string, lastRecordedAt: string): void {
+function saveCursor(profilePath: string, cursor: L1CursorState): void {
 	const filePath = join(profilePath, MEMORY_DB_DIR, CURSOR_FILE);
 	const tmpPath = join(profilePath, MEMORY_DB_DIR, `.tmp_l1_cursor_${Date.now()}`);
-	writeFileSync(tmpPath, JSON.stringify({ lastRecordedAt }, null, 2), "utf-8");
-	try {
-		rmSync(filePath, { force: true });
-	} catch {
-		// ignore
-	}
+	writeFileSync(tmpPath, JSON.stringify(cursor, null, 2), "utf-8");
 	try {
 		renameSync(tmpPath, filePath);
 	} catch {
@@ -128,7 +125,7 @@ function readFileSafe(p: string): string {
  *
  * 子代理调用参数：
  *  - records: L1 记忆记录对象数组（schema 见 agents/l1-extractor.md 第六步）
- *  - cursor: 本次推进到的 lastRecordedAt（ISO 字符串）
+ *  - cursor: 本次读取返回的 v2 分片字节偏移游标（JSON 字符串）
  */
 export function registerL1CommitTool(
 	pi: ExtensionAPI,
@@ -156,7 +153,7 @@ export function registerL1CommitTool(
 				},
 				cursor: {
 					type: "string",
-					description: "Advance L1 cursor to this lastRecordedAt ISO string. Required for source='subagent'; ignored for 'main-agent'.",
+					description: "Advance L1 cursor to the serialized v2 per-shard byte-offset state returned by read_l0_increment. Required for source='subagent'; ignored for 'main-agent'.",
 				},
 			},
 			required: ["records"],
@@ -200,9 +197,10 @@ export function registerL1CommitTool(
 				if (!Array.isArray(records)) {
 					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "records must be an array" }) }], details: {} };
 				}
-				// cursor 仅子代理路径需要（它是 L0 增量水位）；主代理不得推进。
-				if (!isMainAgent && !cursor) {
-					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "cursor must be a non-empty string when source='subagent'" }) }], details: {} };
+				// cursor 仅子代理路径需要（它是 L0 分片消费位置）；主代理不得推进。
+				const cursorState = !isMainAgent && cursor ? parseL1CursorToken(cursor) : null;
+				if (!isMainAgent && (!cursorState || typeof cursorState === "string" || cursorState.version !== 2)) {
+					return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "cursor must be a serialized v2 per-shard cursor when source='subagent'" }) }], details: {} };
 				}
 				// main-agent：补齐缺省字段 + 必填校验。
 				// id 必须服务端生成——格式不符会让 recordEpochMs 返回 0，该记录永久 ≤ L2 水位、永不可见。
@@ -249,10 +247,12 @@ export function registerL1CommitTool(
 					}
 				}
 
-				// ── 项目标签 `metadata.project`（2026-09-30，取代 9-30 早先那版 `cwd` 覆写）──
+				const projectWarnings: Array<{ recordId: unknown; reason: string }> = [];
+				const verifyProjectEvidence = createProjectEvidenceVerifier(profilePath, records);
+				// ── 项目标签：逐条 L0 证据优先，会话判定仅供未提供逐条归属的旧调用使用 ──
 				// 语义：**cwd 保持"会话工作台（pi 从哪启动）"，项目另开一个标签**。
 				//   - `metadata.project` = 判定出的项目目录；判定不可用时写 `""`（= 没有项目，不猜）
-				//   - `metadata.projectSource` = 判定来源（init/code/llm/manual），或 `"fallback"`
+				//   - `metadata.projectSource` = l0-evidence / unknown / 会话判定来源
 				//   - `metadata.scope` 为 `global` / `unknown` ⇒ project 被**强制抹成 `""`**
 				//     （两档都走契约模块 `projectForScope`，写侧不自己判分支）
 				//
@@ -333,14 +333,28 @@ export function registerL1CommitTool(
 						//   存在的死值，与存量的取值空间也对不齐。
 						//   合法值原样写入（模型填对了不该被改），归一不了的**按 `unknown` 写入**
 						//   （含大小写/空白差异，`" SELF "` ⇒ `self`）：既保证闭集，也不再有脏值落盘。
-						const scope = normalizeScope(md.scope);
+						let scope = normalizeScope(md.scope) ?? "unknown";
+						if (scope === "self") {
+							const hasRecordProject = md.project !== undefined && md.project !== "";
+							if (hasRecordProject || md.projectEvidence !== undefined) {
+								const verified = verifyProjectEvidence(r, md);
+								project = verified.project;
+								source = verified.error ? "unknown" : "l0-evidence";
+								if (verified.error) projectWarnings.push({ recordId: r.id, reason: verified.error });
+							}
+							if (!project) {
+								scope = "unknown";
+								if (source !== "unknown") projectWarnings.push({ recordId: r.id, reason: "self 记忆没有可用的项目归属，已降为 unknown" });
+								source = "unknown";
+							}
+						}
 						// metadata 用展开合并：`work_object` / `status` / `activity_start_time` /
 						// `sceneFallback` / `origin` / `valueCheck` 等既有键全部保留，
 						// 只覆盖 scope 并新增 project 两键。
 						r.metadata = {
 							...md,
-							scope: scope ?? "unknown",
-							project: projectForScope(scope ?? "unknown", project),
+							scope,
+							project: projectForScope(scope, project),
 							projectSource: source,
 						};
 					}
@@ -769,9 +783,9 @@ export function registerL1CommitTool(
 				}
 				const sceneStats: SceneStats | null = sceneResolver ? sceneResolver.stats() : null;
 
-				// 3. 回写游标 —— 仅子代理路径。cursor 是 L0 增量水位，主代理推进会让
+				// 3. 回写游标 —— 仅子代理路径。cursor 是 L0 分片消费位置，主代理推进会让
 					//    l1-extractor 跳过对应 L0 消息（C1）。
-				if (!isMainAgent) saveCursor(profilePath, cursor);
+				if (!isMainAgent && cursorState && typeof cursorState !== "string") saveCursor(profilePath, cursorState);
 
 				// 4. 流水线 —— 仅子代理路径。main-agent 跳过两者（C2/C8）：
 				//    completeRunningL1 是"子代理 job 完成"信号；入队 L2 会打开
@@ -843,6 +857,7 @@ export function registerL1CommitTool(
 									written,
 									cursor,
 									vectorStats,
+									...(projectWarnings.length > 0 ? { projectWarnings } : {}),
 									// 口径：被**改写的分片文件数**（Map 的 key 是文件名），不是墓碑条数——
 									// 3 条墓碑全在同一分片时这里就是 1（2026-09-20 子代理据此误判“计数与落盘不一致”）。
 									markedInPlace: markByFile.size,

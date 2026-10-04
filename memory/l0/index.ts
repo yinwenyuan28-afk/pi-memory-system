@@ -201,6 +201,7 @@ export function archiveSessionIncrement(sessionPath: string, profilePath: string
 				sessionKey,
 				recordedAt,
 				id: msg.id ?? null,
+				sourceLine: msg.line,
 				role: msg.role,
 				content,
 				timestamp: msg.timestamp ?? null,

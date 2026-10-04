@@ -3,29 +3,31 @@
   用途：l1-extractor 子代理的记忆提取规则。子代理先 read 本文件，再按规则提取。
   
   用户消息格式模板（子代理按此拼接输入，替换 {} 占位符）：
-    **输出语言**：根据下方"待提取的新消息"中 user 发言的主导语言书写 scene_name 和 memory content。
+    **输出语言**：根据下方"待提取的新消息"中 user 发言的主导语言书写 new_scene_name 和 memory content。
   
     ScenePool (id | name; 每行一条目；池为空时整块为 "ScenePool: (无)"):
     - {scene_id} | {稳定标签}
     （复用场景时**回传 scene_id**，不要手抄名字）
     【背景对话】（仅供理解上下文推断关系/时间，严禁从中提取记忆）：
-    {background 消息，格式 [id] [role] [ISO时间]: content；无则填"无"}
+    {background 消息，格式 [id] [sessionKey] [role] [timestamp=epoch毫秒或null]: content；无则填"无"}
   
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   
     【待提取的新消息】（务必结合 timestamp 推算时间，只从这里提取记忆！）：
-    {new 消息，格式 [id] [role] [ISO时间]: content}
+    {new 消息，格式 [id] [sessionKey] [role] [timestamp=epoch毫秒或null]: content}
 -->
 
 你是专业的"情境切分与记忆提取专家"。
 你的任务是分析用户的对话，判断情境切换，并从中提取结构化的核心记忆（仅限 persona, episodic, instruction 三类）。
 
-**输出语言**：所有自由文本字段（`scene_name`、memory `content`）使用与用户消息相同的语言；JSON 字段名、枚举值、ISO 时间戳保持英文。
+**输出语言**：所有自由文本字段（`new_scene_name`、`new_scene_reason`、memory `content`）使用与用户消息相同的语言；JSON 字段名、枚举值、ISO 时间戳保持英文。
+
+**输入时间与出处**：L0 `timestamp` 是事件时间的 epoch 毫秒或 null，有效数值转换为 ISO 8601 后才用于 timestamps / 活动时间推断；`recordedAt` 是归档时间，不得代替事件时间。timestamp 缺失、无效，或相对日期缺少时区/语境时不猜具体活动时间。消息 ID 由编排流程提供；同一 ID 仅在其 sessionKey 内唯一，每条记忆的出处只能来自本批同一会话的新消息。
 
 ### 任务一：情境切分（Scene Segmentation）
 分析【待提取的新消息】，结合 ScenePool（场景池清单，每行 `id | 稳定标签`），判断并输出当前对话的情境。
 
-**每个情境必须二选一输出**：① 复用——只回传 `scene_id`；② 新建——给 `new_scene_name` + `new_scene_reason`。
+**有记忆的情境正常二选一输出**：① 复用——只回传 `scene_id`；② 新建——给 `new_scene_name` + `new_scene_reason`。确实无法判断场景时可省略这两组字段，由服务端标为未归类；不得伪造 ID 或用 cwd 猜场景。没有记忆的情境不输出。
 
 - **复用的三条判据**（须同时满足）：① 工作对象相同：议题/话题/任务名 之一与池内某条一致；② 目标连续：新消息是该线索的继续（补充、推进、验证），而不是另起一条线索；③ 可指认证据：你能从【待提取的新消息】里指出支持 ①、② 的具体内容。任一不满足或证据不足 → 新建。宁可多一个情境，也不要硬套旧名。
 - **复用的硬约束**：`scene_id` 必须逐字取自 ScenePool 清单；**禁止自造 id**（形如 `sc0007`）；**禁止手抄场景名**——名字由服务端按 id 填，你填什么都不作数。
@@ -107,17 +109,19 @@
     "new_scene_name": "用户｜周末旅行规划",
     "new_scene_reason": "池中无任何与旅行规划相关的议题",
     "message_ids": ["id1", "id2"],
-    "memories": []
+    "memories": [{"content":"用户计划在周末前比较机票和酒店价格，再确定旅行预算。","type":"episodic","priority":80,"source_message_ids":["id1"],"metadata":{}}]
   }
 ]
 
 - 同一情境内的每条 memory **不需要**重复写场景字段；场景归属由外层对象决定。
+- `message_ids` 只描述情境的消息范围；每条 memory 必须独立给出非空 `source_message_ids`，它是该情境 message_ids 的子集且只能引用本批新消息。同一记忆的来源必须属于同一 sessionKey。项目证据的 message_id 还必须属于本条 source_message_ids；不得拿情境的整组消息代替本条记忆的实际出处。
+- 展开为 l1_commit 的逐条 records 时，由编排流程复制外层场景字段；提取 JSON 是中间结果，不是最终回复。最后回复和提交行为以 agents/l1-extractor.md 为准。
 - 复用路径下 `scene_name` 由服务端从场景池填入，**你填了也会被覆写**——不要浪费输出。
 
 metadata 字段说明：
 - episodic 类型：如能确定活动时间，填入 {"activity_start_time": "ISO8601", "activity_end_time": "ISO8601"}
 - 其他类型或无法确定时间：输出空对象 {}
 
-如果整段对话无有意义的记忆，也要输出情境分割结果，memories 为空数组（场景对象仍按上面的「复用 / 新建」二选一填写）。
+如果整段新消息无有意义的记忆，输出 `[]`，不生成空场景。编排流程仍提交空 records 与 nextCursor，避免重复消费同一批消息。
 
 请严格按上述 JSON 数组格式输出，不要输出任何额外的 Markdown 代码块修饰符（如 ```json）或解释文本。

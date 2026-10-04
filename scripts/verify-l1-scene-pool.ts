@@ -47,6 +47,7 @@ import { registerL1CommitTool, stampRecordTimes } from "../memory/l1/commit-tool
 import { registerListL1ScenesTool } from "../memory/l1/scene-tool.ts";
 import { readL0Increment } from "../memory/l1/read-tool.ts";
 import { upsertSessionJudg } from "../util/judg-session-project/index.ts";
+import { saveAppSection } from "../config/app-config.ts";
 
 let pass = 0;
 let fail = 0;
@@ -74,6 +75,8 @@ function makeProfile(opts: { l0?: Record<string, unknown[]>; pool?: ScenePool } 
 	// 上层目录缺失会直接拿不到锁（生产 profile 必然有，夹具需对齐）
 	mkdirSync(join(p, "memoryDB", "l1"), { recursive: true });
 	mkdirSync(join(p, "memoryDB", "pipeline"), { recursive: true });
+	// 本套只验证场景/游标提交，不调用价值校验模型。
+	saveAppSection(p, "l1", { mode: "code", valueCheck: { enabled: false } });
 	if (opts.l0) {
 		const dir = join(p, "memoryDB", "l0", "conversations");
 		mkdirSync(dir, { recursive: true });
@@ -397,7 +400,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 
 	// D1 新建：登记条目 + 剥离中间字段
 	const r1 = await commit({
-		cursor: "2026-09-15T09:30:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ content: "决策甲", type: "work_fact", priority: 80, new_scene_name: "alpha｜合同流程", new_scene_reason: "新议题", cwd: A }],
 	});
 	check("D1 提交成功", r1.success === true, JSON.stringify(r1).slice(0, 120));
@@ -413,7 +416,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 
 	// D2 复用：canonical 覆写子代理自填的名字
 	const r2 = await commit({
-		cursor: "2026-09-15T09:40:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ content: "决策乙", type: "work_fact", priority: 70, scene_id: "sc0001", scene_name: "子代理手抄的错误名字", cwd: A }],
 	});
 	check("D2 reused=1", (r2.sceneStats as { reused: number })?.reused === 1);
@@ -422,7 +425,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 
 	// D3 未知 id + 无名 → 未归类（**不再猜"同 cwd 最近场景"**，2026-09-15 L1_PROJECT_SIGNAL）
 	const r3 = await commit({
-		cursor: "2026-09-15T09:50:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ content: "决策丙", type: "work_fact", priority: 60, scene_id: "sc9999", cwd: A }],
 	});
 	check("D3 仍 success（降级不阻断）", r3.success === true);
@@ -436,7 +439,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	// D4 deleted 标记行不碰池
 	const poolBefore = JSON.stringify(readScenePool(p));
 	const r4 = await commit({
-		cursor: "2026-09-15T10:00:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ id: "l1_123_bogus", content: "作废标记", type: "work_fact", deleted: true, scene_id: "sc9999", cwd: A }],
 	});
 	check("D4 标记行不产生池变更", JSON.stringify(readScenePool(p)) === poolBefore);
@@ -452,7 +455,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	const WB = "C:/workbench/d5";
 	upsertSessionJudg(p, "sess-d5", { project: B, flag: true, decidedBy: "llm", confidence: 0.8, evidence: [{ path: B, filesTouched: 3 }] });
 	const r5 = await commit({
-		cursor: "2026-09-15T10:10:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ content: "决策丁", type: "work_fact", sessionKey: "sess-d5", new_scene_name: "beta｜超时排查", new_scene_reason: "换议题了", cwd: WB, metadata: { scope: "self" } }],
 	});
 	check("D5 created=1", (r5.sceneStats as { created: number })?.created === 1);
@@ -469,7 +472,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	//   ② 读侧 `rankCwd` 比的是 batchCwd（= L0 消息 cwd 众数 = 工作台），命中 → 排到最前
 	//   ③ 项目路径（B）**从不**登记进 cwds ⇒ 用项目路径当 batchCwd 不再能"命中同 cwd"
 	await commit({
-		cursor: "2026-09-15T10:12:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ content: "决策丁2", type: "work_fact", sessionKey: "sess-d5", scene_id: "sc0002", cwd: A }],
 	});
 	const pool5b = readScenePool(p);
@@ -482,7 +485,7 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	// D6 无判定条目 ⇒ metadata.project 空串 + projectSource=fallback；cwd 仍原样保留自填值
 	const WB6 = "C:/workbench/d6";
 	const r6 = await commit({
-		cursor: "2026-09-15T10:20:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ content: "决策戊", type: "work_fact", sessionKey: "sess-d6-无条目", new_scene_name: "beta｜兜底", new_scene_reason: "无判定", cwd: WB6 }],
 	});
 	const rec6 = readRecords(p).filter((r) => r.content === "决策戊")[0];
@@ -491,12 +494,18 @@ console.log("\n=== D. l1_commit 端到端（subagent 路径）===");
 	check("D6 metadata.projectSource = fallback", (rec6.metadata as Record<string, unknown> | undefined)?.projectSource === "fallback", JSON.stringify(rec6.metadata));
 	// D6b cwd 缺字段 ⇒ **唯一**的兜底：填会话工作台 ctx.cwd（A），并登记进池
 	const r6b = await commit({
-		cursor: "2026-09-15T10:22:00.000Z",
+		cursor: JSON.stringify({ version: 2, files: {} }),
 		records: [{ content: "决策己", type: "work_fact", sessionKey: "sess-d6-无条目", new_scene_name: "beta｜无 cwd", new_scene_reason: "缺 cwd" }],
 	});
 	const rec6b = readRecords(p).filter((r) => r.content === "决策己")[0];
 	check("D6b cwd 缺字段 → 兜底填 ctx.cwd（A）", rec6b.cwd === A, String(rec6b.cwd));
 	check("D6b 兜底出的工作台同样登记进池", JSON.stringify(readScenePool(p).scenes.find((s) => s.name === "beta｜无 cwd")?.cwds) === JSON.stringify([A]), JSON.stringify(readScenePool(p).scenes.find((s) => s.name === "beta｜无 cwd")?.cwds));
+	const poolBeforeEmpty = JSON.stringify(readScenePool(p));
+	const checkpoint = { version: 2, files: { "2026-09-15.jsonl": 123 } };
+	const emptyCommit = await commit({ cursor: JSON.stringify(checkpoint), records: [] });
+	check("D7 空记忆批次成功提交", emptyCommit.success === true && emptyCommit.written === 0);
+	check("D7 空批保存完整分片游标", JSON.stringify(JSON.parse(readFileSync(join(p, "memoryDB", "l1", "cursor.json"), "utf-8"))) === JSON.stringify(checkpoint));
+	check("D7 空批不创建或修改场景", JSON.stringify(readScenePool(p)) === poolBeforeEmpty);
 }
 
 console.log("\n=== E. l1_commit 端到端（main-agent 路径）===");
@@ -638,7 +647,7 @@ console.log("\n=== G. readL0Increment：批次取「最旧」+ 无丢失（2026-
 			id: `m${i}`,
 			role: i % 2 ? "assistant" : "user",
 			content: `第 ${i} 条`,
-			timestamp: `t${i}`,
+			timestamp: 1789000000000 + i,
 			recordedAt: `2026-09-${String(15 + Math.floor(i / 100)).padStart(2, "0")}T00:00:${String(i % 100).padStart(2, "0")}.000Z`,
 		};
 		shards[names[Math.floor(i / 100)]].push(JSON.stringify(rec));
@@ -648,20 +657,13 @@ console.log("\n=== G. readL0Increment：批次取「最旧」+ 无丢失（2026-
 
 	const r1 = readL0Increment(files.join(","), "");
 	check("超上限时 truncated=true", r1.truncated === true, `${r1.messages.length} 条`);
-	check("返回条数 = 上限 200", r1.messages.length === 200);
-	// 关键：**取最旧**（修复前取最新 → 前 100 条被永久丢掉）
-	check("取的是最旧的 200 条（首条 = m0）", String(r1.messages[0].id) === "m0", String(r1.messages[0].id));
-	check("末条 = m199", String(r1.messages[199].id) === "m199", String(r1.messages[199].id));
-	check(
-		"升序排列",
-		r1.messages.every((m, i) => i === 0 || String(m.recordedAt) >= String(r1.messages[i - 1].recordedAt)),
-	);
+	check("返回条数 = 上限 25", r1.messages.length === 25);
+	check("按物理行顺序返回最旧的 25 条（首条 = m0）", String(r1.messages[0].id) === "m0", String(r1.messages[0].id));
+	check("末条 = m24", String(r1.messages[24].id) === "m24", String(r1.messages[24].id));
 	check("background 为空（游标为空串）", r1.background.length === 0);
 
-	// 新批策略（最旧 ≤25）：游标 = 本批最后一条
-	const batch1 = r1.messages.slice(0, 25);
-	const cursor1 = String(batch1[batch1.length - 1].recordedAt);
-	check("本批 25 条、末条 = m24", batch1.length === 25 && String(batch1[24].id) === "m24");
+	// 新批策略：游标按各分片已消费字节数记录，不受 recordedAt 相同影响。
+	const cursor1 = JSON.stringify(r1.nextCursor);
 
 	// 第二轮必须从 m25 无缝衔接 —— 没有任何一条被跳过
 	const r2 = readL0Increment(files.join(","), cursor1);
@@ -673,13 +675,6 @@ console.log("\n=== G. readL0Increment：批次取「最旧」+ 无丢失（2026-
 		r2.background.map((m) => m.id).join(","),
 	);
 
-	// 对照：修复前的语义 = 工具返回**最新** 200 条（m100..m299），子代理把游标推到这条窗口的末条
-	// （m299）⇒ 更旧的 m0..m99 再也读不到（下一轮 `recordedAt <= cursor` 全被归入 background）
-	const oldCursor = `2026-09-17T00:00:${String((N - 1) % 100).padStart(2, "0")}.000Z`;
-	const r3 = readL0Increment(files.join(","), oldCursor);
-	check("（对照）旧语义的游标之后无增量 ⇒ m0..m99 永久丢失", r3.messages.length === 0, `${r3.messages.length} 条`);
-	check("（对照）旧语义下那 100 条只剩 background 里 5 条", r3.background.length === 5, `${r3.background.length} 条`);
-
 	// 逐轮啃完：25 条/轮 ⇒ 300 条 = 12 轮，且每条恰好覆盖一次
 	let cursor = "";
 	const seen = new Set<string>();
@@ -687,14 +682,25 @@ console.log("\n=== G. readL0Increment：批次取「最旧」+ 无丢失（2026-
 	for (; rounds < 40; rounds++) {
 		const rr = readL0Increment(files.join(","), cursor);
 		if (rr.messages.length === 0) break;
-		const batch = rr.messages.slice(0, 25);
+		const batch = rr.messages;
 		for (const m of batch) seen.add(String(m.id));
-		cursor = String(batch[batch.length - 1].recordedAt);
+		cursor = JSON.stringify(rr.nextCursor);
 		if (batch.length < 25) break;
 	}
 	check("逐轮啃完覆盖全部 300 条（零丢失）", seen.size === N, `覆盖 ${seen.size}/${N}，共 ${rounds} 轮`);
 	check("轮数符合预期（300/25 = 12 轮）", rounds === 12, `${rounds} 轮`);
 	rmSync(p, { recursive: true, force: true });
+}
+
+{
+	const boundary = "2026-09-15T10:00:00.000Z";
+	const p = makeProfile({ l0: { "2026-09-15.jsonl": Array.from({ length: 31 }, (_, i) => ({ ...l0Row({ content: `中文边界 ${i}`, recordedAt: i === 0 ? "2026-09-15T09:59:00.000Z" : boundary }), id: `equal${i}` })) } });
+	const file = join(p, "memoryDB", "l0", "conversations", "2026-09-15.jsonl");
+	const first = readL0Increment(file, boundary);
+	const second = readL0Increment(file, JSON.stringify(first.nextCursor));
+	check("G 旧时间游标迁移重放整个相等组", first.messages[0]?.id === "equal1" && first.messages.length === 25);
+	check("G 同时间戳组可安全拆成 25+5", second.messages.length === 5 && second.messages[0]?.id === "equal26" && second.messages[4]?.id === "equal30");
+	check("G UTF-8 中文字节游标消费到完整文件末尾", second.nextCursor.files["2026-09-15.jsonl"] === Buffer.byteLength(readFileSync(file, "utf-8")));
 }
 
 // ══════════════════════════════════════════════════════════════

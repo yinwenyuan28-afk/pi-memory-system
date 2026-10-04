@@ -12,6 +12,14 @@
   决策动作：store（新增）/ update（覆盖更优）/ merge（合并互补）/ skip（无增量丢弃）
 -->
 
+## 输入契约（chat/code 共用）
+
+- 统一候选池只含完整的有效旧记录。文本读取按分片日期升序、文件行序，对同一 ID 保留最后一次写入（LWW），再排除最后状态为 deleted:true 的记录；不能先忽略删除行。当前提交工具在历史分片就地标记 deleted，但历史多行数据仍须按 LWW 读取。
+- `contentTruncated: true` 的召回预览只用于筛选相似对象，不能据此 update/merge/skip；必须先读取目标 ID 的完整有效记录，无法读取时不得替换该目标。
+- target_ids 必须来自该新记忆自己的关联候选 ID 列表，并且对应有效旧记录。无关联候选时直接 store，不从统一池任意挑目标。
+- 原记忆的 timestamps 是 ISO 8601 事件时间，不包含归档 recordedAt；merge/update 保留实际已有事件时间的并集，缺失时间不补猜。
+- 去重改写了 content 时不得沿用原 queryText 的 queryVector；由提交端重新计算 embedding。输出裁决后仍按编排流程完成 records 提交，不能把裁决 JSON 当作最终回复。
+
 # 冲突检测 Prompt（chat 模式）
 
 你是记忆冲突检测器。批量比较多条【新记忆】与【统一候选记忆池】中的已有记忆，逐条决定如何处理。

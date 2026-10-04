@@ -173,8 +173,7 @@ export function normalizeProjectTag(v: unknown): string {
  *
  * 参数：
  *   - `scope`  已归一的适用范围标签。
- *   - `project` 调用方选定的项目路径（来源可以是会话判定表 / `cwd` 最长包含 / 内容匹配 /
- *     模型裁决），可能为空或脏。
+ *   - `project` 调用方选定的项目路径（来源为核验后的逐条 L0 证据或可用会话判定），可能为空或脏。
  * 返回：归一化后的项目路径，或 `""`（= 没有项目 / 判不了）。
  * 三个分支：
  *   - `self`    → 归一化后的 project（归一后为空就是空，不猜）
@@ -183,7 +182,7 @@ export function normalizeProjectTag(v: unknown): string {
  *
  * 设计意图 —— 为什么把这条不变量收进一个函数，而不是让每个调用方自己判：
  * `scope` 与 `project` 两个字段必须始终自洽，否则下游必然出错。集中在这里，
- * 违规组合（`global`/`unknown` 却带着 project、`self` 却 project 为空）根本写不出来。
+ * `global`/`unknown` 不会带着 project；self 路径为空时由提交方降为 unknown。
  * 而且这两种写反**不是小错**：召回时按 project 过滤，一写反就把一条该通用的记忆
  * 藏进某个仓库、或把一条项目专属记忆当通用件到处注入。
  */
@@ -205,6 +204,6 @@ export function projectForScope(scope: ScopeValue, project: string): string {
  * 多行模板字符串：便于在提示词里原样缩进排版。
  */
 export const SCOPE_HELP = `scope 三选一（配合 project 字段一起填）：
-- self：这条记忆属于某一个具体项目。问自己「换个项目还成立吗？」——不成立，就选 self。project 填这条记忆真正所属的项目目录。
+- self：这条记忆属于某一个具体项目。问自己「换个项目还成立吗？」——不成立，就选 self。project 是该条记忆的项目候选目录；显式填写时必须提供 projectEvidence，由服务端核验后写入。
 - global：这条记忆没有项目（协作纪律、工具用法、通用方法这类换个项目依然成立的）。问自己「这是通用做法 / 个人习惯 / 通用约定？」——是，就选它。project 必须留空字符串，不要填会话目录。
 - unknown：判不了。问自己「正文里有没有出现能定位项目的路径或文件？」——没有，或有多个候选分不清，就选它。project 必须留空字符串。宁可标 unknown 也不要猜一个项目。`;

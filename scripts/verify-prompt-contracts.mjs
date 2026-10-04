@@ -28,7 +28,7 @@ import { promptVarsFor } from "../prompts/tool-vars.ts";
 
 const EXT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PROMPTS_DIR = join(EXT_ROOT, "prompts");
-const AGENTS_DIR = resolve(EXT_ROOT, "..", "..", "agents"); // {pi-root}/agent/agents
+const AGENTS_DIR = join(EXT_ROOT, "agents"); // 验证扩展随包交付的定义
 
 const STRICT = process.argv.includes("--strict");
 let failures = 0;
@@ -323,6 +323,21 @@ const mustThrow = (label, fn) => {
 mustThrow("缺变量（tasks/l1-task 空 vars）", () => render("tasks/l1-task", {}));
 mustThrow("多传变量（tasks/l1-task + extra）", () => render("tasks/l1-task", { ...FX["tasks/l1-task"], extra: "x" }));
 mustThrow("未知 key", () => render("no/such-template", {}));
+
+// L1 的数据契约：拒绝与已核实的工具行为矛盾的旧指令。
+console.log("── 5) L1 提示词与数据契约一致性");
+const l1PromptPaths = ["agents/l1-extractor.md", "memory/l1/prompts/extract-code-personal.md", "memory/l1/prompts/extract-chat.md"];
+for (const path of l1PromptPaths) {
+	const text = readFileSync(join(EXT_ROOT, path), "utf-8");
+	if (/服务端降级为「同 cwd 最近场景」|也要输出情境分割结果|标记行与普通记录一样追加/.test(text)) fail(`${path}: 遗留错误场景/空批/删除语义`);
+	if (!text.includes("epoch") || !text.includes("recordedAt") || !text.includes("不得代替事件时间")) fail(`${path}: 未区分事件时间和归档时间`);
+	if (!text.includes("source_message_ids") || !text.includes("message_ids") || !text.includes("sessionKey") || !text.includes("子集")) fail(`${path}: 缺失逐条出处与会话约束`);
+}
+const l1Agent = readFileSync(join(EXT_ROOT, "agents/l1-extractor.md"), "utf-8");
+if (l1Agent.includes("**必须一次批量**") || l1Agent.includes("忽略 `deleted:true` 的行")) fail("L1 编排仍要求无上限单次查询或先过滤删除行");
+if (!l1Agent.includes("最多 50") || !l1Agent.includes("分块起始索引 + index")) fail("L1 未声明查询分块上限或局部索引映射");
+const dedupText = readFileSync(join(EXT_ROOT, "memory/l1/prompts/dedup.md"), "utf-8");
+if (dedupText.indexOf("chat/code 共用") > dedupText.indexOf("# 冲突检测 Prompt（chat 模式）")) fail("去重共用契约位于某一模式内部，会被另一模式跳过");
 
 // ══ 汇总 ══════════════════════════════════════════════════════════════════
 console.log("");

@@ -36,6 +36,7 @@ import { join } from "node:path";
 import { isScopeValue, normalizeProjectTag, normalizeScope, projectForScope, SCOPE_HELP, SCOPE_VALUES, type ScopeValue } from "../memory/l1/project-scope.ts";
 import { registerL1CommitTool } from "../memory/l1/commit-tool.ts";
 import { upsertSessionJudg } from "../util/judg-session-project/index.ts";
+import { saveAppSection } from "../config/app-config.ts";
 
 let pass = 0;
 let fail = 0;
@@ -62,6 +63,8 @@ function tempProfile(): string {
 	const p = mkdtempSync(join(tmpdir(), "projscope-verify-"));
 	dirs.push(p);
 	for (const sub of ["memoryDB/l1/records", "memoryDB/pipeline", "memoryDB/state"]) mkdirSync(join(p, sub), { recursive: true });
+	// 项目出处测试与模型价值校验无关，保持夹具离线、确定性。
+	saveAppSection(p, "l1", { mode: "code", valueCheck: { enabled: false } });
 	return p;
 }
 /** 读出某 profile 的全部 L1 记录（所有分片展平）。 */
@@ -187,7 +190,7 @@ async function main(): Promise<void> {
 		const p = tempProfile();
 		seedJudg(p, "sk1", "C:/dev/proj", "llm");
 		await commitIn(p, {
-			cursor: "2026-09-30T00:00:00.000Z",
+			cursor: JSON.stringify({ version: 2, files: {} }),
 			records: [{ id: "l1_1_aaaa", content: "E1", type: "work_fact", sessionKey: "sk1", cwd: "C:/子代理填的工作台", metadata: { work_object: "w1", status: "doing", scope: "self" } }],
 		});
 		const r = readRecs(p).find((x) => x.content === "E1");
@@ -200,17 +203,80 @@ async function main(): Promise<void> {
 	{
 		const p = tempProfile();
 		upsertSessionJudg(p, "sk2", { project: "C:/dev/占位", flag: false, decidedBy: "llm", confidence: 0.1, evidence: [] });
-		await commitIn(p, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_aaaa", content: "E2", type: "work_fact", sessionKey: "sk2", cwd: "C:/子代理填的工作台" }] });
+		await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: [{ id: "l1_1_aaaa", content: "E2", type: "work_fact", sessionKey: "sk2", cwd: "C:/子代理填的工作台" }] });
 		const r = readRecs(p).find((x) => x.content === "E2");
 		check("E2 flag:false → metadata.project 为空串（占位 project 不取）", mdOf(r).project === "", JSON.stringify(mdOf(r).project));
-		check("E2 projectSource = fallback（判定器没出结论，如实记）", mdOf(r).projectSource === "fallback", String(mdOf(r).projectSource));
+		check("E2 未提供 scope ⇒ unknown，判定来源为 fallback", mdOf(r).scope === "unknown" && mdOf(r).projectSource === "fallback", JSON.stringify(mdOf(r)));
 		check("E2 flag:false 也不动 cwd", r?.cwd === "C:/子代理填的工作台", String(r?.cwd));
+	}
+	// E2b 逐条证据优先于会话项目；无效证据不得改挂会话项目。
+	{
+		const p = tempProfile();
+		seedJudg(p, "mixed", "C:/dev/A", "llm");
+		const l0Dir = join(p, "memoryDB", "l0", "conversations");
+		mkdirSync(l0Dir, { recursive: true });
+		const timestamp = "2026-09-30T00:00:00.000Z";
+		writeFileSync(join(l0Dir, "2026-09-30.jsonl"), [
+			{ sessionKey: "mixed", id: "a", role: "user", content: "修改 C:/dev/A/src/a.ts", timestamp },
+			{ sessionKey: "mixed", id: "b", role: "user", content: "检查 `C:\\dev\\B\\src\\b.ts`，这是 B 的构建约束", timestamp },
+			{ sessionKey: "mixed", id: "bash", role: "assistant", content: "已检查 /c/dev/B/src/b.ts", timestamp },
+			{ sessionKey: "mixed", id: "prefix", role: "user", content: "检查 C:/dev/B-extra/src/x.ts", timestamp },
+			{ sessionKey: "other", id: "other", role: "user", content: "检查 C:/dev/B/src/b.ts", timestamp },
+			{ sessionKey: "mixed", id: null, role: "user", content: "检查 C:/dev/B/src/b.ts", timestamp },
+			{ sessionKey: "mixed", id: null, role: "user", content: "检查 C:/dev/B/src/b.ts", timestamp: 1790726400000 },
+			{ sessionKey: "mixed", id: null, role: "user", content: "检查 C:/dev/B/src/b.ts", sourceLine: 42, timestamp: null },
+		].map((r) => JSON.stringify(r)).join("\n"));
+		const evidence = (id: string, path = "C:/dev/B/src/b.ts") => [{ message_id: id, path }];
+		const cases = [
+			{ name: "A", ids: ["a"], metadata: { scope: "self", project: "C:/dev/A", projectEvidence: evidence("a", "C:/dev/A/src/a.ts") }, expected: "C:/dev/A" },
+			{ name: "B", ids: ["b"], metadata: { scope: "self", project: "C:\\dev\\B\\", projectEvidence: evidence("b") }, expected: "C:/dev/B" },
+			{ name: "Bash", ids: ["bash"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("bash", "/c/dev/B/src/b.ts") }, expected: "C:/dev/B" },
+			{ name: "FallbackID", ids: [`mixed#${timestamp}`], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence(`mixed#${timestamp}`) }, expected: "C:/dev/B" },
+			{ name: "NumericTimeID", ids: ["mixed#1790726400000"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("mixed#1790726400000") }, expected: "C:/dev/B" },
+			{ name: "SourceLineID", ids: ["mixed#42"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("mixed#42") }, expected: "C:/dev/B" },
+			{ name: "FakePath", ids: ["a"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("a") }, expected: "" },
+			{ name: "WrongSource", ids: ["a"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("b") }, expected: "" },
+			{ name: "WrongSession", ids: ["other"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("other") }, expected: "" },
+			{ name: "Prefix", ids: ["prefix"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("prefix", "C:/dev/B") }, expected: "" },
+			{ name: "NoEvidence", ids: ["b"], metadata: { scope: "self", project: "C:/dev/B" }, expected: "" },
+			{ name: "Relative", ids: ["b"], metadata: { scope: "self", project: "dev/B", projectEvidence: evidence("b") }, expected: "" },
+			{ name: "MixedPaths", ids: ["a", "b"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: [...evidence("a", "C:/dev/A/src/a.ts"), ...evidence("b")] }, expected: "" },
+			{ name: "Traversal", ids: ["b"], metadata: { scope: "self", project: "C:/dev/B/..", projectEvidence: evidence("b") }, expected: "" },
+			{ name: "Global", ids: ["b"], metadata: { scope: "global", project: "C:/dev/B", projectEvidence: evidence("b") }, expected: "" },
+			{ name: "Unknown", ids: ["b"], metadata: { scope: "unknown", project: "C:/dev/B", projectEvidence: evidence("b") }, expected: "" },
+		];
+		const result = await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: cases.map((c, i) => ({
+			id: `l1_2_${String(i).padStart(4, "0")}`, content: `E2b${c.name}`, type: "work_fact", priority: 80, sessionKey: "mixed", cwd: WORKBENCH,
+			source_message_ids: c.ids, metadata: c.metadata,
+		})) });
+		check("E2b 混合项目批次提交成功", result.success === true, JSON.stringify(result.projectWarnings));
+		const rows = readRecs(p);
+		for (const c of cases) {
+			const row = rows.find((r) => r.content === `E2b${c.name}`);
+			const md = mdOf(row);
+			const expectedScope = c.expected ? "self" : c.name === "Global" ? "global" : "unknown";
+			check(`E2b ${c.name} 的落盘项目与范围正确`, !!row && md.project === c.expected && md.scope === expectedScope, JSON.stringify(md));
+			check(`E2b ${c.name} 不改写工作台`, row?.cwd === WORKBENCH);
+			if (c.expected) check(`E2b ${c.name} 来源是逐条 L0 证据`, md.projectSource === "l0-evidence");
+		}
+		check("E2b 无效归属返回 8 条警告，不拒绝有效记忆", Array.isArray(result.projectWarnings) && result.projectWarnings.length === 8);
+		// 会话没有判定时，合法逐条证据仍应工作；无证据 self 则显式弃权。
+		writeFileSync(join(l0Dir, "2026-10-01.jsonl"), JSON.stringify({ sessionKey: "unjudged", id: "b2", role: "user", content: "检查 C:/dev/B/src/b.ts", timestamp }));
+		const unjudged = await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: [
+			{ id: "l1_3_0001", content: "E2c无会话有证据", type: "work_fact", sessionKey: "unjudged", source_message_ids: ["b2"], metadata: { scope: "self", project: "C:/dev/B", projectEvidence: evidence("b2") } },
+			{ id: "l1_3_0002", content: "E2c无会话无证据", type: "work_fact", sessionKey: "unjudged", metadata: { scope: "self" } },
+		] });
+		const unjudgedRows = readRecs(p);
+		check("E2c 无会话判定也能采信逐条证据", mdOf(unjudgedRows.find((r) => r.content === "E2c无会话有证据")).project === "C:/dev/B");
+		const unresolved = mdOf(unjudgedRows.find((r) => r.content === "E2c无会话无证据"));
+		check("E2c 无会话无证据的 self 降为 unknown", unresolved.scope === "unknown" && unresolved.project === "" && unresolved.projectSource === "unknown");
+		check("E2c 无可用项目返回警告", Array.isArray(unjudged.projectWarnings) && unjudged.projectWarnings.length === 1);
 	}
 	// E3 cwd 兜底：**只在缺字段或空串时**填会话工作台
 	{
 		const p = tempProfile();
 		await commitIn(p, {
-			cursor: "2026-09-30T00:00:00.000Z",
+			cursor: JSON.stringify({ version: 2, files: {} }),
 			records: [
 				{ id: "l1_1_aaaa", content: "E3缺字段", type: "work_fact" },
 				{ id: "l1_1_bbbb", content: "E3空串", type: "work_fact", cwd: "" },
@@ -225,7 +291,7 @@ async function main(): Promise<void> {
 		const p = tempProfile();
 		seedJudg(p, "sk4", "C:/dev/proj", "llm");
 		await commitIn(p, {
-			cursor: "2026-09-30T00:00:00.000Z",
+			cursor: JSON.stringify({ version: 2, files: {} }),
 			records: [{ id: "l1_1_aaaa", content: "E4", type: "work_fact", sessionKey: "sk4", cwd: "C:/工作台", metadata: { scope: "global", project: "C:/我自己填的" } }],
 		});
 		const r = readRecs(p).find((x) => x.content === "E4");
@@ -240,11 +306,11 @@ async function main(): Promise<void> {
 	{
 		const p = tempProfile();
 		seedJudg(p, "sk5", "C:/dev/proj", "llm");
-		await commitIn(p, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_aaaa", content: "E5宽松", type: "work_fact", sessionKey: "sk5", cwd: "C:/工作台", metadata: { scope: " SELF " } }] });
+		await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: [{ id: "l1_1_aaaa", content: "E5宽松", type: "work_fact", sessionKey: "sk5", cwd: "C:/工作台", metadata: { scope: " SELF " } }] });
 		seedJudg(p, "sk6", "C:/dev/proj", "llm");
-		await commitIn(p, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_bbbb", content: "E5脏值", type: "work_fact", sessionKey: "sk6", cwd: "C:/工作台", metadata: { scope: "subtree" } }] });
+		await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: [{ id: "l1_1_bbbb", content: "E5脏值", type: "work_fact", sessionKey: "sk6", cwd: "C:/工作台", metadata: { scope: "subtree" } }] });
 		seedJudg(p, "sk7", "C:/dev/proj", "llm");
-		await commitIn(p, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_cccc", content: "E5显式unknown", type: "work_fact", sessionKey: "sk7", cwd: "C:/工作台", metadata: { scope: "unknown", project: "C:/我自己填的" } }] });
+		await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: [{ id: "l1_1_cccc", content: "E5显式unknown", type: "work_fact", sessionKey: "sk7", cwd: "C:/工作台", metadata: { scope: "unknown", project: "C:/我自己填的" } }] });
 		const recs = readRecs(p);
 		const loose = recs.find((x) => x.content === "E5宽松");
 		const dirty = recs.find((x) => x.content === "E5脏值");
@@ -263,7 +329,7 @@ async function main(): Promise<void> {
 	{
 		const p = tempProfile();
 		seedJudg(p, "sk8", "C:/dev/proj", "llm");
-		await commitIn(p, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_dddd", content: "E5没填scope", type: "work_fact", sessionKey: "sk8", cwd: "C:/工作台" }] });
+		await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: [{ id: "l1_1_dddd", content: "E5没填scope", type: "work_fact", sessionKey: "sk8", cwd: "C:/工作台" }] });
 		const none = readRecs(p).find((x) => x.content === "E5没填scope");
 		check("E5f 没填 scope ⇒ 落成 unknown（字段不得消失，否则弃权档形同虚设）", mdOf(none).scope === "unknown", String(mdOf(none).scope));
 		check("E5g 没填 scope ⇒ project 被抹空（不默认挂到会话判定项目）", mdOf(none).project === "", JSON.stringify(mdOf(none).project));
@@ -301,7 +367,7 @@ async function main(): Promise<void> {
 			sessionKey: "sk8",
 		};
 		writeFileSync(join(recDir, "2026-09-30.jsonl"), `${JSON.stringify(oldRow)}\n`, "utf-8");
-		await commitIn(p, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_aaaa", content: "E7", type: "work_fact", deleted: true, sessionKey: "sk8", cwd: "C:/新归属也不该写" }] });
+		await commitIn(p, { cursor: JSON.stringify({ version: 2, files: {} }), records: [{ id: "l1_1_aaaa", content: "E7", type: "work_fact", deleted: true, sessionKey: "sk8", cwd: "C:/新归属也不该写" }] });
 		const rows = readRecs(p).filter((r) => r.id === "l1_1_aaaa");
 		const last = rows[rows.length - 1];
 		check("E7 墓碑行保留原 cwd", last?.cwd === "C:/老归属", JSON.stringify(rows.map((r) => r.cwd)));
@@ -311,8 +377,8 @@ async function main(): Promise<void> {
 	// ── F. 提示词副本同步 ─────────────────────────────────────────
 	console.log("\n=== F. 提示词同步：l1-extractor.md 的词表 = SCOPE_HELP 逐字 ===");
 	{
-		// 这份 md 在 agent/agents/ 下、不在本扩展内 ⇒ 只能按已知路径读（同 verify-judg-session-project.ts 的 F5–F8）
-		const mdPath = "C:/Users/leaf/.pi/agent/agents/l1-extractor.md";
+		// 验证当前仓库交付的定义，不能读取安装目录里的旧副本。
+		const mdPath = new URL("../agents/l1-extractor.md", import.meta.url);
 		const md = readFileSync(mdPath, "utf-8");
 		// 词表在 md 里以 blockquote 承载（每行前缀 "> "），按 SCOPE_HELP 的三行形态摘出来
 		const lines = md.split(/\r?\n/).filter((l) => /^\s*>\s*(scope 三选一|- (self|global|unknown)：)/.test(l));
@@ -327,6 +393,9 @@ async function main(): Promise<void> {
 		// 三值化后新增：`unknown` 这一行也必须自带"project 留空"，否则模型会给"判不了"配一个猜的路径
 		check("F6 SCOPE_HELP 的 unknown 档同样显式交代 'project 留空'", /^- unknown：.*project 必须留空/m.test(SCOPE_HELP));
 		check("F7 md 词表含三档标记（'scope 三选一' 标题行在位，防只同步了条目没同步标题）", md.includes("scope 三选一（配合 project 字段一起填）"));
+		const codeRules = readFileSync(new URL("../memory/l1/prompts/extract-code-personal.md", import.meta.url), "utf-8");
+		check("F8 提取规则不再推荐旧 scope 枚举", !/scope[=:]\s*user|scope":\s*"(?:user|project\|)/.test(codeRules));
+		check("F9 定义明确要求逐条项目证据", md.includes("metadata.projectEvidence") && md.includes("projectWarnings") && !md.includes("你填的值一律被覆写"));
 	}
 
 	// 清理必须留在 main 内：`void main()` 在此处只是启动 promise，函数体外同步执行的
