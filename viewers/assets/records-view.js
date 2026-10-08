@@ -37,7 +37,7 @@
 		drops: [],
 		/** 场景池索引 */
 		scenes: { byId: new Map(), byName: new Map() },
-		/** 加载方式："bridge"（列全部分片）| "static"（60 天窗口）| "manual" */
+		/** 加载方式："bridge"（列全部分片）| "static"（逐日探测 90 天窗口，无桥时的兜底） */
 		source: "",
 		/** 加载过程中的错误/提示 */
 		errors: [],
@@ -374,7 +374,7 @@
 						: state.clockSource === "sidecar"
 							? "活跃会话日 " + (state.activeDays ? state.activeDays.length : 0) + " 个（源：hit-stats.json 侧车，可能滞后于 l0）"
 							: "日历天（拿不到活跃日数据，已退化）";
-				var srcLabel = state.source === "bridge" ? "写盘桥（全部分片）" : "静态探测（最近 90 天；更早需用桥或手动选文件）";
+				var srcLabel = state.source === "bridge" ? "写盘桥（全部分片）" : "静态探测（最近 90 天；更早的分片需要写盘桥）";
 				var msg =
 					"已加载 <b>" + state.rows.length + "</b> 条（存活 " + alive + "，已删除 " +
 					(state.rows.length - alive) + "），来自 " + state.files.length + " 个分片。<br>" +
@@ -388,40 +388,12 @@
 				state.source = state.source || "static";
 				V.note(
 					"loadNote",
-					"自动加载失败：" + V.escapeHtml(e && e.message ? e.message : String(e)) +
-						"。可手动选择 JSONL，或用 <code>node scripts/l1-admin/viewer-bridge.mjs</code> 打开。",
+						"自动加载失败：" + V.escapeHtml(e && e.message ? e.message : String(e)) +
+							"。请确认地址带了 <code>?port=</code> 且写盘桥在运行（<code>npm run viewer</code> 可一键起桥）。",
 					"warn",
 				);
 				return false;
 			});
-	}
-
-	/** 手动载入（文件选择 / 目录选择）：替换当前记录集，命中统计与场景池照旧自动取。 */
-	function loadFromFiles(files, replace) {
-		var list = Array.prototype.slice.call(files).filter(function (f) {
-			return /\.jsonl$/i.test(f.name || "");
-		});
-		if (list.length === 0) return Promise.resolve();
-		var tasks = list.map(function (f) {
-			return f.text().then(function (txt) {
-				return { file: f.name, rows: V.parseJsonl(txt, f.name) };
-			});
-		});
-		return Promise.all(tasks).then(function (results) {
-			var records = replace ? [] : state.rows.slice();
-			var fileNames = replace ? [] : state.files.slice();
-			for (var i = 0; i < results.length; i++) {
-				records = records.concat(results[i].rows);
-				fileNames.push(results[i].file + " (" + results[i].rows.length + ")");
-			}
-			state.files = fileNames;
-			state.source = "manual";
-			return Promise.all([loadHitStats(), loadScenes(), loadDropLog()]).then(function () {
-				state.rows = enrichAll(records);
-				V.note("loadNote", "已手动载入 " + records.length + " 行（LWW 去重后 " + state.rows.length + " 条）");
-				renderAll();
-			});
-		});
 	}
 
 	// ── 筛选 ────────────────────────────────────────────────────────────────
@@ -654,7 +626,7 @@
 			$("list").className = "empty";
 			$("list").innerHTML = state.rows.length
 				? "<strong>无匹配结果</strong>试试放宽筛选或清空搜索。"
-				: "<strong>还没有数据</strong>用上方「自动加载」或手动选择 JSONL。";
+				: "<strong>还没有数据</strong>点上方「重新加载」从写盘桥取数。";
 			return;
 		}
 		$("list").className = "cards";
@@ -966,48 +938,11 @@
 			}
 		});
 
-		// 分片/文件输入
-		$("pickFiles").addEventListener("click", function () { $("fileInput").click(); });
-		$("pickDir").addEventListener("click", function () { $("dirInput").click(); });
-		$("pickHit").addEventListener("click", function () { $("hitInput").click(); });
-		$("fileInput").addEventListener("change", function (e) {
-			loadFromFiles(e.target.files, state.source === "manual").then(function () {
-				e.target.value = "";
-			});
-		});
-		$("dirInput").addEventListener("change", function (e) {
-			loadFromFiles(e.target.files, true).then(function () {
-				e.target.value = "";
-			});
-		});
-		$("hitInput").addEventListener("change", function (e) {
-			var f = e.target.files && e.target.files[0];
-			if (f) {
-				f.text().then(function (txt) {
-					try {
-						var payload = JSON.parse(txt);
-						var arr = Array.isArray(payload) ? payload : payload.stats || [];
-						state.hitMap = new Map();
-						arr.forEach(function (raw) {
-							var st = VQ.normalizeStat(raw);
-							if (st && st.recordId) state.hitMap.set(st.recordId, st);
-						});
-						if (!Array.isArray(payload) && Array.isArray(payload.activeDays)) {
-							state.activeDays = payload.activeDays
-								.map(function (k) { return new Date(k + "T00:00:00").getTime(); })
-								.filter(function (t) { return !Number.isNaN(t); });
-							state.clockSource = "sidecar";
-						}
-						state.rows = enrichAll(state.rows);
-						V.note("loadNote", "已载入命中统计 " + state.hitMap.size + " 条");
-						renderAll();
-					} catch (err) {
-						V.note("loadNote", "命中统计解析失败：" + V.escapeHtml(err.message), "err");
-					}
-				});
-			}
-			e.target.value = "";
-		});
+		// 手动载入（选择 JSONL / 选择目录 / 选择 hit-stats.json）已于 2026-10-08 按用户要求移除：
+		// 那三个按钮只为「file:// 手动选文件」这条路径存在，而实际始终经写盘桥打开，属死重量。
+		// 连带删掉了它们背后的三个隐藏 <input type="file"> 与 loadFromFiles()。
+		// 若要恢复「无桥也能看」：需同时改回 file:// 提示条、本页空态文案与 README，
+		// 且注意 loadActiveDays() 自带 hit-stats 侧车兜底 —— 手动入口删了不等于时钟来源少了。
 		$("reloadBtn").addEventListener("click", function () {
 			autoLoad();
 		});

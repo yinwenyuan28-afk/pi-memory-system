@@ -19,9 +19,6 @@
 
 			<div class="toolbar">
 				<button type="button" class="primary" id="reloadBtn">重新加载</button>
-				<button type="button" id="pickFiles">选择 JSONL…</button>
-				<button type="button" id="pickDir">选择 records 目录…</button>
-				<button type="button" id="pickHit">选择 hit-stats.json…</button>
 				<button type="button" id="clearBtn">清空</button>
 				<button type="button" id="exportBtn">导出当前视图</button>
 			</div>
@@ -50,10 +47,6 @@
 				<label class="check"><input type="checkbox" id="onlyDeleted" /> 仅看已删除</label>
 			</div>
 			<p class="hint" id="loadNote">加载中…</p>
-
-			<input type="file" id="fileInput" accept=".jsonl,.json,text/plain" multiple hidden />
-			<input type="file" id="dirInput" webkitdirectory directory multiple hidden />
-			<input type="file" id="hitInput" accept=".json,application/json" hidden />
 		</header>
 
 		<main>

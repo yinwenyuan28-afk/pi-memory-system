@@ -3,8 +3,10 @@
  *
  * 为什么是 classic script 而不是 ES module：
  *   `file://` 下浏览器既禁止 `fetch()` 也禁止 ES module 加载，但**允许** <script src> 与
- *   <link rel=stylesheet>。用 classic script 才能保住「直接双击打开 → 手动选 JSONL 查看」这条
- *   离线回退路径（自动加载与写回仍然需要 http，见 mountChrome 的提示条）。
+ *   <link rel=stylesheet>。用 classic script，直接双击打开时页面至少能正常渲染、并给出
+ *   「自动加载与写回都不可用」的说明（见 mountChrome 的提示条），而不是白屏或半死不活。
+ *   取数本身仍然需要 http + 写盘桥 —— 2026-10-08 起已按用户要求移除「手动选 JSONL」这条
+ *   离线载入路径，所以 file:// 下现在只剩「能看说明」这一层价值。
  *
  * 单一来源：格式化 / 时间 / 加载器 / 导航 / 版本 只在这里一份。三个页面都不再各写一份
  * （旧版就是因为每页内联一份，改一处要改三处，很快分叉）。
@@ -301,7 +303,7 @@
 					banner,
 					"当前以 <code>file://</code> 打开：<b>自动加载与写回都不可用</b>（浏览器禁止 file:// 下的 fetch）。" +
 						"完整功能请运行 <code>node scripts/l1-admin/viewer-bridge.mjs</code>（或 <code>npm run viewer</code>），" +
-						"再打开它打印的 <code>http://localhost:5174/viewers/…?port=5174</code>。手动选择 JSONL 仍可用。",
+						"再打开它打印的 <code>http://localhost:5174/viewers/…?port=5174</code>。",
 					"warn",
 				);
 			} else if (!bridgePort()) {
