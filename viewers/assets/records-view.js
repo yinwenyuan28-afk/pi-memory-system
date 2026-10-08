@@ -56,6 +56,37 @@
 		tab: "records",
 		lastRows: [],
 		modalRow: null,
+		/**
+		 * 批量选择的**记录 id** 集合。
+		 *
+		 * 按 id 而不是卡片下标记账：下标只在"当前这一份渲染结果"里有效，任何一次筛选/重新加载都会
+		 * 让同一个下标指向另一条记录 —— 那样"选中 → 改筛选 → 批量删除"会删到错的记录上。
+		 * 选择跨筛选保持（由用户显式「清空选择」），这是刻意行为：先在不同筛选里挑，再一起操作。
+		 */
+		selected: new Set(),
+		/** 待二次确认的墓碑 id 列表（非空时渲染确认条；确认或取消后清空） */
+		pendingTombstone: null,
+		/** L1 管理操作区状态：全部来自 /api/*；失败时字段留空而不是沿用旧值（宁缺勿假） */
+		ops: {
+			loaded: false,
+			mode: null,
+			modeError: "",
+			embedding: null,
+			embeddingError: "",
+			pending: null,
+			runs: [],
+			backups: [],
+			/** 正在跑的写动作名："" | "mode" | "trigger" | "embedding" | "stop" | "rollback" */
+			busy: "",
+			/** 已预演、等待执行的向量操作（"" = 无待执行） */
+			embedOp: "",
+			embedVerdict: null,
+			embedLog: "",
+			/** 整库还原：已预演的备份目录名 + 预演 CLI 文本（预渲染成 details.log）+ 用户已键入的确认串 */
+			rollbackBackup: "",
+			rollbackPreviewHtml: "",
+			rollbackConfirm: "",
+		},
 	};
 
 	// ── 工具 ────────────────────────────────────────────────────────────────
@@ -685,7 +716,12 @@
 
 				return (
 					'<article class="card' + (r.deleted ? " deleted" : "") + '" data-idx="' + idx + '">' +
-					'<div class="card-head" data-toggle><div class="chips">' + chips.join("") + sceneChip + "</div></div>" +
+					// 勾选框放在 chips 行首（而不是浮在卡片角上）：不新增定位层，也不遮挡正文。
+					// data-sel 用**记录 id**（见 state.selected 注释），data-sel-label 供点击委托识别。
+					'<div class="card-head" data-toggle><div class="chips">' +
+					'<label class="check" data-sel-label title="加入批量选择"><input type="checkbox" data-sel="' +
+					V.escapeHtml(r.id || "") + '"' + (state.selected.has(r.id) ? " checked" : "") + " /></label>" +
+					chips.join("") + sceneChip + "</div></div>" +
 					'<div class="qbar"><i class="' + (barClass[q.tag] || "c-watch") + '" style="width:' + barH + '%"></i></div>' +
 					'<div class="card-body" data-toggle><div class="full-content">' + V.escapeHtml(r.content || "") + "</div></div>" +
 					'<div class="card-foot"><div class="chips">' + metrics.join("") + "</div>" +
@@ -738,6 +774,562 @@
 		var rows = filtered();
 		renderRecords(rows);
 		renderDrops();
+		// 选择条与卡片是两份渲染：卡片重画后必须同步一次，否则"全选/清空"后的计数会停在旧值
+		renderSelectionBar();
+	}
+
+	// ── 批量选择 ────────────────────────────────────────────────────────────
+	/** 勾选/取消一条（on = 目标状态，不读 DOM，避免与重画竞争）。 */
+	function toggleSelected(id, on) {
+		if (!id) return;
+		if (on) state.selected.add(id);
+		else state.selected.delete(id);
+		renderSelectionBar();
+	}
+
+	/** 选中集合里仍在场的记录（记录可能因重新加载而不在 state.rows 里）。 */
+	function selectedRows() {
+		return state.rows.filter(function (r) {
+			return state.selected.has(r.id);
+		});
+	}
+
+	/** 选择条：只在有勾选时出现；计数器用<b>而不是自己拼粗体，避免把数字当 HTML 打进去。 */
+	function renderSelectionBar() {
+		var n = state.selected.size;
+		$("selBar").style.display = n > 0 ? "" : "none";
+		$("selCount").innerHTML = "已选 <b>" + n + "</b> 条";
+		if (n === 0) {
+			// 没有选中就没有可删的东西：把待确认的墓碑一并作废，免得留下一条"幽灵确认"
+			state.pendingTombstone = null;
+		}
+		renderSelConfirm();
+	}
+
+	/** 墓碑二次确认条：逐条列出将被删除的 id（这是"点了不可逆"的唯一凭据）。 */
+	function renderSelConfirm() {
+		var ids = state.pendingTombstone;
+		var box = $("selConfirm");
+		if (!ids || ids.length === 0) {
+			box.hidden = true;
+			box.innerHTML = "";
+			return;
+		}
+		box.hidden = false;
+		box.className = "notice warn";
+		box.innerHTML =
+			"<b>墓碑删除</b>：就地写 <code>deleted:true</code>（记录连同向量退出召回），自动备份、可用危险区的整库还原回退，<b>不可逐条撤销</b>。确认删除以下 <b>" +
+			ids.length + "</b> 条？" +
+			'<ul class="diff-list">' +
+			ids
+				.slice(0, 20)
+				.map(function (id) {
+					return '<li class="del">' + V.escapeHtml(id) + "</li>";
+				})
+				.join("") +
+			(ids.length > 20 ? '<li class="more">…还有 ' + (ids.length - 20) + " 条</li>" : "") +
+			"</ul>" +
+			'<div class="toolbar"><button type="button" class="danger" id="selConfirmYes">确认删除 ' + ids.length + " 条</button>" +
+			'<button type="button" id="selConfirmNo">取消</button></div>';
+	}
+
+	/**
+	 * 批量标记任务状态：**一次请求**带上全部选中 id（task-state 端点本就接受 ids 数组）。
+	 *
+	 * 只有 work_task 承载任务状态，选中的非任务记录会被 CLI 逐条判错 —— 所以这里如实报"成功/失败"
+	 * 两个数，而不是把整批当成功。
+	 */
+	function applyTaskStateBatch(target) {
+		var ids = Array.from(state.selected);
+		if (ids.length === 0 || !V.bridgePort()) return;
+		V.note("selNote", "正在标记 " + ids.length + " 条为「" + V.escapeHtml(V.TASK_STATE_LABELS[target]) + "」…");
+		V.bridge("/api/task-state", {
+			method: "POST",
+			body: JSON.stringify({ ids: ids, state: target }),
+		}).then(function (r) {
+			var d = r.data || {};
+			if (d.error) {
+				V.note("selNote", "批量标记失败：" + V.escapeHtml(String(d.error)), "err");
+				return;
+			}
+			if (!r.ok && d.results === undefined) {
+				V.note("selNote", "批量标记失败：HTTP " + r.status, "err");
+				return;
+			}
+			var changed = d.changed === undefined ? ids.length - (d.failed || 0) : d.changed;
+			var failed = d.failed || 0;
+			// 就地同步本地状态（服务端只改状态字段），不为一次标记重载全部分片
+			state.rows.forEach(function (row) {
+				if (!state.selected.has(row.id) || !row.isTask) return;
+				row.taskState = target;
+				row.audit.taskStateChange = { from: "", to: target, at: new Date().toISOString(), by: "user" };
+			});
+			V.note(
+				"selNote",
+				"已标记 <b>" + changed + "</b> 条为「" + V.escapeHtml(V.TASK_STATE_LABELS[target]) + "」" +
+					(failed > 0 ? "，<b>" + failed + "</b> 条失败（只有 work_task 承载任务状态）" : "") + "。",
+				failed > 0 ? "warn" : "",
+			);
+			renderAll();
+		});
+	}
+
+	/** 批量墓碑（删除）：真正写盘的入口，只在确认条上点「确认删除」后到达。 */
+	function applyTombstoneBatch(ids) {
+		if (ids.length === 0 || !V.bridgePort()) return;
+		V.note("selNote", "正在删除 " + ids.length + " 条…");
+		V.bridge("/api/tombstone", { method: "POST", body: JSON.stringify({ ids: ids }) }).then(function (r) {
+			if (!r.ok || !r.data || r.data.success === false) {
+				V.note("selNote", "批量删除失败：" + V.escapeHtml(String((r.data && r.data.error) || "未知错误")), "err");
+				return;
+			}
+			ids.forEach(function (id) {
+				state.rows.forEach(function (row) {
+					if (row.id === id) row.deleted = true;
+				});
+			});
+			state.selected = new Set();
+			state.pendingTombstone = null;
+			V.note("selNote", "已就地标记 deleted:true（自动备份已生成，可用危险区的整库还原回退）。");
+			renderAll();
+		});
+	}
+
+	/** 导出选中：导出的是选中记录本身（不是当前筛选），与"导出当前视图"是两件事。 */
+	function exportSelected() {
+		var rows = selectedRows();
+		if (rows.length === 0) {
+			V.note("selNote", "没有可导出的选中记录（选中的 id 可能已不在当前加载的数据里）。", "warn");
+			return;
+		}
+		V.download("l1-selected-" + new Date().toISOString().slice(0, 10) + ".json", JSON.stringify(rows, null, 2));
+	}
+
+	// ── L1 管理操作区（侧栏） ────────────────────────────────────────────────
+	/** 字节 → 人类可读（只用于备份大小比较，不参与任何判定）。 */
+	function fmtBytes(n) {
+		if (typeof n !== "number" || Number.isNaN(n)) return "—";
+		if (n < 1024) return n + " B";
+		if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+		return (n / 1024 / 1024).toFixed(1) + " MB";
+	}
+
+	/**
+	 * 读管理操作区要用的全部只读状态。
+	 *
+	 * 无桥时**不发请求**（桥根本不存在），直接把面板渲染成禁用态 —— 与页面顶部提示条同一口径。
+	 */
+	function loadOps() {
+		if (!V.bridgePort()) {
+			state.ops.loaded = true;
+			// "管理操作区加载中…" 必须被换掉：面板其实已经渲染成禁用态了，而这句话会永远停在那儿
+			// —— 一行说谎的状态提示比没有提示更糟（本项目反复踩过"静默误导"这一类）。
+			V.note("opsNote", "无写盘桥：管理动作全部禁用，只能看。带 <code>?port=</code> 打开即可用。", "warn");
+			renderOps();
+			return Promise.resolve();
+		}
+		return Promise.all([
+			V.bridge("/api/limits"),
+			V.bridge("/api/l1/embeddings"),
+			V.bridge("/api/pending-triggers"),
+			V.bridge("/api/subagent-runs"),
+			V.bridge("/api/l1/backups"),
+		]).then(function (r) {
+			state.ops.mode = r[0].ok && r[0].data && r[0].data.l1 && r[0].data.l1.mode ? r[0].data.l1.mode : null;
+			state.ops.modeError = state.ops.mode ? "" : (r[0].data && r[0].data.error) || "读取失败";
+			var emb = r[1];
+			state.ops.embedding = emb.ok && emb.data && emb.data.status ? emb.data.status : null;
+			state.ops.embeddingError = state.ops.embedding ? "" : (emb.data && emb.data.error) || "读取失败";
+			state.ops.pending = r[2].ok && r[2].data && r[2].data.pending ? r[2].data.pending : null;
+			state.ops.runs = r[3].ok && r[3].data && Array.isArray(r[3].data.runs) ? r[3].data.runs : [];
+			state.ops.backups = r[4].ok && r[4].data && Array.isArray(r[4].data.backups) ? r[4].data.backups : [];
+			state.ops.loaded = true;
+			// 同上：加载完成必须把"加载中…"换掉。顺带报出有几项没读到 —— 单项失败在面板里已有说明，
+			// 这里给的是"整体是否可信"的一句话。
+			var failed = [r[0], r[1], r[2], r[3], r[4]].filter(function (x) { return !x.ok; }).length;
+			V.note(
+				"opsNote",
+				failed === 0
+					? "写盘桥已连接：下面每个动作都注明是否落盘（标「预演」的不写，要按「确认执行」才写）。"
+					: "写盘桥已连接，但有 " + failed + " 项状态没读到 —— 面板里对应格子会写出原因，别把空白当默认值。",
+				failed === 0 ? "" : "warn",
+			);
+			renderOps();
+		});
+	}
+
+	/** 只重取待消费信号（"请求触发"只影响这一格；整块重取会顺带读一遍向量库，没必要）。 */
+	function refreshOpsPending() {
+		return V.bridge("/api/pending-triggers").then(function (r) {
+			state.ops.pending = r.ok && r.data && r.data.pending ? r.data.pending : null;
+			renderOps();
+		});
+	}
+
+	/** 只重取向量库状态（回填/重建后条数会变）。 */
+	function refreshOpsEmbedding() {
+		return V.bridge("/api/l1/embeddings").then(function (r) {
+			state.ops.embedding = r.ok && r.data && r.data.status ? r.data.status : null;
+			if (!state.ops.embedding) state.ops.embeddingError = (r.data && r.data.error) || "读取失败";
+			renderOps();
+		});
+	}
+
+	/** 只重取子代理运行记录（停止后那一格要立刻反映真实状态）。 */
+	function refreshOpsRuns() {
+		return V.bridge("/api/subagent-runs").then(function (r) {
+			state.ops.runs = r.ok && r.data && Array.isArray(r.data.runs) ? r.data.runs : [];
+			renderOps();
+		});
+	}
+
+	/** 只重取备份清单（整库还原会新生成一份 pre-rollback 备份）。 */
+	function refreshOpsBackups() {
+		return V.bridge("/api/l1/backups").then(function (r) {
+			state.ops.backups = r.ok && r.data && Array.isArray(r.data.backups) ? r.data.backups : [];
+			renderOps();
+		});
+	}
+
+	/** 无桥时的统一提示（措辞与页面既有"无写盘桥"文案同源）。 */
+	function opsReadOnlyHint() {
+		return '<div class="hint">写回需要写盘桥：请用带 <code>?port=</code> 的地址打开本页（<code>npm run viewer</code> 一键起桥）。只读模式下这里的按钮全部禁用。</div>';
+	}
+
+	/** 还原按钮的可用性 = 输入的目录名与所选备份**逐字相等**（与桥的 confirm 副验同口径）。 */
+	function syncRollbackApply() {
+		var sel = $("rbBackup");
+		var input = $("rbConfirm");
+		var btn = $("rbApply");
+		if (!sel || !input || !btn) return;
+		var chosen = sel.value;
+		var typed = input.value.trim();
+		var ok = !!chosen && typed === chosen && !!V.bridgePort();
+		btn.disabled = !ok;
+		btn.title = ok ? "与桥的 confirm 副验一致，将执行整库还原" : "必须逐字输入所选备份目录名（" + chosen + "）";
+	}
+
+	/** 重建的「确认执行」要等用户键入 REBUILD；回填无需打字。 */
+	function syncEmbedApply() {
+		var btn = $("opsEmbedApply");
+		if (!btn) return;
+		if (state.ops.embedOp !== "rebuild") {
+			btn.disabled = !V.bridgePort();
+			return;
+		}
+		var input = $("opsRebuildConfirm");
+		btn.disabled = !V.bridgePort() || !input || input.value.trim() !== "REBUILD";
+	}
+
+	/** 渲染整块管理操作区（含危险区）。值全部来自 state.ops，纯函数式重画。 */
+	function renderOps() {
+		var o = state.ops;
+		var ro = !V.bridgePort();
+		var dis = ro ? " disabled" : "";
+
+		// ── 提取模式 ──
+		var modeRow =
+			'<div class="ops-row" id="opsModeRow">' +
+			'<div class="ops-label">提取模式</div>' +
+			'<div class="ops-ctl">' +
+			'<button type="button" id="opsModeCode" class="' + (o.mode === "code" ? "primary" : "") + '"' + dis + ">code</button>" +
+			'<button type="button" id="opsModeChat" class="' + (o.mode === "chat" ? "primary" : "") + '"' + dis + ">chat</button>" +
+			"</div>" +
+			'<div class="ops-note">当前 <b>' + V.escapeHtml(o.mode || (o.loaded ? "未知" : "读取中…")) + "</b>（真源 <code>/api/limits.l1.mode</code>" +
+			(o.modeError ? "，读取失败：" + V.escapeHtml(o.modeError) : "") +
+			"）。立即写盘、可逆、幂等（改 <code>application-propertis.json</code> 的 l1.mode），影响下一轮提取取向。</div>" +
+			"</div>";
+
+		// ── 触发提取（只入队，不立即执行） ──
+		var pend = o.pending && o.pending.l1 ? o.pending.l1 : null;
+		var pendChip = pend
+			? '<span class="chip" title="' + V.escapeHtml("由 " + (pend.by || "?") + " 写入") + '">待消费信号已存在 · ' + V.escapeHtml(V.fmtTime(pend.at)) + "</span>"
+			: '<span class="hint">当前无待消费信号</span>';
+		var triggerRow =
+			'<div class="ops-row" id="opsTriggerRow">' +
+			'<div class="ops-label">触发提取</div>' +
+			'<div class="ops-ctl"><button type="button" id="opsTrigger"' + dis + ">请求触发 L1</button>" + pendChip + "</div>" +
+			'<div class="ops-note">只写入一份<b>待消费信号</b>（请求入队），<b>不是立即执行</b>：需要 pi 会话活着，并在下一轮结束（<code>agent_settled</code>）时由主进程消费；pi 关着时信号就躺在盘上等。' +
+			(pend ? "已有待消费信号，队列去重会让这次请求不新增任务。" : "") +
+			"</div></div>";
+
+		// ── 向量库（长任务：桥单线程同步执行，期间整座桥不响应） ──
+		var st = o.embedding;
+		var embedStat = st
+			? metric("向量 " + st.vectorizedCount + "/" + st.totalRecords, "已向量化 / 总记录") + metric("缺 " + st.unVectorizedCount, "未向量化条数")
+			: '<span class="hint">' + V.escapeHtml(o.embeddingError || (o.loaded ? "读不到向量库状态" : "读取中…")) + "</span>";
+		var busyEmbed = o.busy === "embedding";
+		var steps = "";
+		if (o.embedOp) {
+			var v = o.embedVerdict || { ok: true, text: "" };
+			steps =
+				'<div id="opsEmbedVerdict" class="notice' + (v.ok ? "" : " warn") + '">' + v.text + "</div>" +
+				(o.embedLog ? '<details class="log" open><summary>CLI 输出</summary><pre class="log-text">' + V.escapeHtml(o.embedLog) + "</pre></details>" : "") +
+				'<div class="ops-ctl" style="margin-top:6px">' +
+				(o.embedOp === "rebuild"
+					? '<span class="confirm-token">REBUILD</span><input type="text" class="confirm-input" id="opsRebuildConfirm" placeholder="输入 REBUILD 以解锁执行"' + (ro ? " disabled" : "") + " />"
+					: "") +
+				'<button type="button" class="danger" id="opsEmbedApply"' + (ro || o.embedOp === "rebuild" ? " disabled" : "") + ">确认执行" + (o.embedOp === "rebuild" ? "重建" : "回填") + "</button>" +
+				'<button type="button" id="opsEmbedCancel">取消</button>' +
+				"</div>";
+		}
+		var embedRow =
+			'<div class="ops-row' + (busyEmbed ? " busy" : "") + '" id="opsEmbedRow">' +
+			'<div class="ops-label">向量库</div>' +
+			'<div class="ops-ctl">' + embedStat +
+			'<button type="button" id="opsBackfill"' + dis + ">回填：预演</button>" +
+			'<button type="button" id="opsRebuild"' + dis + ">重建：预演</button>" +
+			(busyEmbed ? '<span class="busy-flag">运行中（桥被占满，勿重复点）</span>' : "") +
+			"</div>" +
+			'<div class="ops-note">回填只补缺失向量；<b>重建会先清空向量库再全量重算</b>（中途失败 = 库空，需打字确认）。两者都是长任务：桥单线程同步执行，跑起来后整座桥都不响应。</div>' +
+			'<div id="opsEmbedSteps" style="grid-column: 1 / -1">' + steps + "</div>" +
+			"</div>";
+
+		// ── 停止子代理（只在确实有 l1 运行记录时可用） ──
+		var l1run = null;
+		for (var i = 0; i < o.runs.length; i++) {
+			if (o.runs[i] && o.runs[i].layer === "l1") l1run = o.runs[i];
+		}
+		var stopRow =
+			'<div class="ops-row' + (o.busy === "stop" ? " busy" : "") + '" id="opsStopRow">' +
+			'<div class="ops-label">子代理</div>' +
+			'<div class="ops-ctl"><button type="button" class="danger" id="opsStop"' + (ro || !l1run ? " disabled" : "") + ">停止 L1 子代理</button>" +
+			(l1run
+				? '<span class="chip" title="来自 /api/subagent-runs">运行中 job ' + V.escapeHtml(l1run.jobId) + " · pid " + V.escapeHtml(l1run.pid) + "</span>"
+				: '<span class="hint">没有 l1 子代理在跑</span>') +
+			"</div>" +
+			'<div class="ops-note">只在 <code>/api/subagent-runs</code> 里确实有 l1 运行记录时可用。停止<b>不可逆</b>：子代理被杀、本批未提交 ⇒ 游标不推进，下一轮会重做，所以点之前先确认。</div>' +
+			"</div>";
+
+		// ── 危险区：整库还原（不是单条撤销） ──
+		var bk = o.backups || [];
+		var chosen = o.rollbackBackup && bk.some(function (b) { return b.dir === o.rollbackBackup; })
+			? o.rollbackBackup
+			: (bk.length ? bk[bk.length - 1].dir : "");
+		var options = bk.length
+			? bk
+					.slice()
+					.reverse()
+					.map(function (b) {
+						return (
+							'<option value="' + V.escapeHtml(b.dir) + '"' + (b.dir === chosen ? " selected" : "") + ">" +
+							V.escapeHtml(b.dir) + "（" + b.shards + " 分片 / " + fmtBytes(b.bytes) + " / " + V.escapeHtml(V.fmtTime(b.mtime)) + "）</option>"
+						);
+					})
+					.join("")
+			: '<option value="">（没有备份）</option>';
+		var rbBusy = o.busy === "rollback";
+		var danger =
+			'<div class="danger-zone" id="opsDanger">' +
+			"<h3>危险区 · 整库还原（L1）</h3>" +
+			'<div class="ops">' +
+			'<div class="ops-row' + (rbBusy ? " busy" : "") + '">' +
+			'<div class="ops-label">选择备份</div>' +
+			'<div class="ops-ctl"><select id="rbBackup"' + (ro || bk.length === 0 ? " disabled" : "") + ">" + options + "</select>" +
+			'<button type="button" id="rbPreview"' + (ro || !chosen ? " disabled" : "") + ">预演</button></div>" +
+			'<div class="ops-note">整库还原 = 删掉当前 L1 全部 <code>.jsonl</code> 再复制备份内容，<b>不是单条撤销</b>；当前库会先自动备份一份（pre-rollback）。预演只比对，不写盘。</div>' +
+			"</div>" +
+			'<div class="ops-row' + (rbBusy ? " busy" : "") + '">' +
+			'<div class="ops-label">打字确认</div>' +
+			'<div class="ops-ctl">' +
+			'<span class="confirm-token" id="rbToken">' + V.escapeHtml(chosen || "(无备份)") + "</span>" +
+			'<input type="text" class="confirm-input" id="rbConfirm" placeholder="逐字输入所选备份目录名" value="' + V.escapeHtml(o.rollbackConfirm || "") + '"' + (ro || !chosen ? " disabled" : "") + " />" +
+			'<button type="button" class="danger" id="rbApply" disabled>执行还原</button>' +
+			(rbBusy ? '<span class="busy-flag">还原中（桥被占满，勿重复点）</span>' : "") +
+			"</div>" +
+			'<div class="ops-note">必须逐字输入上面显示的备份目录名 —— 与桥的 confirm 副验一致；输入正确前「执行还原」保持禁用。</div>' +
+			"</div>" +
+			'<div id="rbLog">' + (o.rollbackPreviewHtml || "") + "</div>" +
+			"</div></div>";
+
+		$("l1ops").innerHTML =
+			(ro ? opsReadOnlyHint() : "") +
+			'<h3 class="sub">提取与触发</h3>' + modeRow + triggerRow +
+			'<h3 class="sub">向量库与子代理</h3>' + embedRow + stopRow +
+			danger;
+		syncRollbackApply();
+		syncEmbedApply();
+	}
+
+	// ── 管理操作：写动作 ────────────────────────────────────────────────────
+	/** 切换 L1 提取模式（唯一无预演的写动作：可逆、幂等，CLI 自己读写确认）。 */
+	function setL1Mode(mode) {
+		if (!V.bridgePort()) return;
+		state.ops.busy = "mode";
+		renderOps();
+		V.bridge("/api/l1/mode", { method: "POST", body: JSON.stringify({ mode: mode }) }).then(function (r) {
+			state.ops.busy = "";
+			var d = r.data || {};
+			if (!r.ok || d.success === false) {
+				V.note("opsNote", "模式切换失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+				renderOps();
+				return;
+			}
+			state.ops.mode = d.mode || mode;
+			V.note("opsNote", "提取模式已切到 <b>" + V.escapeHtml(state.ops.mode) + "</b>（" + (d.changed === false ? "值未变" : "已写入并回读确认") + "）。");
+			renderOps();
+		});
+	}
+
+	/** 请求触发 L1 提取：脚本只写信号，真要跑得等 pi 会话消费。 */
+	function triggerL1() {
+		if (!V.bridgePort()) return;
+		state.ops.busy = "trigger";
+		renderOps();
+		// reason 写成人看得懂的一句话，而不是重复 by（`by` 已经说明"谁来请求的"，
+		// 两者都塞 "viewer" 会让日志里出现「外部触发（viewer / viewer）」这种零信息的记录）。
+		V.bridge("/api/trigger", { method: "POST", body: JSON.stringify({ layer: "l1", reason: "查看器 L1 页的「请求触发 L1」按钮" }) }).then(function (r) {
+			state.ops.busy = "";
+			var d = r.data || {};
+			if (!r.ok || d.success === false) {
+				V.note("opsNote", "写入触发信号失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+			} else {
+				V.note(
+					"opsNote",
+					"已写入待消费信号。它只负责入队：需要 pi 会话活着，并在下一轮结束（<code>agent_settled</code>）时由主进程消费；pi 关着时信号就躺在盘上等。",
+				);
+			}
+			// 成败都重新探一次：让"是否已有待消费信号"这一格反映真实盘面
+			return refreshOpsPending();
+		});
+	}
+
+	/** 向量回填/重建的**预演**：只报"现在缺多少条"与后续代价，不写盘。 */
+	function previewEmbedding(op) {
+		if (!V.bridgePort()) return;
+		state.ops.embedOp = op;
+		state.ops.embedVerdict = { ok: true, text: "预演中…" };
+		state.ops.embedLog = "";
+		renderOps();
+		V.bridge("/api/l1/embedding", { method: "POST", body: JSON.stringify({ op: op }) }).then(function (r) {
+			var d = r.data || {};
+			if (!r.ok || d.success === false) {
+				state.ops.embedOp = "";
+				state.ops.embedVerdict = null;
+				V.note("opsNote", "预演失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+				renderOps();
+				return;
+			}
+			var s = d.status || state.ops.embedding;
+			var text =
+				"预演通过（dry-run，未写盘）。" +
+				(s ? "总 " + s.totalRecords + " 条，已向量化 " + s.vectorizedCount + "，缺 " + s.unVectorizedCount + "。" : "") +
+				" " + V.escapeHtml(d.note || "");
+			state.ops.embedVerdict = { ok: true, text: text };
+			renderOps();
+		});
+	}
+
+	/** 向量回填/重建的**执行**：长任务 —— 期间桥整座阻塞，所以先置 busy 再发请求。 */
+	function applyEmbedding() {
+		if (!V.bridgePort()) return;
+		var op = state.ops.embedOp;
+		if (!op) return;
+		var body = { op: op, apply: true };
+		if (op === "rebuild") {
+			var input = $("opsRebuildConfirm");
+			if (!input || input.value.trim() !== "REBUILD") return;
+			body.confirm = "REBUILD";
+		}
+		state.ops.busy = "embedding";
+		state.ops.embedVerdict = { ok: true, text: (op === "rebuild" ? "重建" : "回填") + "执行中…桥在此期间不响应任何请求。" };
+		renderOps();
+		V.bridge("/api/l1/embedding", { method: "POST", body: JSON.stringify(body) }).then(function (r) {
+			state.ops.busy = "";
+			var d = r.data || {};
+			if (!r.ok || d.success === false) {
+				state.ops.embedVerdict = { ok: false, text: "执行失败：" + V.escapeHtml(String(d.error || "未知错误")) };
+				state.ops.embedLog = String(d.raw || d.stderr || d.error || "");
+				V.note("opsNote", "向量" + (op === "rebuild" ? "重建" : "回填") + "失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+				renderOps();
+				return;
+			}
+			state.ops.embedOp = "";
+			state.ops.embedVerdict = null;
+			state.ops.embedLog = "";
+			V.note(
+				"opsNote",
+				"向量" + (op === "rebuild" ? "重建" : "回填") + "完成（耗时 " + (d.elapsedMs ? Math.round(d.elapsedMs / 1000) + " 秒" : "未知") + "）。",
+			);
+			refreshOpsEmbedding();
+		});
+	}
+
+	/** 停止 L1 子代理（不可逆，先 confirm 再写）。 */
+	function stopL1Subagent() {
+		if (!V.bridgePort()) return;
+		var l1run = null;
+		for (var i = 0; i < state.ops.runs.length; i++) {
+			if (state.ops.runs[i] && state.ops.runs[i].layer === "l1") l1run = state.ops.runs[i];
+		}
+		if (!l1run) return;
+		if (!confirm("停止 L1 子代理（job " + l1run.jobId + " / pid " + l1run.pid + "）？\n\n不可逆：本批未提交，游标不推进，下一轮会重做。")) return;
+		state.ops.busy = "stop";
+		renderOps();
+		V.bridge("/api/subagent/stop", { method: "POST", body: JSON.stringify({ layer: "l1", job: l1run.jobId }) }).then(function (r) {
+			state.ops.busy = "";
+			var d = r.data || {};
+			if (!r.ok || d.success === false) {
+				V.note("opsNote", "停止失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+			} else if (d.stopped === false) {
+				V.note("opsNote", "没有停到东西：" + V.escapeHtml(String(d.note || "该层没有在跑的子代理")), "warn");
+			} else {
+				V.note("opsNote", V.escapeHtml(String(d.note || "已停掉 L1 子代理。")) + (d.killConfirmed === false ? "<br>未能确认进程已死，该层已被持有（确认停止前不接受新任务）。" : ""));
+			}
+			refreshOpsRuns();
+		});
+	}
+
+	/** 整库还原的**预演**：只比对（CLI dry-run），把它的文本原样放进 details.log。 */
+	function previewRollback() {
+		if (!V.bridgePort()) return;
+		var sel = $("rbBackup");
+		var dir = sel ? sel.value : "";
+		if (!dir) return;
+		state.ops.rollbackBackup = dir;
+		state.ops.busy = "rollback";
+		renderOps();
+		V.bridge("/api/l1/rollback", { method: "POST", body: JSON.stringify({ backup: dir }) }).then(function (r) {
+			state.ops.busy = "";
+			var d = r.data || {};
+			var text = String(d.text || d.error || "");
+			state.ops.rollbackPreviewHtml =
+				'<details class="log"' + (d.success === false ? " open" : "") + '><summary>还原预演（CLI 输出）</summary><pre class="log-text">' +
+				V.escapeHtml(text.slice(0, 4000)) + "</pre></details>";
+			if (d.success === false) V.note("opsNote", "预演失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+			else V.note("opsNote", "预演完成（dry-run，未写盘）。详情见下方日志；确认无误后逐字输入备份目录名再执行。");
+			renderOps();
+		});
+	}
+
+	/** 整库还原的**执行**：替换当前全部 L1 记录。confirm 必须等于目录名（桥会复验）。 */
+	function applyRollback() {
+		if (!V.bridgePort()) return;
+		var sel = $("rbBackup");
+		var dir = sel ? sel.value : "";
+		var input = $("rbConfirm");
+		if (!dir || !input || input.value.trim() !== dir) return;
+		if (!confirm("整库还原会用备份「" + dir + "」替换当前 L1 全部记录（不是单条撤销）。\n\n继续？")) return;
+		state.ops.busy = "rollback";
+		renderOps();
+		V.bridge("/api/l1/rollback", { method: "POST", body: JSON.stringify({ backup: dir, apply: true, confirm: dir }) }).then(function (r) {
+			state.ops.busy = "";
+			var d = r.data || {};
+			var text = String(d.text || d.error || "");
+			state.ops.rollbackPreviewHtml =
+				'<details class="log" open><summary>还原结果（CLI 输出）</summary><pre class="log-text">' + V.escapeHtml(text.slice(0, 4000)) + "</pre></details>";
+			if (!r.ok || d.success === false) {
+				V.note("opsNote", "整库还原失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+				renderOps();
+				return;
+			}
+			state.ops.rollbackConfirm = "";
+			V.note("opsNote", "整库还原完成，已重新加载记录。");
+			// 记录被整库替换 → 卡片必须重读；备份清单也多了一份 pre-rollback
+			renderOps();
+			autoLoad();
+			refreshOpsBackups();
+		});
 	}
 
 	// ── 详情弹层 ────────────────────────────────────────────────────────────
@@ -803,6 +1395,34 @@
 			}) +
 			"<dt>sourceFile</dt><dd>" + V.escapeHtml(r.sourceFile || "—") + "</dd>" +
 			"</dl><pre class=\"json\">" + V.escapeHtml(JSON.stringify(r, null, 2)) + "</pre></details>" +
+			// 纠错面板（l1_fix）：预演（checkFixGates 裁决）→ 执行。审计标注会**追加进正文本身**，
+			// 与页面上那条「编辑正文（仅本页预览）」是两件事 —— 后者不写盘，这里写盘。
+			'<div class="ops" style="margin-top:12px">' +
+			'<h3 class="sub">纠错（l1_fix）</h3>' +
+			(hasPort ? "" : '<div class="hint">写盘需要写盘桥：请以带 <code>?port=</code> 的地址打开本页。以下控件在只读模式下不可用。</div>') +
+			'<div class="ops-row"><div class="ops-label">动作</div><div class="ops-ctl">' +
+			'<select id="fixAction"' + (hasPort ? "" : " disabled") + ">" +
+			'<option value="rewrite">rewrite（改写正文）</option>' +
+			'<option value="tombstone">tombstone（作废该条）</option>' +
+			"</select></div>" +
+			'<div class="ops-note">rewrite 会把审计标注【YYYY-MM-DD L1 修正：…】<b>追加进正文本身</b>（不是独立审计键），同时记 <code>metadata.l1Cleanup</code> —— 正文会真的变长。四道闸：证据 ≥20 字符、rewrite 正文 ≥10 字符、24h 防抖、高价值保护。</div></div>' +
+			'<div class="ops-row"><div class="ops-label">新正文</div><div class="ops-ctl">' +
+			'<textarea id="fixContent" class="edit-area" style="min-height:110px"' + (hasPort ? "" : " disabled") + ">" + V.escapeHtml(r.content || "") + "</textarea>" +
+			'</div><div class="ops-note">仅 rewrite 使用（≥10 字符）；tombstone 忽略此框。</div></div>' +
+			'<div class="ops-row"><div class="ops-label">证据 *</div><div class="ops-ctl">' +
+			'<input type="text" id="fixEvidence" class="reason" placeholder="grep 输出 / file:line / 命令输出（≥20 字符，必填）"' + (hasPort ? "" : " disabled") + " />" +
+			'</div><div class="ops-note">必填且 ≥20 字符：修正必须附可复核证据，否则预演就会被拒。</div></div>' +
+			'<div class="ops-row"><div class="ops-label">原因 / 优先级</div><div class="ops-ctl">' +
+			'<input type="text" id="fixReason" class="reason" placeholder="可选：原因（写进正文审计标注）"' + (hasPort ? "" : " disabled") + " />" +
+			'<input type="number" id="fixPriority" class="reason" min="0" max="100" placeholder="priority 0-100" style="min-width:130px"' + (hasPort ? "" : " disabled") + " />" +
+			'<label class="check"><input type="checkbox" id="fixForce"' + (hasPort ? "" : " disabled") + " /> force（只解高价值保护那道闸）</label>" +
+			"</div></div>" +
+			'<div class="ops-ctl" style="margin-top:6px">' +
+			'<button type="button" class="primary" id="fixPreview"' + (hasPort ? "" : " disabled") + ">预演（只报闸门裁决）</button>" +
+			'<button type="button" class="danger" id="fixApply" hidden>执行（写盘）</button>' +
+			"</div>" +
+			'<div id="fixVerdict"></div>' +
+			"</div>" +
 			'<div class="foot">' +
 			'<button type="button" class="primary" data-edit="content">编辑正文</button>' +
 			'<button type="button" data-cancel="content" hidden>取消</button>' +
@@ -860,7 +1480,134 @@
 		});
 	}
 
+	/** 一键取纠错表单的值（预演与执行各取一次，保证读到的是用户当下看到的输入）。 */
+	function readFixForm() {
+		var val = function (id) {
+			var el = $(id);
+			return el ? el.value.trim() : "";
+		};
+		var forceEl = $("fixForce");
+		var prioRaw = val("fixPriority");
+		var prio = prioRaw === "" ? undefined : Number(prioRaw);
+		if (prio !== undefined && !Number.isFinite(prio)) prio = undefined;
+		var contentEl = $("fixContent");
+		return {
+			id: state.modalRow ? state.modalRow.id : "",
+			action: val("fixAction") || "rewrite",
+			content: contentEl ? contentEl.value : "",
+			evidence: val("fixEvidence"),
+			reason: val("fixReason"),
+			priority: prio,
+			force: !!(forceEl && forceEl.checked),
+		};
+	}
+
+	/** 组装 l1_fix 的请求体（预演与执行的差别只有 apply:true，其余必须逐字段一致）。 */
+	function fixBody(f, apply) {
+		var body = { id: f.id, action: f.action, evidence: f.evidence };
+		if (apply) body.apply = true;
+		if (f.action === "rewrite") body.content = f.content;
+		if (f.reason) body.reason = f.reason;
+		if (f.priority !== undefined) body.priority = f.priority;
+		if (f.force) body.force = true;
+		return body;
+	}
+
+	/**
+	 * l1_fix 的**预演**：不写盘，只报四道闸的裁决。
+	 *
+	 * 为什么预演真的有意义：`runFix` 内部恒定向 rewrite/tombstone 传 `--apply`，本身没有干跑路径；
+	 * 桥的 dry-run 走 `checkFixGates`（与实写同一份裁决）。预演覆盖正文长度/证据/存活/防抖/高价值，
+	 * 但**不含 IO 级校验**（分片写得进写不进只有实写时才知道），界面上不把它说成保证。
+	 */
+	function previewFix() {
+		if (!V.bridgePort()) return;
+		var f = readFixForm();
+		V.note("fixVerdict", "预演中…");
+		V.bridge("/api/l1/fix", { method: "POST", body: JSON.stringify(fixBody(f, false)) }).then(function (r) {
+			var d = r.data || {};
+			if (!r.ok || d.success === false) {
+				V.note("fixVerdict", "预演被拒：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+				$("fixApply").hidden = true;
+				return;
+			}
+			V.note(
+				"fixVerdict",
+				"预演通过（dry-run，未写盘）：四道闸放行。" + (d.note ? "<br>" + V.escapeHtml(String(d.note)) : "") +
+					(f.action === "rewrite" ? "<br>注意：执行时审计标注会<b>追加进正文本身</b>。" : "") +
+					"<br><span class=\"hint\">dry-run 不含 IO 级校验（分片能否写入只有实写时才知道）。</span>",
+			);
+			$("fixApply").hidden = false;
+			$("fixApply").disabled = false;
+		});
+	}
+
+	/** l1_fix 的**执行**：与预演同一份表单值，额外带 apply:true。 */
+	function applyFix() {
+		if (!V.bridgePort()) return;
+		var f = readFixForm();
+		$("fixApply").disabled = true;
+		V.note("fixVerdict", "执行中…");
+		V.bridge("/api/l1/fix", { method: "POST", body: JSON.stringify(fixBody(f, true)) }).then(function (r) {
+			var d = r.data || {};
+			if (!r.ok || d.success === false) {
+				V.note("fixVerdict", "执行失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
+				$("fixApply").disabled = false;
+				return;
+			}
+			// 正文被服务端就地改写（含追加的审计标注），本地那份内容已不可信 —— 重读取回真身
+			closeModal();
+			V.note("loadNote", "纠错已写入（" + V.escapeHtml(f.action) + "）：" + V.escapeHtml(String(d.detail || "").slice(0, 200)) + "<br>正文由服务端改写，页面重新加载以取回真实内容。");
+			autoLoad();
+		});
+	}
+
 	// ── 事件绑定 ────────────────────────────────────────────────────────────
+	/** 管理操作区的点击分发（按 id 路由到各写动作；按钮 disabled 时浏览器不会派发 click）。 */
+	function onOpsClick(e) {
+		var btn = e.target && e.target.closest ? e.target.closest("button") : null;
+		if (!btn || btn.disabled) return;
+		switch (btn.id) {
+			case "opsModeCode": return setL1Mode("code");
+			case "opsModeChat": return setL1Mode("chat");
+			case "opsTrigger": return triggerL1();
+			case "opsBackfill": return previewEmbedding("backfill");
+			case "opsRebuild": return previewEmbedding("rebuild");
+			case "opsEmbedApply": return applyEmbedding();
+			case "opsEmbedCancel":
+				state.ops.embedOp = "";
+				state.ops.embedVerdict = null;
+				state.ops.embedLog = "";
+				renderOps();
+				return;
+			case "opsStop": return stopL1Subagent();
+			case "rbPreview": return previewRollback();
+			case "rbApply": return applyRollback();
+			default: return;
+		}
+	}
+
+	/** 管理操作区的输入变化：只切换"打字确认"按钮的可用性，**不重画**（重画会把光标顶走）。 */
+	function onOpsInput(e) {
+		var t = e.target;
+		if (!t || !t.id) return;
+		if (t.id === "rbConfirm") {
+			state.ops.rollbackConfirm = t.value.trim();
+			syncRollbackApply();
+			return;
+		}
+		if (t.id === "opsRebuildConfirm") {
+			syncEmbedApply();
+			return;
+		}
+		if (t.id === "rbBackup") {
+			state.ops.rollbackBackup = t.value;
+			// 换了备份就要重画一次：确认串的提示字符号（#rbToken）要跟着换
+			renderOps();
+			return;
+		}
+	}
+
 	function bind() {
 		$("typeList").addEventListener("click", function (e) {
 			var btn = e.target.closest("[data-type]");
@@ -945,6 +1692,8 @@
 		// 且注意 loadActiveDays() 自带 hit-stats 侧车兜底 —— 手动入口删了不等于时钟来源少了。
 		$("reloadBtn").addEventListener("click", function () {
 			autoLoad();
+			// 记录与管理状态是两份来源：重新加载时一起刷新，免得面板显示的是上一轮的盘面
+			loadOps();
 		});
 		$("clearBtn").addEventListener("click", function () {
 			state.rows = [];
@@ -967,6 +1716,8 @@
 		// 正文是截断预览（.card-body，见 viewer.css 契约 3），完整正文只在弹层里给 ——
 		// 旧版在卡片内做了 190px 的内部滚动，567 张卡各画一条原生滚动条。
 		$("list").addEventListener("click", function (e) {
+			// 勾选框（含它的 label）归选择条管，不弹详情；否则"想勾选却打开了弹层"
+			if (e.target.closest && e.target.closest("[data-sel-label]")) return;
 			var btn = e.target.closest("[data-open]");
 			var head = e.target.closest(".card");
 			if (!head) return;
@@ -974,6 +1725,50 @@
 			var row = state.lastRows[idx];
 			if (row) openModal(row);
 		});
+		// 勾选变化：用 change（不是 click）—— checkbox 的勾选状态在 change 时才可靠
+		$("list").addEventListener("change", function (e) {
+			var input = e.target;
+			if (!input || !input.matches || !input.matches('input[type="checkbox"][data-sel]')) return;
+			toggleSelected(input.getAttribute("data-sel") || "", input.checked);
+		});
+
+		// 批量选择条
+		$("selOpen").addEventListener("click", function () { applyTaskStateBatch("open"); });
+		$("selDone").addEventListener("click", function () { applyTaskStateBatch("done"); });
+		$("selDropped").addEventListener("click", function () { applyTaskStateBatch("dropped"); });
+		$("selExport").addEventListener("click", exportSelected);
+		$("selClear").addEventListener("click", function () {
+			state.selected = new Set();
+			state.pendingTombstone = null;
+			renderRecords(state.lastRows);
+			renderSelectionBar();
+		});
+		// 全选 = 勾上"当前篩选结果"（state.lastRows 就是这一份渲染的行）
+		$("selAll").addEventListener("click", function () {
+			state.lastRows.forEach(function (r) { if (r.id) state.selected.add(r.id); });
+			renderRecords(state.lastRows);
+			renderSelectionBar();
+		});
+		$("selDelete").addEventListener("click", function () {
+			var ids = Array.from(state.selected);
+			if (ids.length === 0) return;
+			state.pendingTombstone = ids;
+			renderSelConfirm();
+		});
+		// 确认条是动态注入的，事件委托到固定容器
+		$("selConfirm").addEventListener("click", function (e) {
+			if (!e.target || !e.target.id) return;
+			if (e.target.id === "selConfirmYes") applyTombstoneBatch(state.pendingTombstone || []);
+			else if (e.target.id === "selConfirmNo") {
+				state.pendingTombstone = null;
+				renderSelConfirm();
+			}
+		});
+
+		// 侧栏「L1 管理」：内容由 renderOps 动态注入 → 事件一律委托到 #l1ops 上
+		$("l1ops").addEventListener("click", onOpsClick);
+		$("l1ops").addEventListener("input", onOpsInput);
+		$("l1ops").addEventListener("change", onOpsInput);
 
 		// 弹层
 		$("modal").addEventListener("click", function (e) {
@@ -1053,7 +1848,11 @@
 				$("modalBody").querySelector('[data-cancel="content"]').hidden = true;
 				$("modalBody").querySelector('[data-edit="content"]').hidden = false;
 				renderAll();
+				return;
 			}
+			// 纠错面板：预演 → 执行（两步；执行才写盘）
+			if (t.id === "fixPreview") { previewFix(); return; }
+			if (t.id === "fixApply") { applyFix(); return; }
 		});
 		document.addEventListener("keydown", function (e) {
 			if (e.key === "Escape" && $("modal").classList.contains("open")) closeModal();
@@ -1074,6 +1873,8 @@
 		V.mountChrome({ active: "records-viewer.html" });
 		bind();
 		autoLoad();
+		// 管理操作区独立于记录加载：即便分片读失败，模式/触发/停止这些信息仍应可见
+		loadOps();
 	}
 
 	if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

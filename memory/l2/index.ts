@@ -9,6 +9,7 @@ import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { repairSceneMembers, syncSceneIndex } from "./commit-tool.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
+import { consumePendingTrigger } from "../pipeline/pending-trigger.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
 import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } from "../pipeline/status.ts";
 
@@ -44,6 +45,38 @@ export function setupL2Organizer(
 		all.l2 = s;
 		saveFailureState(p, all);
 	}
+
+	// 通道：**进程外**的显式触发请求（查看器写盘桥 / l1-admin CLI 落的信号文件，主进程读后即删）。
+	//
+	// L2 此前没有任何 `agent_settled` 钩子 —— 自动 L2 只由 `l1_commit` 入队，手动只走斜杠命令；
+	// 这条是给"进程外的请求方"（按钮在浏览器里）新开的。语义与 `/my-memory:l2-trigger` 一致：
+	// 复位熔断 → 校验 cursor 之后确实有新 records → 入队。**只入队不执行**：真正跑起来仍要等
+	// worker 的 drain（需要本进程持着 cachedCtx），所以 pi 会话关着时信号会一直躺在盘上等。
+	pi.on("agent_settled", (_event, ctx) => {
+		pipeline.setCachedCtx(ctx);
+		const profilePath = getProfilePath();
+		if (!profilePath) return;
+		const pending = consumePendingTrigger(profilePath, "l2");
+		if (!pending) return;
+		const from = [pending.by, pending.reason].filter(Boolean).join(" / ");
+		const st = loadL2State(profilePath);
+		st.cooledDown = false;
+		st.consecutiveFailures = 0;
+		saveL2State(st, profilePath);
+		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
+		const stageCount = readAllRecords(profilePath).filter((r) => r.epoch > watermark).length;
+		if (stageCount === 0) {
+			logEvent("l2", `外部触发${from ? `（${from}）` : ""}：cursor 之后无新 records，跳过`, profilePath);
+			return;
+		}
+		const q = pipeline.enqueueL2("manual");
+		if (q && !q.duplicate) {
+			logEvent("l2", `外部触发${from ? `（${from}）` : ""}：已入队 job ${q.id}（${stageCount} records）`, profilePath);
+			pipeline.kick();
+		} else {
+			logEvent("l2", `外部触发${from ? `（${from}）` : ""}：队列中已有 L2，未重复入队`, profilePath);
+		}
+	});
 
 	async function executeJob(ctx: ExtensionContext, job: PipelineJob, scope?: PipelineJobScope): Promise<PipelineJobResult> {
 		const profilePath = scope?.profilePath ?? getProfilePath();

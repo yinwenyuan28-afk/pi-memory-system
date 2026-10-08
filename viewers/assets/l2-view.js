@@ -14,6 +14,14 @@
  * 所以本页不"相信"索引自洽，而是逐项对账并把差异**显式列出来**（索引缺块 / 块未入索引 /
  * 侧车与索引成员不一致 / 归档目录与账本不一致 / 账本提到但文件不在 / 成员 id 无对应块）。
  * 一个自洽的假象比一个明显的缺口更难发现 —— 这是本页存在的理由。
+ *
+ * ── 「L2 管理」区（2026-10-08 补）──
+ *
+ * 左栏把所有会改盘的动作收在一处：块归档/恢复、请求组织、停子代理、场景池报告、场景池播种。
+ * 三条铁律（每一条都有踩过坑的理由，见下文各处的注释）：
+ *   · 每个写动作都**两拍**：预演（不带 apply）→ 确认执行（apply:true）；预演与实写都是后端裁决；
+ *   · 视图层不做业务判断，端点原样返回的 JSON / 文本一律摆出来（口径只准在 CLI 一份）；
+ *   · 无 `?port=` 时整区禁用并说明原因（写回能力全部依赖写盘桥）。
  */
 (function () {
 	"use strict";
@@ -35,6 +43,10 @@
 		archiveBlocks: new Map(),
 		selected: "",
 		errors: [],
+		/** /api/subagent-runs 里 layer==="l2" 的那条（停止按钮的依据）；无跑动时为 null */
+		l2Run: null,
+		/** /api/pending-triggers 里 l2 的待消费信号（只读探查，不消费） */
+		pendingL2: null,
 	};
 
 	function $(id) {
@@ -346,12 +358,13 @@
 				'<td class="num">' + members.length + "</td>" +
 				"<td>" + V.escapeHtml(V.fmtDay(meta.updated || (idx && idx.updated))) + "</td>" +
 				'<td style="max-width:520px">' + V.escapeHtml(summary) + "</td>" +
+				opsCellHtml(filename, archived) +
 				"</tr>"
 			);
 		};
 
 		$("blockTable").innerHTML =
-			'<div class="wrap-scroll"><table><thead><tr><th>块文件</th><th>heat</th><th>成员</th><th>updated</th><th>summary</th></tr></thead><tbody>' +
+			'<div class="wrap-scroll"><table><thead><tr><th>块文件</th><th>heat</th><th>成员</th><th>updated</th><th>summary</th><th>操作</th></tr></thead><tbody>' +
 			lists.live.map(function (f) { return rowOf(f, false); }).join("") +
 			lists.archive.map(function (f) { return rowOf(f, true); }).join("") +
 			"</tbody></table></div>";
@@ -436,10 +449,427 @@
 		$("modal").classList.add("open");
 	}
 
+	// ══ 管理操作区（「L2 管理」） ═══════════════════════════════════════════
+	//
+	// 为什么每个写动作都要「预演 → 确认执行」两拍，而不是点一下就走：
+	//   · 归档/恢复会取 **L2 运行级锁**，顺序是「自愈 → 搬块 → 重建索引」，中途失败没有单条回滚，
+	//     事后能追的只有 archive/ledger.jsonl（append-only、不可重建）。预演先把能只读判定的前置
+	//     条件（文件在不在 / reason 有没有 / maxScenes 够不够）摆出来，多数错误到此就挡住了。
+	//   · 播种会**整节重写** l1/scenes.json（L1 场景归属的唯一真源），且写前才自动备份。
+	//   · 桥是单线程同步执行的：一次慢动作（报告 / 实写）期间整座桥不响应请求，所以要置灰整行。
+	//
+	// 视图层不做任何业务判断：上不上锁、满没满、能不能恢复，全部由 l1-admin 的 CLI 裁决，
+	// 页面只负责把它的结构化输出如实摆出来（口径只准在后端一份）。
+	var MAX_LOG_CHARS = 20000;
+
+	/** 端点字面量集中一处：静态校验会按字面量核对桥里是否已声明，拼串会漏检。 */
+	var EP = {
+		archive: "/api/l2/archive",
+		restore: "/api/l2/restore",
+		seed: "/api/l2/scene-pool/seed",
+		report: "/api/l2/scene-pool/report",
+		mergeReport: "/api/l2/scene-pool/merge-report",
+		pending: "/api/pending-triggers",
+		trigger: "/api/trigger",
+		runs: "/api/subagent-runs",
+		stop: "/api/subagent/stop",
+	};
+
+	/** 触发通道的说明（两处共用，避免同一句话写两遍后分叉）。 */
+	var TRIGGER_CAVEAT =
+		"写信号只是<b>入队请求</b>，由 pi 主进程在下一个 <code>agent_settled</code> 消费 —— <b>需要活着的 pi 会话</b>；查看器自己不会执行任何组织。";
+
+	/** CLI 文本裁剪（报告可达数万字符，整段塞进 DOM 会把页面撑爆）。 */
+	function clipText(t) {
+		var s = String(t === null || t === undefined ? "" : t);
+		return s.length > MAX_LOG_CHARS ? s.slice(0, MAX_LOG_CHARS) + "\n…（已截断，共 " + s.length + " 字符）" : s;
+	}
+
+	/** CLI 文本 → <details class="log">（长文本一律折叠，不做内滚动区域）。 */
+	function logDetails(summary, text, open) {
+		return (
+			'<details class="log"' + (open ? " open" : "") + "><summary>" + V.escapeHtml(summary) + "</summary>" +
+			'<pre class="log-text">' + V.escapeHtml(clipText(text)) + "</pre></details>"
+		);
+	}
+
+	/** 结构化输出 → 等宽折叠块（把端点原样返回摆出来，不替用户"总结"掉证据）。 */
+	function jsonDetails(summary, obj) {
+		return logDetails(summary, JSON.stringify(obj === undefined ? null : obj, null, 2));
+	}
+
+	/** 操作结果统一落在这里：它不在会被重绘的表格里，归档/恢复后重新加载也还看得见。 */
+	function opsStatus(html, level) {
+		var host = $("opsResult");
+		if (!host) return;
+		host.className = "notice" + (level ? " " + level : "");
+		host.innerHTML = html;
+	}
+
+	/** 从桥返回里挖人话错误：CLI 的拒绝理由在 data.error，失败时还会带回 stdout（见 bridge 的 runCli）。 */
+	function bridgeError(r) {
+		var d = (r && r.data) || {};
+		return String(d.error || d.raw || d.stderr || (r && r.status ? "HTTP " + r.status : "未知错误"));
+	}
+
+	/** 长任务期间置灰整行：桥同步执行，这期间它真的不响应任何请求（是契约，不是观感）。 */
+	function setRowBusy(btn, busy) {
+		var row = btn && btn.closest ? btn.closest(".ops-row") : null;
+		if (row) row.classList.toggle("busy", !!busy);
+	}
+
+	/** 只读探查三层待消费信号（**不消费** —— 展示不该有副作用）。 */
+	function refreshPending() {
+		if (!V.bridgePort()) return Promise.resolve();
+		return V.bridge(EP.pending).then(function (r) {
+			var p = r && r.ok && r.data && r.data.pending ? r.data.pending.l2 : null;
+			state.pendingL2 = p || null;
+			var flag = $("pendingFlag");
+			if (flag) {
+				flag.hidden = !p;
+				flag.textContent = "L2 有信号待消费";
+			}
+			var note = $("triggerNote");
+			if (note) {
+				note.innerHTML = p
+					? "待消费信号：<code>" + V.escapeHtml(JSON.stringify(p)) + "</code>。" + TRIGGER_CAVEAT
+					: "当前没有 L2 待消费信号。" + TRIGGER_CAVEAT;
+			}
+		});
+	}
+
+	/** 查正在跑的子代理：只有存在 l2 运行记录时，停止按钮才有意义（否则=装饰）。 */
+	function refreshRuns() {
+		if (!V.bridgePort()) return Promise.resolve();
+		return V.bridge(EP.runs).then(function (r) {
+			var runs = r && r.ok && r.data && Array.isArray(r.data.runs) ? r.data.runs : [];
+			var mine = runs.filter(function (x) {
+				return x && x.layer === "l2";
+			});
+			state.l2Run = mine.length ? mine[0] : null;
+			var btn = $("stopBtn");
+			if (btn) btn.disabled = !state.l2Run;
+			var note = $("stopNote");
+			if (note) {
+				note.innerHTML = state.l2Run
+					? mine
+							.map(function (x) {
+								return "运行中：job <b>" + V.escapeHtml(x.jobId) + "</b> · pid " + V.escapeHtml(x.pid) + " · " +
+									V.escapeHtml(x.agent || "?") + " · 起于 " + V.escapeHtml(V.fmtTime(x.startedAt));
+							})
+							.join("<br>") +
+						'<br><span class="hint">停止<b>立即且不可逆</b>：先在信号层拦住、再杀进程树；本批未提交则游标不推进，下一轮整批重做。</span>'
+					: "没有在跑的 L2 子代理（按钮因此禁用）。这是 <code>/api/subagent-runs</code> 的实时结果。";
+			}
+		});
+	}
+
+	/** 请求 L2 组织：只写一个入队信号，**不是立即执行**（执行者是 pi 主进程）。 */
+	function triggerOrganize() {
+		if (!V.bridgePort()) return;
+		setRowBusy($("triggerBtn"), true);
+		V.bridge(EP.trigger, { method: "POST", body: JSON.stringify({ layer: "l2", reason: "查看器手动请求" }) })
+			.then(function (r) {
+				var ok = r && r.ok && r.data && r.data.success !== false;
+				opsStatus(
+					ok
+						? "已把 L2 组织请求写入入队信号。" + TRIGGER_CAVEAT + jsonDetails("返回", r.data)
+						: "入队失败：" + V.escapeHtml(bridgeError(r)) + jsonDetails("返回", (r && r.data) || {}),
+					ok ? "" : "err",
+				);
+				return refreshPending();
+			})
+			.then(function () {
+				setRowBusy($("triggerBtn"), false);
+			});
+	}
+
+	/** 停止 L2 子代理：立即且不可逆，所以先确认（后端 CLI 没有 dry-run，要么停要么报"没在跑"）。 */
+	function stopSubagent() {
+		var run = state.l2Run;
+		if (!V.bridgePort() || !run) return;
+		if (
+			!window.confirm(
+				"停止 L2 子代理？\n\njob " + run.jobId + " · pid " + run.pid + "\n\n" +
+					"这是立即且不可逆的动作：先拦信号，再杀进程树；本批未提交则游标不推进，下一轮整批重做。",
+			)
+		)
+			return;
+		setRowBusy($("stopBtn"), true);
+		V.bridge(EP.stop, { method: "POST", body: JSON.stringify({ layer: "l2", job: run.jobId, reason: "查看器手动停止" }) })
+			.then(function (r) {
+				var ok = r && r.ok && r.data && r.data.success !== false;
+				opsStatus(
+					ok ? "停止指令已发出。" + jsonDetails("返回", r.data) : "停止失败：" + V.escapeHtml(bridgeError(r)) + jsonDetails("返回", (r && r.data) || {}),
+					ok ? "" : "err",
+				);
+				return refreshRuns();
+			})
+			.then(function () {
+				setRowBusy($("stopBtn"), false);
+			});
+	}
+
+	/** 场景池只读报告：**按需**取（可能调 embedding，绝不在页面加载时打这一炮）。 */
+	function runReport(which) {
+		if (!V.bridgePort()) return;
+		var merge = which === "merge";
+		var title = merge ? "合并报告" : "场景池报告";
+		var btn = $(merge ? "mergeReportBtn" : "reportBtn");
+		var busy = $("reportBusy");
+		if (busy) busy.hidden = false;
+		setRowBusy(btn, true);
+		$("reportOut").innerHTML = '<div class="hint">正在生成' + V.escapeHtml(title) + "…（可能几秒到更久）</div>";
+		V.bridge(merge ? EP.mergeReport : EP.report)
+			.then(function (r) {
+				var text = r && r.ok && r.data ? r.data.text : null;
+				$("reportOut").innerHTML =
+					text === null || text === undefined
+						? '<div class="notice err">生成失败：' + V.escapeHtml(bridgeError(r)) + "</div>" + jsonDetails("原始返回", (r && r.data) || {})
+						: logDetails(title + "（" + String(text).length + " 字符）", text, true);
+			})
+			.catch(function (e) {
+				$("reportOut").innerHTML = '<div class="notice err">生成失败：' + V.escapeHtml(e && e.message ? e.message : String(e)) + "</div>";
+			})
+			.then(function () {
+				if (busy) busy.hidden = true;
+				setRowBusy(btn, false);
+			});
+	}
+
+	// ── 播种：把「旧名 → 稳定标签」映射写进 l1/scenes.json ──────────────────
+
+	/** 一行 = 一个场景（name 必填，aliases 逗号分隔，note 可选）。
+	 *  输入框写死 width:100%：表格是 table-layout:fixed，靠它把三列压在 336px 的侧栏里不撑破。 */
+	function seedRowHtml() {
+		return (
+			"<tr>" +
+			'<td><input type="text" data-seed="name" style="width: 100%" placeholder="场景名（稳定标签）" /></td>' +
+			'<td><input type="text" data-seed="aliases" style="width: 100%" placeholder="旧名1, 旧名2" /></td>' +
+			'<td><input type="text" data-seed="note" style="width: 100%" placeholder="备注（可选）" /></td>' +
+			'<td><button type="button" data-seed-remove>移除</button></td>' +
+			"</tr>"
+		);
+	}
+
+	function seedAddRow() {
+		var tb = $("seedRows");
+		if (tb) tb.insertAdjacentHTML("beforeend", seedRowHtml());
+	}
+
+	/** 保证至少一行：空表会让用户以为"播种"没在做。 */
+	function seedEnsureRow() {
+		var tb = $("seedRows");
+		if (tb && tb.children.length === 0) seedAddRow();
+	}
+
+	/** 收集播种表 → scenes。空行忽略；缺场景名**报错而不是静默丢**（静默丢会写出一份缺条目的池）。 */
+	function seedCollect() {
+		var tb = $("seedRows");
+		if (!tb) return { scenes: [], error: "播种表未就绪" };
+		var scenes = [];
+		var bad = false;
+		Array.from(tb.children).forEach(function (tr) {
+			var nameEl = tr.querySelector('[data-seed="name"]');
+			var aliasEl = tr.querySelector('[data-seed="aliases"]');
+			var noteEl = tr.querySelector('[data-seed="note"]');
+			var name = nameEl ? nameEl.value.trim() : "";
+			var aliases = (aliasEl ? aliasEl.value : "")
+				.split(/[,，、]/)
+				.map(function (s) {
+					return s.trim();
+				})
+				.filter(Boolean);
+			var note = noteEl ? noteEl.value.trim() : "";
+			if (!name && aliases.length === 0 && !note) return;
+			if (!name) {
+				bad = true;
+				return;
+			}
+			var s = { name: name, aliases: aliases };
+			if (note) s.note = note;
+			scenes.push(s);
+		});
+		if (bad) return { scenes: [], error: "每一行都要有场景名（别名与备注可空）" };
+		if (scenes.length === 0) return { scenes: [], error: "至少要填一行" };
+		return { scenes: scenes, error: "" };
+	}
+
+	function seedSetOut(statusHtml, isErr, detailsMarkup) {
+		var host = $("seedOut");
+		if (!host) return;
+		host.innerHTML = '<div class="' + (isErr ? "notice err" : "hint") + '">' + statusHtml + "</div>" + (detailsMarkup || "");
+	}
+
+	/** 播种：apply=false 打印计划（预演），apply=true 先备份再写。执行前必须有一次成功的预演。 */
+	function seedRun(apply) {
+		if (!V.bridgePort()) return;
+		var got = seedCollect();
+		if (got.error) {
+			seedSetOut(V.escapeHtml(got.error), true, "");
+			$("seedApplyBtn").disabled = true;
+			return;
+		}
+		$("seedApplyBtn").disabled = true;
+		seedSetOut(apply ? "正在写入（会先自动备份 <code>l1/scenes.json</code>）…" : "正在预演（不写盘）…", false, "");
+		V.bridge(EP.seed, { method: "POST", body: JSON.stringify({ scenes: got.scenes, apply: !!apply }) })
+			.then(function (r) {
+				var ok = r && r.ok && r.data && r.data.success !== false;
+				var text = r && r.data ? r.data.text || r.data.error || r.data.raw || JSON.stringify(r.data) : "无响应";
+				if (!ok) {
+					seedSetOut("失败：" + V.escapeHtml(bridgeError(r)), true, logDetails("原始返回", text, true));
+					return;
+				}
+				seedSetOut(
+					apply
+						? "已写入：<code>l1/scenes.json</code> 在备份后被更新。改回去可从备份目录取。"
+						: "预演完成（未写盘）。确认上面的计划无误后，点「执行（写盘）」。",
+					false,
+					logDetails(apply ? "执行输出" : "预演输出（CLI 计划）", text, true),
+				);
+				if (!apply) $("seedApplyBtn").disabled = false;
+			})
+			.catch(function (e) {
+				seedSetOut("失败：" + V.escapeHtml(e && e.message ? e.message : String(e)), true, "");
+			});
+	}
+
+	// ── 每个块行上的 归档 / 恢复（预演 → 确认执行）──────────────────────────
+
+	/** 管理操作格：live 给归档（原因必填），归档块给恢复（原因可选）。无桥时只给一行说明。 */
+	function opsCellHtml(filename, archived) {
+		if (!V.bridgePort()) return "<td data-opscell><span class=\"hint\">写回需 <code>?port=</code></span></td>";
+		var f = V.escapeHtml(filename);
+		var hint = archived ? "恢复原因（可选，写入账本）" : "归档原因（必填，写入账本）";
+		var btn = archived
+			? '<button type="button" data-op="restore" data-file="' + f + '">恢复（预演）</button>'
+			: '<button type="button" class="danger" data-op="archive" data-file="' + f + '">归档（预演）</button>';
+		return (
+			"<td data-opscell>" +
+			'<div class="ops-ctl"><input type="text" class="reason" data-reason placeholder="' + hint + '" />' + btn + "</div>" +
+			"<div data-opresult></div>" +
+			"</td>"
+		);
+	}
+
+	/** 第一步：预演（不带 apply，后端保证不写盘）。通过后才给出「确认执行」。 */
+	function blockPreview(op, filename, cell) {
+		var input = cell.querySelector("[data-reason]");
+		var reason = input ? input.value.trim() : "";
+		var out = cell.querySelector("[data-opresult]");
+		if (!out) return;
+		// 归档的 reason 是后端硬拦的（= 归档唯一的审计凭据），这里提前说清，别等一个 500。
+		if (op === "archive" && !reason) {
+			out.innerHTML = '<div class="notice warn">归档必须写原因 —— 它是这次归档唯一的审计凭据，会写进 <code>ledger.jsonl</code>。</div>';
+			return;
+		}
+		out.innerHTML = '<div class="hint">正在预演' + (op === "archive" ? "归档" : "恢复") + "…（预演不写盘、不跑自愈）</div>";
+		var body = { filename: filename };
+		if (reason) body.reason = reason;
+		V.bridge(EP[op], { method: "POST", body: JSON.stringify(body) }).then(function (r) {
+			var d = (r && r.data) || {};
+			if (!(r && r.ok && d.success !== false && d.dryRun)) {
+				out.innerHTML = '<div class="notice err">预演未通过：' + V.escapeHtml(bridgeError(r)) + "</div>" + jsonDetails("原始返回", d);
+				return;
+			}
+			var live = d.live;
+			var items =
+				op === "archive"
+					? [
+							'<li class="del">从 scene-blocks/ 移出 ' + V.escapeHtml(filename) + "（live " + live + " → " + (live - 1) + "）</li>",
+							'<li class="add">进入 archive/，并写一条 archive 账目（于是可 restore 还原）</li>',
+							'<li class="more">归档块不占 maxScenes（上限 ' + d.maxScenes + "）名额</li>",
+						]
+					: [
+							'<li class="add">回到 scene-blocks/（live ' + live + " → " + (live + 1) + "）</li>",
+							'<li class="add">写一条 restore 账目</li>',
+							'<li class="more">恢复要占一个 maxScenes 名额：' + live + " + 1，上限 " + d.maxScenes + "</li>",
+						];
+			out.innerHTML =
+				'<div class="hint">预演通过（前置条件都满足）。确认后才会真正写盘。</div>' +
+				'<ul class="diff-list">' + items.join("") + "</ul>" +
+				'<button type="button" class="' + (op === "archive" ? "danger" : "primary") + '" data-op="' + op + '-apply" data-file="' +
+				V.escapeHtml(filename) + '">确认执行' + (op === "archive" ? "归档" : "恢复") + "</button>" +
+				jsonDetails("预演原始返回", d);
+		});
+	}
+
+	/** 第二步：确认执行（apply:true）。成功后重新加载整页，让块表 / 账本反映新状态。 */
+	function blockApply(op, filename, cell) {
+		var input = cell.querySelector("[data-reason]");
+		var reason = input ? input.value.trim() : "";
+		var out = cell.querySelector("[data-opresult]");
+		if (!out) return;
+		if (op === "archive" && !reason) {
+			out.innerHTML = '<div class="notice warn">归档必须写原因（审计凭据），请先填上面的输入框再预演。</div>';
+			return;
+		}
+		var body = { filename: filename, apply: true };
+		if (reason) body.reason = reason;
+		Array.from(cell.querySelectorAll("button")).forEach(function (b) {
+			b.disabled = true;
+		});
+		out.innerHTML += '<div class="hint">正在执行…（实写：取 L2 运行锁 → 自愈 → 搬块 → 重建索引；桥在此期间不响应别的请求）</div>';
+		V.bridge(EP[op], { method: "POST", body: JSON.stringify(body) }).then(function (r) {
+			var d = (r && r.data) || {};
+			var ok = r && r.ok && d.success !== false;
+			if (!ok) {
+				out.innerHTML = '<div class="notice err">执行失败：' + V.escapeHtml(bridgeError(r)) + "</div>" + jsonDetails("原始返回", d);
+				Array.from(cell.querySelectorAll("button")).forEach(function (b) {
+					b.disabled = false;
+				});
+				return;
+			}
+			opsStatus(
+				"已" + (op === "archive" ? "归档" : "恢复") + "「" + V.escapeHtml(filename) + "」" +
+					(d.members === undefined ? "" : "（" + d.members + " 个成员随之保留）") +
+					"。页面正在重新加载，以反映新的块分布与账本。" + jsonDetails("执行原始返回", d),
+			);
+			return autoLoad();
+		});
+	}
+
+	/** 渲染管理区：契约说明 + 播种表骨架 + 只读模式降级（无 ?port= 时整区禁用）。 */
+	function renderOps() {
+		var hasBridge = !!V.bridgePort();
+		var banner = $("opsBanner");
+		if (banner) {
+			banner.innerHTML = hasBridge
+				? ""
+				: '<div class="hint"><b>只读模式</b>：归档/恢复、触发、停止子代理与播种都需要写盘桥，下面的按钮已禁用。' +
+					"请运行 <code>node scripts/l1-admin/viewer-bridge.mjs</code>，再用它打印的<b>带 <code>?port=</code> 的地址</b>打开本页。</div>";
+		}
+		if (!hasBridge) {
+			Array.from(document.querySelectorAll("#l2ops button")).forEach(function (b) {
+				b.disabled = true;
+			});
+		}
+
+		var maxScenes = state.config && typeof state.config.maxScenes === "number" ? state.config.maxScenes : null;
+		var lists = collectFilenames();
+		var live = state.index.length || lists.live.length;
+		var free = maxScenes === null ? null : Math.max(0, maxScenes - live);
+		var contract = $("opsContract");
+		if (contract) {
+			contract.innerHTML =
+				"<p><b>块数预算</b>：live 块上限 <code>maxScenes</code> = " +
+				(maxScenes === null ? "未知（无桥时读不到 <code>/api/limits</code>）" : maxScenes) +
+				"，当前 live 块 " + live + " 个" + (free === null ? "" : "，空位 " + free + " 个") + "。</p>" +
+				"<p><b>恢复要先腾位</b>：restore 会往 live 加回一个块，所以" +
+				(free === null ? "满库时会被后端拒绝" : "空位为 0（" + live + " / " + maxScenes + "）时就被后端拒绝") +
+				" —— 得先归档或合并别的块。归档块放在与 <code>scene-blocks/</code> 平级的 <code>archive/</code>，<b>不占 maxScenes 名额</b>。</p>" +
+				"<p><b>归档 = 有记账的删除</b>（可恢复）：块只是被搬走，<code>archive/ledger.jsonl</code> 逐条记下归档/恢复的" +
+				"<b>文件名、时间、by、reason</b> —— 那份 append-only、不可重建的账本，就是它可恢复、可追责的凭据；" +
+				"<code>delete</code> 才是真的消失且不留痕。</p>";
+		}
+		seedEnsureRow();
+	}
+
 	function renderAll() {
 		var recon = reconcile();
 		renderStats(recon);
 		renderList(recon);
+		renderOps();
 	}
 
 	function bind() {
@@ -447,9 +877,46 @@
 			autoLoad();
 		});
 		$("blockTable").addEventListener("click", function (e) {
+			// 操作格（原因输入 / 归档·恢复按钮 / 预演结果）不打开详情弹层：它自己有点击语义。
+			if (e.target.closest("td[data-opscell]")) return;
 			var tr = e.target.closest("tr[data-file]");
 			if (!tr) return;
 			openBlock(tr.getAttribute("data-file"), tr.getAttribute("data-archived") === "1");
+		});
+		// 操作格的事件委托：第一拍预演、第二拍确认执行（按钮靠 data-op 区分，重绘后仍有效）。
+		$("blockTable").addEventListener("click", function (e) {
+			var btn = e.target.closest("button[data-op]");
+			if (!btn || btn.disabled) return;
+			var cell = btn.closest("td[data-opscell]");
+			var filename = btn.getAttribute("data-file");
+			if (!cell || !filename) return;
+			var op = btn.getAttribute("data-op");
+			if (op === "archive" || op === "restore") blockPreview(op, filename, cell);
+			else if (op === "archive-apply") blockApply("archive", filename, cell);
+			else if (op === "restore-apply") blockApply("restore", filename, cell);
+		});
+		// ── 管理区（L2 管理）────────────────────────────────────────────────
+		$("triggerBtn").addEventListener("click", triggerOrganize);
+		$("stopBtn").addEventListener("click", stopSubagent);
+		$("reportBtn").addEventListener("click", function () {
+			runReport("report");
+		});
+		$("mergeReportBtn").addEventListener("click", function () {
+			runReport("merge");
+		});
+		$("seedAddBtn").addEventListener("click", seedAddRow);
+		$("seedRows").addEventListener("click", function (e) {
+			var rm = e.target.closest("[data-seed-remove]");
+			if (!rm) return;
+			var tr = rm.closest("tr");
+			if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+			seedEnsureRow();
+		});
+		$("seedPreviewBtn").addEventListener("click", function () {
+			seedRun(false);
+		});
+		$("seedApplyBtn").addEventListener("click", function () {
+			seedRun(true);
 		});
 		$("q").addEventListener(
 			"input",
@@ -481,6 +948,10 @@
 			.then(loadBlocks)
 			.then(function () {
 				renderAll();
+				// 两个便宜且必须"当下为真"的只读探查：待消费信号、在跑的子代理。
+				// 场景池报告**不在**这里 —— 它可能调 embedding，必须按需取（见 runReport）。
+				refreshPending();
+				refreshRuns();
 				V.note(
 					"loadNote",
 					"已加载 " + state.index.length + " 个 live 索引条目、" + Object.keys(state.members).length +

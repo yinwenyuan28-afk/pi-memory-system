@@ -52,9 +52,74 @@
 				<h2>逐条清单</h2>
 				<div id="entries" class="hint">加载中…</div>
 
-				<h2>画像备份（backups/user-backups）</h2>
-				<div id="backups" class="hint">加载中…</div>
-			</section>
+			<h2>画像备份（backups/user-backups）</h2>
+			<div id="backups" class="hint">加载中…</div>
+
+			<h2>管理操作区</h2>
+			<div id="opsReadonly" class="hint" style="display: none"></div>
+			<div class="ops" id="ops">
+				<div class="notice" id="opsEntryWarn" style="display: none"></div>
+				<h3 class="sub">条目区 · 条目改写 / 删除，以及加一条</h3>
+				<div id="opsEntries"></div>
+
+				<h3 class="sub" id="opsEditTitle">加一条（写 USER-temp.md）</h3>
+				<div class="ops-row">
+					<div class="ops-label">正文</div>
+					<div class="ops-ctl">
+						<input type="text" id="opsContent" placeholder="一条单行规则，不含 §，≤500 字符" />
+					</div>
+					<div class="ops-note" id="opsContentNote">必须单行、不含 §、≤ 单条上限。</div>
+				</div>
+				<div class="ops-row">
+					<div class="ops-label">定位</div>
+					<div class="ops-ctl">
+						<span class="confirm-token" id="opsTargetBox">—（加一条不需要定位）</span>
+						<button type="button" id="opsResetEdit">改回「加一条」</button>
+					</div>
+					<div class="ops-note" id="opsTargetNote">改写 / 删除时这里是定位片段（取自已选条目原文）。</div>
+				</div>
+				<div class="ops-row">
+					<div class="ops-label">确认</div>
+					<div class="ops-ctl">
+						<span>输入 <span class="confirm-token" id="opsTokenHint">—</span> 启用「执行」</span>
+						<input type="text" class="confirm-input" id="opsConfirm" autocomplete="off" />
+						<button type="button" class="primary" id="opsPreview">预演</button>
+						<button type="button" class="danger" id="opsApply" disabled>执行</button>
+					</div>
+					<div class="ops-note" id="opsEditHint">先「预演」看用量与后果，再按提示输入确认词启用「执行」。</div>
+				</div>
+				<div id="opsEditOut"></div>
+
+				<h3 class="sub">备份区 · 预览 / 还原（还原目标是提议稿，不是 live）</h3>
+				<div class="hint" id="opsBackupNote"></div>
+				<div id="opsBackups"></div>
+				<div id="opsRestoreOut"></div>
+
+				<div class="danger-zone" id="opsMergeZone">
+					<h3>并入区 · 把提议稿并入 live USER.md</h3>
+					<div class="hint" id="opsMergeNote"></div>
+					<div class="toolbar">
+						<button type="button" id="opsMergePreview">预演并入</button>
+						<span>输入 <span class="confirm-token">MERGE</span> 启用「执行并入」</span>
+						<input type="text" class="confirm-input" id="opsMergeConfirm" autocomplete="off" placeholder="MERGE" />
+						<button type="button" class="danger" id="opsMergeApply" disabled>执行并入</button>
+					</div>
+					<div id="opsMergeGates"></div>
+					<div id="opsMergeOut"></div>
+				</div>
+
+				<h3 class="sub">触发区 · 请求 L3 重算（只入队）</h3>
+				<div class="ops-row">
+					<div class="ops-label">请求入队</div>
+					<div class="ops-ctl">
+						<button type="button" id="opsTrigger">触发 L3</button>
+						<span class="chip" id="opsTriggerState">—</span>
+					</div>
+					<div class="ops-note">只把请求写进 pending-trigger 信号文件；由 pi 主进程在下一轮结束（agent_settled）时消费。pi 没开会一直等着。</div>
+				</div>
+				<div id="opsTriggerOut"></div>
+			</div>
+		</section>
 		</main>
 
 		<script src="assets/viewer-core.js"></script>

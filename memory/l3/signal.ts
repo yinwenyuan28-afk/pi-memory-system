@@ -39,19 +39,32 @@ export function writePendingTrigger(profilePath: string, signal: { personaSignal
 
 /** 读取并删除触发信号（主进程调用）。文件不存在或损坏 → undefined。 */
 export function consumePendingTrigger(profilePath: string): L3PendingTrigger | undefined {
+	const parsed = readSignal(profilePath);
+	if (parsed === undefined && !existsSync(signalPath(profilePath))) return undefined;
+	removeSignal(signalPath(profilePath));
+	return parsed;
+}
+
+/**
+ * 只读探查（**不删**）：给查看器显示"已请求、等主进程消费"。
+ * 与 consume 分开是因为展示不该有副作用 —— 页面刷新一次就把信号吃掉，是极难排查的 bug。
+ */
+export function peekPendingTrigger(profilePath: string): L3PendingTrigger | undefined {
+	return readSignal(profilePath);
+}
+
+/** 解析信号文件；不存在/损坏 → undefined。 */
+function readSignal(profilePath: string): L3PendingTrigger | undefined {
 	const filePath = signalPath(profilePath);
 	if (!existsSync(filePath)) return undefined;
 	try {
 		const data = JSON.parse(readFileSync(filePath, "utf-8")) as Partial<L3PendingTrigger>;
-		const out: L3PendingTrigger = {
+		return {
 			personaSignal: data?.personaSignal === true,
 			personaReason: typeof data?.personaReason === "string" ? data.personaReason : undefined,
 			at: typeof data?.at === "string" ? data.at : "",
 		};
-		removeSignal(filePath);
-		return out;
 	} catch {
-		removeSignal(filePath);
 		return undefined;
 	}
 }

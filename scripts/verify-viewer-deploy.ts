@@ -465,6 +465,95 @@ try {
 	ok("⑰ 缺 ?port= 的提示与 file:// 提示分开（两种降级原因不同）", /else if \(!bridgePort\(\)\)/.test(core));
 }
 
+// ── ⑱ 写盘端点契约（管理操作补齐后新增 12 个写端点，每条闸都要有人盯） ──────────
+//
+// 这一节守的不是"端点存在"，而是**每个端点的安全默认**：
+//   · 写端点默认 dry-run —— 必须显式 `apply:true` 才落盘。少一个 `body.apply === true` 判断，
+//     页面上一次"预演"就会变成实写。
+//   · 破坏性动作（整库还原 / 向量重建 / 还原备份 / 并入 live 画像）在桥这一层**也要** confirm
+//     副验 —— 界面那层是便利，不是安全边界。
+//   · 桥把 url 取成 `req.url.split("?")[0]`，所以 GET 端点带查询串必然静默 404（文件头约定 A）。
+//   · rollback / scene-pool 这类"说人话"的 CLI 不能走 JSON 解析（否则一次成功被报成
+//     "未返回可解析的 JSON"）。
+{
+	const bridge = readFileSync(join(HERE, "l1-admin", "viewer-bridge.mjs"), "utf-8");
+	const assetsDir = join(REPO_VIEWERS, "assets");
+	const pageSrc = readdirSync(assetsDir)
+		.filter((x) => x.endsWith(".js"))
+		.map((f) => readFileSync(join(assetsDir, f), "utf-8"))
+		.join("\n");
+
+	// ① 写端点清单必须逐个在场（改名 = 页面静默失效，这一节就是防这个）
+	const writeEndpoints = [
+		"/api/tombstone",
+		"/api/task-state",
+		"/api/l1/fix",
+		"/api/l1/rollback",
+		"/api/l1/embedding",
+		"/api/l1/mode",
+		"/api/trigger",
+		"/api/subagent/stop",
+		"/api/l2/archive",
+		"/api/l2/restore",
+		"/api/l2/scene-pool/seed",
+		"/api/l3/edit",
+		"/api/l3/restore",
+		"/api/l3/merge",
+	];
+	for (const ep of writeEndpoints) ok(`⑱ 写端点 ${ep} 在场`, bridge.includes(`"${ep}"`));
+
+	// ② **预演/实写**型端点必须有显式放行判断（默认 dry-run）。
+	//    另有四个端点是"点了就是执行"（删除 / 任务状态 / 请求入队 / 停子代理）—— 它们没有预演，
+	//    这是设计（与 task-state 同类），清单在这里写死以免有人误以为漏了。
+	const previewApplyEndpoints = [
+		"/api/l1/fix",
+		"/api/l1/rollback",
+		"/api/l1/embedding",
+		"/api/l2/archive",
+		"/api/l2/restore",
+		"/api/l2/scene-pool/seed",
+		"/api/l3/edit",
+		"/api/l3/restore",
+		"/api/l3/merge",
+	];
+	/** 取"端点字符串出现处起 N 字符"当处理块 —— 比按 `req.method` 切稳，因为它锚在端点上。 */
+	const blockOf = (ep: string, len = 1000): string => {
+		const i = bridge.indexOf(`"${ep}"`);
+		return i < 0 ? "" : bridge.slice(i, i + len);
+	};
+	// l2 的两个端点共用 `l2Move`（同样的 body 形状），放行判断在那个函数里，所以单独锚它
+	ok("⑱ /api/l2/archive 路由进 l2Move", /"\/api\/l2\/archive"\)\s*\{\s*return l2Move\(req, res, "archive"\)/.test(bridge));
+	ok("⑱ /api/l2/restore 路由进 l2Move", /"\/api\/l2\/restore"\)\s*\{\s*return l2Move\(req, res, "restore"\)/.test(bridge));
+	ok("⑱ l2Move 内需要显式 apply:true 才落盘", /function l2Move[\s\S]{0,900}?body\.apply === true/.test(bridge));
+	for (const ep of previewApplyEndpoints.filter((e) => !e.startsWith("/api/l2/"))) {
+		ok(`⑱ ${ep} 需要显式 apply:true 才落盘`, /body\.apply === true/.test(blockOf(ep)), blockOf(ep).slice(0, 80));
+	}
+	// l1/mode 是唯一"无 apply"的配置写入（可逆、幂等，脚本头注释里写了理由），单独钉住它的闭集校验
+	ok("⑱ /api/l1/mode 走闭集校验（code|chat）", /L1_MODES\.has\(body\.mode\)/.test(blockOf("/api/l1/mode", 400)));
+
+	// ③ 破坏性动作的 confirm 副验（四处，缺一不可）
+	ok("⑱ 整库还原要 confirm = 备份目录名", /body\.confirm !== backup/.test(bridge));
+	ok("⑱ 向量重建要 confirm = REBUILD", /body\.confirm !== "REBUILD"/.test(bridge));
+	ok("⑱ 备份还原要 confirm = 备份文件名", /body\.confirm !== file/.test(bridge));
+	ok("⑱ 并入 live 画像要 confirm = MERGE", /body\.confirm !== "MERGE"/.test(bridge));
+
+	// ④ 查询串约定：url 必须仍是 split("?")[0]，且页面不得给 /api/* 挂查询串
+	ok('⑱ 桥仍以 req.url.split("?")[0] 取路径（约定 A 的前提）', /\(req\.url \|\| ""\)\.split\("\?"\)\[0\]/.test(bridge));
+	const queryOnApi = pageSrc.match(/["'`]\/api\/[\w/-]+\?/g) ?? [];
+	ok("⑱ 页面没有给 /api/* 挂查询串（否则静默 404）", queryOnApi.length === 0, queryOnApi.join(", "));
+
+	// ⑤ 文本型 CLI 不能走 JSON 解析（rollback / scene-pool 都是 console.log 式输出）
+	ok("⑱ 定义了 passthroughText（文本型 CLI 的出口）", /function passthroughText\(/.test(bridge));
+	ok("⑱ 整库还原走 passthroughText", /passthroughText\(res, cliArgs, LONG_TIMEOUT_MS\)/.test(blockOf("/api/l1/rollback")));
+	ok("⑱ 场景池报告与播种走 passthroughText", (bridge.match(/passthroughText\(/g) ?? []).length >= 4);
+
+	// ⑥ 失败路径必须带回 stdout（CLI 的拒绝理由都在结构化输出里）
+	ok("⑱ runCli 失败时也返回 stdout（否则拿不到 CLI 的人话拒绝）", /ok: false,\s*stdout,/.test(bridge));
+
+	// ⑦ 桥的写端点一律经 l1-admin CLI 转发，桥里不出现业务逻辑（不该有 JSONL 解析/sql 之类）
+	ok("⑱ 桥不直接读写 L1 分片（写盘一律走 CLI）", !/l1\/records[\s\S]{0,200}?(writeFileSync|appendFileSync)/.test(bridge));
+}
+
 // 汇总
 
 console.log("\n=== 查看器部署与静态完整性回归 ===");

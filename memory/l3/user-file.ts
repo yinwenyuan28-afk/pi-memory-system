@@ -23,10 +23,10 @@
  * 目标换成 temp 后备份的是 temp（若尚不存在则备 live）—— 即"这一轮要覆盖掉的那份提议稿"。
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { MEMORY_DB_DIR, USER_BACKUPS_DIR } from "../paths.ts";
-import { parseUserFile } from "./entries.ts";
+import { entryBudget, parseUserFile, serializeUserFile } from "./entries.ts";
 
 /**
  * live 画像文件名（profile 根目录，**不在** memoryDB 下）。注入侧与去重读的都是它。
@@ -187,5 +187,288 @@ export function ensureRunBackup(profilePath: string, raw: string | null): void {
 		writeFileSync(join(dir, `user-backup-${Date.now()}.md`), raw, "utf-8");
 	} catch {
 		// non-fatal
+	}
+}
+
+// ── 人工操作：并入 live / 还原备份（2026-10-08，查看器管理操作补齐）────────────
+//
+// 下面三个函数是**唯一会写 live `USER.md` 的代码路径**（`writeUserFile`），它们的调用方只有
+// "用户主动发起的动作"（查看器按钮 / CLI）。L3 的自动化（子代理、commit、trigger）一律不走这里 ——
+// 这条边界就是 2026-09-28 那次真实损失换来的（L3 的 update/delete 直接作用于注入画像，
+// 用户手写的条目被删掉不可逆）。因此这三个函数都遵循同一条纪律：
+//
+//   ① 写之前一定先把**将被覆盖的那份**留档（备份文件名带后缀说明来由，见下）；
+//   ② 干跑（`dryRun`）不做任何写盘，也不写备份；
+//   ③ 会**清空**内容的动作（提议稿为空时并入、备份内容为空时还原）默认拒绝，必须显式放行 ——
+//      这两个动作的破坏力不对称：多写一条容易补，整篇清空难察。
+
+/** 备份文件名的前缀（与 `ensureRunBackup` 同族，于是查看器的备份清单能一并列出）。 */
+const BACKUP_PREFIX = "user-backup-";
+
+/** 备份文件名必须长这样才允许还原（basename 校验 + 后缀白名单 ⇒ 无路径遍历面）。 */
+const BACKUP_NAME_RE = /^user-backup-[0-9A-Za-z_.-]+\.md$/;
+
+/** 用户画像备份目录绝对路径（不存在不创建 —— 读取方不该有副作用）。 */
+export function userBackupsDirPath(profilePath: string): string {
+	return join(profilePath, MEMORY_DB_DIR, USER_BACKUPS_DIR);
+}
+
+/**
+ * 列出现有备份文件名（按名升序；文件名以毫秒时间戳开头，字典序即时间序）。
+ * 查看器只列不读：预览内容走静态托管的 `/backups/user-backups/<name>.md`。
+ */
+export function listUserBackups(profilePath: string): string[] {
+	const dir = userBackupsDirPath(profilePath);
+	if (!existsSync(dir)) return [];
+	try {
+		return readdirSync(dir)
+			.filter((n) => BACKUP_NAME_RE.test(n))
+			.sort((a, b) => a.localeCompare(b));
+	} catch {
+		return [];
+	}
+}
+
+/** 写一份画像备份（内部用；`suffix` 说明这次快照的来由，如 `-live-premerge`）。返回路径，失败返回 undefined。 */
+function writeBackup(profilePath: string, suffix: string, content: string | null, nowMs = Date.now()): string | undefined {
+	if (content == null) return undefined;
+	try {
+		const dir = userBackupsDirPath(profilePath);
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		const file = `${BACKUP_PREFIX}${nowMs}${suffix}.md`;
+		writeFileSync(join(dir, file), content, "utf-8");
+		return file;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * 原子写 live `USER.md`。**只有人工动作走它**（见上方纪律说明）。
+ *
+ * 注意：注入侧读的是 `core/store` 里的**冻结快照**（`loadFromDisk` 时构建，
+ * `refreshSnapshot` 才重建）。所以从进程外（查看器桥 / CLI）写完，**运行中的会话仍注入旧内容**，
+ * 要等下一次会话或 `/reload` —— 界面必须把这句话说出来。
+ */
+export function writeUserFile(profilePath: string, content: string): void {
+	atomicWrite(userFilePath(profilePath), content);
+}
+
+/** 并入/还原的共通报告。 */
+export interface PersonaFileChange {
+	/** 写入的目标文件名（恒为 USER.md 或 USER-temp.md，供界面展示"改了哪份"）。 */
+	file: string;
+	/** 改动前后的条目数与字符用量。 */
+	beforeCount: number;
+	afterCount: number;
+	beforeChars: number;
+	afterChars: number;
+	/** 变更明细（精确文本比；最多各 20 条，够界面展示）。 */
+	added: string[];
+	removed: string[];
+	/** 截断前的真实条数 —— 界面必须能说"共删 N 条"，只显示前 20 会把人骗过去。 */
+	addedTotal: number;
+	removedTotal: number;
+	/** 改动前的留档备份文件名（undefined = 当时那个文件不存在，没什么可留）。 */
+	backupFile?: string;
+	/** 是否干跑（未落盘）。 */
+	dryRun: boolean;
+	/** 降级/拒绝判据用到的两个时间戳（ISO；文件不存在则 null）。 */
+	liveMtime?: string | null;
+	tempMtime?: string | null;
+}
+
+export interface MergeResult extends Partial<PersonaFileChange> {
+	ok: boolean;
+	error?: string;
+}
+
+const DIFF_LIMIT = 20;
+
+/** 文件 mtime（ISO）；不存在/读不到 → null。 */
+function mtimeOf(filePath: string): string | null {
+	try {
+		return existsSync(filePath) ? statSync(filePath).mtime.toISOString() : null;
+	} catch {
+		return null;
+	}
+}
+
+/** 真实文件里有多少条；用于"共删 N 条"这类需要完整计数的场景。 */
+function entryCountOf(raw: string | null): number {
+	return parseUserFile(raw).entries.length;
+}
+
+/**
+ * 把提议稿（`USER-temp.md`）并入 live `USER.md` —— 用户 2026-09-28 裁定的"手工并入"，
+ * 这里只是把"手工"从手抄变成一次点击（内容判断仍归用户）。
+ *
+ * 语义：
+ *   · 条目取 **temp 的**（temp 写入时以 live 播种，所以并入不会丢 live 里的旧条目）；
+ *   · 行尾/结尾换行沿用 **live 的**格式（写回的是 live 文件，格式该由它决定；live 不存在时用 temp 的）；
+ *   · 写前把 live 现况留档到 `user-backup-<ts>-live-premerge.md`（本次并入因此可回退）。
+ *
+ * ⚠️ **三条安全闸**（2026-10-08 实测加的，别删）：
+ *
+ *   ① **陈旧拒绝**（`allowStale`）：temp 比 live 旧 ⇒ live 在那之后被改过，拿旧稿覆盖新稿会
+ *      静默丢掉那些改动。实测触发过：真实 profile 里 `USER-temp.md` 是 09-28 的 3 条残留，
+ *      而 `USER.md` 是 09-30 的 24 条 —— 一条 `merge` 就会删掉 21 条用户手写的画像。
+ *      这条闸把"提议稿生成后 live 又被改过"变成显式选择，而不是一次点击。
+ *   ② **过半删除拒绝**（`allowMassRemoval`）：要删掉 live 一半以上条目时，即使时间戳看着正常
+ *      也要求再放行一次（时间戳能被"两边都在改"这种情况骗过，内容剧烈收缩骗不过）。
+ *   ③ **清空拒绝**（`allowEmpty`）：live 有条目而 temp 为空的极端情形。
+ *
+ * ⚠️ 并入后**运行中的 pi 会话仍注入旧画像**（快照是冻结的），要等下一次会话或 `/reload`。
+ */
+export function mergeTempIntoLive(
+	profilePath: string,
+	opts: { dryRun?: boolean; allowEmpty?: boolean; allowStale?: boolean; allowMassRemoval?: boolean; nowMs?: number } = {},
+): MergeResult {
+	try {
+		const tempRaw = readUserTempFile(profilePath);
+		if (tempRaw == null) {
+			return { ok: false, error: `没有提议稿：${USER_TEMP_FILE} 不存在。先让 L3 生成提议，或在查看器里加条目。` };
+		}
+		const liveRaw = readUserFile(profilePath);
+		const temp = parseUserFile(tempRaw);
+		const live = parseUserFile(liveRaw);
+
+		const liveMtime = mtimeOf(userFilePath(profilePath));
+		const tempMtime = mtimeOf(userTempFilePath(profilePath));
+
+		// 先算差异，闸门与报告共用（报告里 removedTotal 必须是完整计数，不能是截断后的长度）。
+		const liveSet = new Set(live.entries);
+		const tempSet = new Set(temp.entries);
+		const removedAll = live.entries.filter((e) => !tempSet.has(e));
+		const addedAll = temp.entries.filter((e) => !liveSet.has(e));
+
+		const base: MergeResult = {
+			ok: false,
+			file: USER_FILE,
+			beforeCount: live.entries.length,
+			afterCount: temp.entries.length,
+			beforeChars: entryBudget(live.entries),
+			afterChars: entryBudget(temp.entries),
+			added: addedAll.slice(0, DIFF_LIMIT),
+			removed: removedAll.slice(0, DIFF_LIMIT),
+			addedTotal: addedAll.length,
+			removedTotal: removedAll.length,
+			liveMtime,
+			tempMtime,
+			dryRun: opts.dryRun === true,
+		};
+
+		// ① 陈旧：live 比 temp 新 ⇒ live 在提议之后被改过
+		if (!opts.allowStale && liveMtime && tempMtime && Date.parse(liveMtime) > Date.parse(tempMtime)) {
+			return {
+				...base,
+				error:
+					`提议稿比 live 画像旧（temp ${tempMtime} < live ${liveMtime}）—— 说明 live 在那之后被改过，` +
+					`这次并入会删掉 ${removedAll.length} 条、其中可能包含之后手写的条目。` +
+					`确认要用这份旧提议稿覆盖，请显式放行（viewer 端是那一栏的"仍要并入"）。`,
+			};
+		}
+		// ③ 清空：live 有条目而提议稿为空
+		if (temp.entries.length === 0 && live.entries.length > 0 && !opts.allowEmpty) {
+			return { ...base, error: `提议稿现在是空的（0 条），而 live USER.md 有 ${live.entries.length} 条 —— 并入等于把画像清空。确认要清空请显式放行。` };
+		}
+		// ② 过半删除：live 至少 5 条时，要删掉一半以上就再问一次
+		if (!opts.allowMassRemoval && live.entries.length >= 5 && removedAll.length * 2 > live.entries.length) {
+			return {
+				...base,
+				error:
+					`这次并入会删掉 ${removedAll.length}/${live.entries.length} 条（过半）。` +
+					`若提议稿确实是"大量作废"的正常结果，请显式放行；否则先确认提议稿是不是过期残留。`,
+			};
+		}
+
+		// 格式沿用 live 的（并入的目标是 live 文件）；live 不存在时退回 temp 的格式。
+		const eol = liveRaw != null ? live.eol : temp.eol;
+		const trailingNewline = liveRaw != null ? live.trailingNewline : temp.trailingNewline;
+		const nextRaw = serializeUserFile(temp.entries, eol, trailingNewline);
+
+		const report: MergeResult = { ...base, ok: true };
+		if (opts.dryRun) return report;
+
+		report.backupFile = writeBackup(profilePath, "-live-premerge", liveRaw, opts.nowMs);
+		writeUserFile(profilePath, nextRaw);
+		return report;
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : String(err) };
+	}
+}
+
+export interface RestoreResult extends Partial<PersonaFileChange> {
+	ok: boolean;
+	error?: string;
+	/** 被还原的备份文件名。 */
+	restoredFrom?: string;
+}
+
+/**
+ * 从备份还原到提议稿 `USER-temp.md`。
+ *
+ * **为什么目标是 temp 而不是 live**：备份文件名只记时间戳，不记"当时捕获的是 temp 还是 live"
+ * （`ensureRunBackup` 捕的是 `readL3TargetFile` = temp ?? live）。既然分不清，就统一还原到 L3
+ * 唯一的写目标 temp —— 要上 live 再走一次"并入"。这条语义写在界面与 README 上，别让使用者猜。
+ *
+ * 写前把 temp 现况留档（`-pre-restore` 后缀），于是还原本身也可回退。
+ * 备份内容为空（0 条）而当前 temp 有内容 ⇒ 默认拒绝。
+ */
+export function restoreFromBackup(
+	profilePath: string,
+	file: string,
+	opts: { dryRun?: boolean; allowEmpty?: boolean; nowMs?: number } = {},
+): RestoreResult {
+	try {
+		// 只接受 basename：调用方给的是文件名，任何目录成分都是越界企图。
+		const name = basename(String(file ?? ""));
+		if (!BACKUP_NAME_RE.test(name)) {
+			return { ok: false, error: `备份文件名不合法：${JSON.stringify(String(file ?? ""))}（应形如 user-backup-<时间戳>.md）` };
+		}
+		const dir = userBackupsDirPath(profilePath);
+		const full = join(dir, name);
+		if (!existsSync(full)) {
+			const avail = listUserBackups(profilePath);
+			return { ok: false, error: `备份不存在：${name}${avail.length ? `（现有 ${avail.length} 份，最近一份 ${avail[avail.length - 1]}）` : "（备份目录为空）"}` };
+		}
+
+		const backupRaw = readFileSync(full, "utf-8");
+		const backup = parseUserFile(backupRaw);
+		const currentRaw = readL3TargetFile(profilePath);
+		const current = parseUserFile(currentRaw);
+		if (backup.entries.length === 0 && current.entries.length > 0 && !opts.allowEmpty) {
+			return { ok: false, error: `这份备份是空的（0 条），而当前提议稿有 ${current.entries.length} 条 —— 还原等于清空。确认请显式放行。` };
+		}
+
+		const currentSet = new Set(current.entries);
+		const backupSet = new Set(backup.entries);
+		const addedAll = backup.entries.filter((e) => !currentSet.has(e));
+		const removedAll = current.entries.filter((e) => !backupSet.has(e));
+		const report: RestoreResult = {
+			ok: true,
+			restoredFrom: name,
+			file: USER_TEMP_FILE,
+			beforeCount: current.entries.length,
+			afterCount: backup.entries.length,
+			beforeChars: entryBudget(current.entries),
+			afterChars: entryBudget(backup.entries),
+			added: addedAll.slice(0, DIFF_LIMIT),
+			removed: removedAll.slice(0, DIFF_LIMIT),
+			addedTotal: addedAll.length,
+			removedTotal: removedAll.length,
+			dryRun: opts.dryRun === true,
+		};
+		if (opts.dryRun) return report;
+
+		report.backupFile = writeBackup(profilePath, "-pre-restore", currentRaw, opts.nowMs);
+		// 逐字还原备份原文（保留它自己的行尾/结尾换行），不做任何再序列化 —— "还原"要真的是还原。
+		writeUserTempFile(profilePath, backupRaw);
+		// 还原改了 temp ⇒ 本轮工作副本不该再按"live+temp 并集"播种（否则被还原掉的条目会复活）。
+		markRunSeeded();
+		report.dryRun = false;
+		return report;
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : String(err) };
 	}
 }

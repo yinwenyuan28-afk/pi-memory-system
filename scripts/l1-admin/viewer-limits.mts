@@ -8,11 +8,13 @@
 //   所以：**取值一律 import 源码常量/加载器**，响应按构造只含这几个数字，密钥没有机会出现。
 //
 // 输出：
-//   { l2: { maxScenes, archive: {enabled, minAgeCalendarDays, maxPerBatch} },
+//   { l1: { mode },
+//     l2: { maxScenes, archive: {enabled, minAgeCalendarDays, maxPerBatch} },
 //     l3: { interval, userCharLimit, memoryCharLimit, entryCharLimit } }
 //
 // 用法：node --experimental-strip-types scripts/l1-admin/viewer-limits.mts [--profile <dir>]
 import { argv, stdout } from "node:process";
+import { loadL1Config } from "../../memory/l1/config.ts";
 import { loadL2ArchiveConfig, loadL2Config } from "../../memory/l2/config.ts";
 import { L3_ENTRY_CHAR_LIMIT, L3_INTERVAL, USER_CHAR_LIMIT } from "../../memory/l3/config.ts";
 import { DEFAULT_MEMORY_CHAR_LIMIT } from "../../memory/core/types.ts";
@@ -29,6 +31,7 @@ const PROFILE = flagValue("--profile") ?? "C:/Users/leaf/.pi/agent/profiles/defa
 stdout.write(
 	`${JSON.stringify(
 		{
+			l1: { mode: loadL1Config(PROFILE).mode },
 			l2: { maxScenes: loadL2Config(PROFILE).maxScenes, archive: loadL2ArchiveConfig(PROFILE) },
 			l3: {
 				interval: L3_INTERVAL,

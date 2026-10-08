@@ -31,6 +31,59 @@
 				<h2>块数上限（l2.maxScenes）</h2>
 				<div id="capNote"></div>
 
+				<h2>L2 管理</h2>
+				<div id="opsBanner"></div>
+				<div class="ops" id="l2ops">
+					<h3 class="sub">触发与子代理</h3>
+					<div class="ops-row">
+						<span class="ops-label">触发组织</span>
+						<span class="ops-ctl">
+							<button type="button" class="primary" id="triggerBtn">请求 L2 组织（入队）</button>
+							<span class="busy-flag" id="pendingFlag" hidden>L2 有信号待消费</span>
+						</span>
+						<span class="ops-note" id="triggerNote">—</span>
+					</div>
+					<div class="ops-row">
+						<span class="ops-label">停止子代理</span>
+						<span class="ops-ctl"><button type="button" class="danger" id="stopBtn" disabled>停止 L2 子代理</button></span>
+						<span class="ops-note" id="stopNote">—</span>
+					</div>
+
+					<h3 class="sub">场景池报告（按需生成，不随页面加载）</h3>
+					<div class="ops-row">
+						<span class="ops-label">只读报告</span>
+						<span class="ops-ctl">
+							<button type="button" id="reportBtn">场景池报告</button>
+							<button type="button" id="mergeReportBtn">合并报告</button>
+							<span class="busy-flag" id="reportBusy" hidden>生成中…</span>
+						</span>
+						<span class="ops-note">报告可能调用 embedding，要几秒到更久；桥是单线程同步执行 —— 生成期间整座桥都不响应请求，别重复点。</span>
+						<div class="ops-note" id="reportOut"></div>
+					</div>
+
+					<h3 class="sub">播种 —— 写 <code>l1/scenes.json</code></h3>
+					<div class="ops-row">
+						<span class="ops-label">场景映射</span>
+						<span class="ops-ctl">
+							<button type="button" id="seedAddBtn">添加一行</button>
+							<button type="button" id="seedPreviewBtn">预演</button>
+							<button type="button" class="primary" id="seedApplyBtn" disabled>执行（写盘）</button>
+						</span>
+						<span class="ops-note" id="seedNote">把「旧名 → 稳定标签」映射写进 <code>l1/scenes.json</code>：预演只打印计划，执行会<b>先自动备份该文件</b>再写。</span>
+						<div class="ops-note" id="seedTableWrap">
+							<table id="seedTable" style="table-layout: fixed">
+								<thead><tr><th>场景名</th><th>别名（逗号分隔）</th><th>备注</th><th style="width: 54px"></th></tr></thead>
+								<tbody id="seedRows"></tbody>
+							</table>
+						</div>
+						<div class="ops-note" id="seedOut"></div>
+					</div>
+
+					<h3 class="sub">契约</h3>
+					<div class="ops-note" id="opsContract"></div>
+				</div>
+				<div id="opsResult"></div>
+
 				<h2>L2 游标水位</h2>
 				<div class="hint" id="cursorNote">—</div>
 

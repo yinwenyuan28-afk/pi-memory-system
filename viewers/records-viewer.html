@@ -79,6 +79,12 @@
 				<h2>来源分片</h2>
 				<div class="hint" id="fileList">尚未加载</div>
 
+				<!-- 管理操作区：内容由 renderOps 动态注入（值全部来自 /api/*，不在前端硬编码），
+				     所以事件一律委托到 #l1ops 上。危险区（整库还原）也在这一块内。 -->
+				<h2>L1 管理</h2>
+				<p class="hint" id="opsNote">管理操作区加载中…</p>
+				<div class="ops" id="l1ops"></div>
+
 				<h2>怎么读这页</h2>
 				<div class="hint">
 					<p><b>两根独立的轴</b>：<span class="chip del">deleted</span> 表示"这条记录不成立"（查重覆盖 / 纠错作废），
@@ -103,8 +109,22 @@
 				</div>
 
 				<div id="paneRecords">
+					<!-- 批量选择条：只在有勾选时出现（renderSelectionBar 控制显隐）。
+					     放在列表上方而不是浮动：设计契约是一层一条滚动轴，浮动条会再造一层。 -->
+					<div class="toolbar" id="selBar" style="display: none">
+						<span class="hint" id="selCount"></span>
+						<button type="button" id="selOpen">标为待办</button>
+						<button type="button" id="selDone">标为完成</button>
+						<button type="button" id="selDropped">标为废弃</button>
+						<button type="button" class="danger" id="selDelete">删除（墓碑）</button>
+						<button type="button" id="selExport">导出选中</button>
+						<button type="button" id="selAll">全选当前筛选</button>
+						<button type="button" id="selClear">清空选择</button>
+					</div>
+					<p class="hint" id="selNote" style="display: none"></p>
+					<div id="selConfirm" hidden></div>
 					<p class="hint" id="resultMeta"></p>
-					<div id="list" class="empty"><strong>还没有数据</strong>用上方「重新加载」或手动选择 JSONL。</div>
+					<div id="list" class="empty"><strong>还没有数据</strong>用上方「重新加载」从写盘桥取数（需带 <code>?port=</code> 打开）。</div>
 				</div>
 
 				<div id="paneDrops" hidden>

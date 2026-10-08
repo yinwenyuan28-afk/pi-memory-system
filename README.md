@@ -133,22 +133,57 @@ profile 根画像文件的目录列举；③ 版本/漂移检查；④ 全部写
 
 还有一个更坑的：**别在 `aside` 或 `.wrap-scroll` 上写 `overscroll-behavior: contain`**。实测只要容器带 `contain`，滚轮就被它吞掉，**哪怕这个容器根本没有可滚内容** —— L2 的块表格正是 `overflow:auto` 但内容不溢出、又占了内容列大半，于是表现为"鼠标滚动失效"（对照实验：改回 `auto` 后同一个手势立刻能滚页面）。`contain` 只保留在弹层上（打开弹层时拦住滚轮、别滚动背景，那才是它该在的地方）。
 
-**能从界面写回的两件事**：`work_task` 的任务状态切换（`done` / `dropped` / `open`，走 `l1_task_state` 同一实现：写锁 + 就地改写 + `metadata.taskStateChange` 审计）与删除（墓碑）。两者都需要带 `?port=` 打开。
+**能从界面写回的操作**（全部需要带 `?port=` 打开；每个动作都转发到 agent 侧同一份实现，桥里不复制业务逻辑）：
 
-写盘桥的路由：
+| 层 | 操作 | 要点 |
+|---|---|---|
+| L1 | 任务状态切换（单条 / 批量） | `done` / `dropped` / `open`，走 `l1_task_state` 同一实现：写锁 + 就地改写 + `metadata.taskStateChange` 审计 |
+| L1 | 删除（墓碑，单条 / 批量） | `tombstone.mjs`：先自动备份，再就地标 `deleted:true` |
+| L1 | 纠错（改写正文 / 作废） | `l1_fix` 同一实现：**证据 ≥20 字符**、rewrite 正文 ≥10 字符、24h 防抖、高价值保护（`force` 只解最后一道）。审计是**写进正文的文本标注**，不是独立审计键 |
+| L1 | 整库还原 | `rollback.mjs`：**删掉当前全部 `.jsonl` 再复制备份**，不是单条撤销；要打字输入备份目录名 |
+| L1 | 向量库回填 / 重建 | 重建会**先清空向量库**，要打字 `REBUILD`。两者都是长任务，**期间整座桥不响应**（单线程同步执行） |
+| L1 | 提取模式切换 | 写 `application-propertis.json` 的 `l1.mode`（`code` / `chat`），可逆且幂等 |
+| L1/L2/L3 | 请求触发一层 | 只写一份**待消费信号**，不是立即执行：要 pi 会话活着，并在下一轮结束（`agent_settled`）时由主进程消费，再经队列去重 |
+| L1/L2/L3 | 停掉正在跑的子代理 | `stopSubagent` 同一序列：先拦（写停止标记）→ 杀进程树 → **确认已死才**做杀后修复；没确认则持有该层 |
+| L2 | 块归档 / 恢复 | 持 **L2 运行级锁**，顺序是 `自愈 → 搬块 → 重建索引`；归档**必须给理由**（账本唯一凭据），恢复要占 `maxScenes` 名额 |
+| L2 | 场景池报告 / 播种 | 报告只读、按需拉取（可能较慢）；播种写 `l1/scenes.json`（先自动备份）。`cluster` 仍需走 CLI |
+| L3 | 条目增删改 | `l3_edit` 同一实现（`applyL3Edit`）：一次只动一条、单行、预算按"并入 live 之后的整篇"计价。**落盘目标是提议稿 `USER-temp.md`** |
+| L3 | 提议稿还原 | 还原目标是提议稿（备份文件名不记"捕获自哪一份"），写前先把当前提议稿另存；要打字输入备份文件名 |
+| L3 | 并入 live 画像 | **唯一会写 `USER.md` 的路径**。三道闸默认全开：提议稿比 live 旧 / 会删掉 live 过半条目 / 会清空 —— 每条都要**单独勾选放行**并打字 `MERGE`；写前自动备份。并入后运行中的会话仍注入旧快照，要 `/reload` 或新开会话 |
+
+写盘桥的路由（**写端点默认 dry-run**，必须显式 `apply:true` 才落盘；破坏性动作另有 `confirm` 副验）：
 
 | 端点 | 作用 |
 |---|---|
 | `POST /api/tombstone` | `{ids}` → 就地标记 `deleted:true`（备份 + 校验） |
 | `POST /api/task-state` | `{ids, state, reason?}` → 就地改 `taskState`（**带跨进程写锁**） |
+| `POST /api/l1/fix` | `{id, action, content?, evidence, reason?, priority?, force?, apply}` → 纠错四道闸 |
+| `POST /api/l1/rollback` | `{backup, apply, confirm}` → 整库还原（`confirm` = 备份目录名） |
+| `POST /api/l1/embedding` | `{op:"backfill"\|"rebuild", apply, confirm}` → 向量回填 / 重建（重建要 `confirm:"REBUILD"`） |
+| `POST /api/l1/mode` | `{mode}` → `code` / `chat`（唯一没有 `apply` 的配置写入，可逆幂等） |
+| `POST /api/trigger` | `{layer, reason?}` → 落一份待消费信号（**只入队**） |
+| `POST /api/subagent/stop` | `{layer, job?, reason?}` → 停止序列（不可逆） |
+| `POST /api/l2/archive` · `POST /api/l2/restore` | `{filename, reason?, apply}` → 块归档 / 恢复（L2 run-lock） |
+| `POST /api/l2/scene-pool/seed` | `{scenes:[{name,aliases}], apply}` → 播种 `l1/scenes.json` |
+| `POST /api/l3/edit` | `{action, content?, target?, apply}` → 提议稿条目增删改 |
+| `POST /api/l3/restore` | `{file, apply, confirm, allowEmpty?}` → 还原到提议稿（`confirm` = 文件名） |
+| `POST /api/l3/merge` | `{apply, confirm:"MERGE", allowStale?, allowMassRemoval?, allowEmpty?}` → 并入 live 画像 |
 | `GET /api/l1/shards` | 分片清单 + 行数（解开前端日期窗口） |
+| `GET /api/l1/backups` | L1 库备份目录清单（整库还原的候选） |
+| `GET /api/l1/embeddings` | 向量库状态（只读、便宜） |
 | `GET /api/l1/active-days` | 活跃会话日（权威源 `l0/conversations`；`hit-stats.json` 侧车会滞后） |
-| `GET /api/l2/blocks` · `GET /api/l2/…` | L2 块目录列举 / 索引与侧车 |
-| `GET /api/l3/backups` | 画像备份清单 |
+| `GET /api/l2/blocks` | L2 块目录列举 |
+| `GET /api/l2/scene-pool/report` · `/merge-report` | 场景池只读报告（输出是**文本**不是 JSON；可能较慢，按需拉取） |
+| `GET /api/l3/backups` | 画像备份清单（预览内容走静态路径 `/backups/user-backups/<file>`） |
 | `GET /api/profile-files` | `MEMORY.md` / `USER.md` / `USER-temp.md`（在 profile 根，白名单读取） |
-| `GET /api/limits` · `GET /api/viewer-status` | 阈值与配置节（来自源码常量）/ 版本与漂移 |
+| `GET /api/limits` | 阈值与配置节（含 `l1.mode`，取值来自源码常量） |
+| `GET /api/pending-triggers` | 三层待消费信号（**只读探查，不消费** —— 刷新页面不会把信号吃掉） |
+| `GET /api/subagent-runs` | 正在跑的子代理（"停止"按钮的依据） |
+| `GET /api/viewer-status` | 源码版本 vs 已部署版本（漂移检测） |
 
-桥只绑定 `127.0.0.1`、只在手动运行时存在，但它的 CORS 是全开的（为了支持 `file://` 页面带 `?port=` 回连），所以**运行期间本机任何页面都能读到 `l1/records/*.jsonl` 等内容**；`config/` 已被显式挡在静态托管之外（那份 JSONC 含 embedding API key），需要配置节一律走 `/api/limits`。用完请关掉。
+**两个会咬人的约定**（改桥或加页面前先读 `scripts/l1-admin/viewer-bridge.mjs` 头部）：桥把路径取成 `req.url.split("?")[0]`，所以**GET 端点不能带查询串**（需要参数的读操作走路径段，写操作一律 POST）；桥是**单线程 + `execFileSync`**，一次 CLI 调用期间整座桥都不响应任何请求，所以长任务在页面上必须显示"运行中"。
+
+桥只绑定 `127.0.0.1`、只在手动运行时存在，但它的 CORS 是全开的（为了支持 `file://` 页面带 `?port=` 回连），所以**运行期间本机任何页面都能读到 `l1/records/*.jsonl` 等内容，也能调用上面这些写端点**（含写 live 画像与整库还原）；`config/` 已被显式挡在静态托管之外（那份 JSONC 含 embedding API key），需要配置节一律走 `/api/limits`。用完请关掉。
 
 ## 已知限制
 

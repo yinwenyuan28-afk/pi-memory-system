@@ -77,8 +77,62 @@ export interface FixParams {
 }
 
 /**
+ * 修正的**四道闸**（参数完整性 → 证据门槛 → LWW/幂等/24h 防抖 → 高价值保护）。纯裁决，不写盘。
+ *
+ * 为什么抽出来（2026-10-08）：`runFix` 内部恒定向 `rewrite.mjs` / `tombstone.mjs` 传 `--apply`
+ * （见下），所以它**没有干跑路径**；而查看器的写盘桥要提供"先看将发生什么"的预演。
+ * 与其在 CLI 里照抄一遍闸门（两处口径必然分叉），不如把裁决抽成这个函数，
+ * `runFix` 与 CLI 的 dry-run 都调它。`--force` 只影响最后那道高价值闸。
+ */
+export function checkFixGates(
+	profilePath: string,
+	params: FixParams,
+	opts: { force?: boolean } = {},
+): { ok: true } | { ok: false; error: string } {
+	const recordId = String(params?.recordId || "");
+	const action = String(params?.action || "");
+	const evidence = String(params?.evidence || "");
+	const newContent = params?.newContent != null ? String(params.newContent) : "";
+
+	if (!/^(rewrite|tombstone)$/.test(action) || !recordId) {
+		return { ok: false, error: "recordId 与 action(rewrite|tombstone) 必填" };
+	}
+	// 护栏 1：evidence 门槛
+	if (evidence.trim().length < FIX_MIN_EVIDENCE_CHARS) {
+		return { ok: false, error: `evidence 过短（<${FIX_MIN_EVIDENCE_CHARS} 字符）：修正必须附可复核证据（grep/file:line/命令输出）` };
+	}
+	if (action === "rewrite" && newContent.trim().length < 10) {
+		return { ok: false, error: "rewrite 需要 newContent（>=10 字符）" };
+	}
+
+	// LWW 存活判定 + 幂等 + 防抖数据源
+	const last = lastRow(profilePath, recordId);
+	if (!last) return { ok: false, error: `记录不存在：${recordId}` };
+	if (last.deleted === true) return { ok: false, error: "无操作（该记录已 deleted）" };
+	// 护栏 3：防抖（24h；无 appliedAt 字段 → 放行一次）
+	const cleanup: any = (last.metadata as any)?.l1Cleanup;
+	if (cleanup && typeof cleanup.appliedAt === "string") {
+		const dt = Date.now() - Date.parse(cleanup.appliedAt);
+		if (Number.isFinite(dt) && dt >= 0 && dt < DEBOUNCE_MS) {
+			return { ok: false, error: `24h 防抖：该记录 ${cleanup.appliedAt} 刚被操作过（${cleanup.action || "?"}），稍后再试` };
+		}
+	}
+	// 护栏 4：高价值保护（拒改，提示 --force）
+	if (!opts.force && isHighValue(profilePath, recordId)) {
+		return {
+			ok: false,
+			error: `高价值记录（hits>=${FIX_HIGH_VALUE_HITS} 或 L2 场景块引用）：自动修正被拒绝。如确认需要，请执行 /my-memory:l1:fix ${recordId} --action ${action} --force`,
+		};
+	}
+	return { ok: true };
+}
+
+/**
  * 执行一次 L1 修正（工具与命令共用；force=true 绕过高价值保护）。
  * 返回 JSON 文本（{success, error?|detail?}）。
+ *
+ * **恒写盘**：内部给 `rewrite.mjs` / `tombstone.mjs` 传 `--apply`（那两个脚本默认 dry-run）。
+ * 需要预演请用 `checkFixGates`。
  */
 export async function runFix(params: FixParams, profilePath: string, opts: { force?: boolean } = {}): Promise<string> {
 	const recordId = String(params?.recordId || "");
@@ -90,33 +144,8 @@ export async function runFix(params: FixParams, profilePath: string, opts: { for
 
 	const fail = (error: string) => JSON.stringify({ success: false, error });
 
-	if (!/^(rewrite|tombstone)$/.test(action) || !recordId) {
-		return fail("recordId 与 action(rewrite|tombstone) 必填");
-	}
-	// 护栏 1：evidence 门槛
-	if (evidence.trim().length < FIX_MIN_EVIDENCE_CHARS) {
-		return fail(`evidence 过短（<${FIX_MIN_EVIDENCE_CHARS} 字符）：修正必须附可复核证据（grep/file:line/命令输出）`);
-	}
-	if (action === "rewrite" && newContent.trim().length < 10) {
-		return fail("rewrite 需要 newContent（>=10 字符）");
-	}
-
-	// LWW 存活判定 + 幂等 + 防抖数据源
-	const last = lastRow(profilePath, recordId);
-	if (!last) return fail(`记录不存在：${recordId}`);
-	if (last.deleted === true) return fail("无操作（该记录已 deleted）");
-	// 护栏 3：防抖（24h；无 appliedAt 字段 → 放行一次）
-	const cleanup: any = (last.metadata as any)?.l1Cleanup;
-	if (cleanup && typeof cleanup.appliedAt === "string") {
-		const dt = Date.now() - Date.parse(cleanup.appliedAt);
-		if (Number.isFinite(dt) && dt >= 0 && dt < DEBOUNCE_MS) {
-			return fail(`24h 防抖：该记录 ${cleanup.appliedAt} 刚被操作过（${cleanup.action || "?"}），稍后再试`);
-		}
-	}
-	// 护栏 4：高价值保护（拒改，提示命令 --force）
-	if (!opts.force && isHighValue(profilePath, recordId)) {
-		return fail(`高价值记录（hits>=${FIX_HIGH_VALUE_HITS} 或 L2 场景块引用）：自动修正被拒绝。如确认需要，请执行 /my-memory:l1:fix ${recordId} --action ${action} --force`);
-	}
+	const gate = checkFixGates(profilePath, params, opts);
+	if (!gate.ok) return fail(gate.error);
 
 	// 护栏 2：审计标注自动追加
 	let content = newContent;

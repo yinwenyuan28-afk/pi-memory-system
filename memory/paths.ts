@@ -145,6 +145,21 @@ export const VECTORS_DIR = join("search", "vectors");
 /** L1/L2 流水线 job 队列（{memoryDB}/pipeline/jobs.sqlite）。 */
 export const PIPELINE_JOBS_FILE = join("pipeline", "jobs.sqlite");
 /**
+ * 各层**外部触发信号**的前缀（`{memoryDB}/pipeline/pending-trigger-<layer>.json`，2026-10-08）。
+ *
+ * 存在理由：查看器的写盘桥是**独立进程**，而"手动触发一层"依赖主进程的
+ * `cachedCtx` + executors + `kick()`（`memory/pipeline/worker.ts`），跨进程够不着。
+ * 全仓库原本只有 L3 有一条落盘通道（`L3_PENDING_TRIGGER_FILE`）；查看器要补齐
+ * L1/L2 的触发按钮，就把那条手法泛化成这个前缀（实现见 `pipeline/pending-trigger.ts`）。
+ *
+ * 语义：写一次 = 请求一次；主进程在 `agent_settled` 读后即删，保证一个信号只生效一次。
+ * 它**只负责入队**，真正执行仍要等 pi 会话跑完一轮 —— 界面必须如实这么写。
+ *
+ * 注意与 L3 的 `l3/pending-trigger.json` **并存但不同路径**：L3 那份的载荷是
+ * `{personaSignal, personaReason}`，要喂 `evaluateTrigger` 的 P1 闸，所以没跟着搬过来。
+ */
+export const PIPELINE_PENDING_TRIGGER_PREFIX = join("pipeline", "pending-trigger-");
+/**
  * 各层失败状态（{memoryDB}/state/failure-state.json）。
  *
  * 注：`state/stop-request-<layer>.json` 与 `state/run-lock-<layer>.lock/` 是另外两个
@@ -238,6 +253,9 @@ export const BACKUP_DIR = "backups";
 export const VIEWERS_RETIRED_DIR = join(BACKUP_DIR, "viewers-retired");
 /** 用户画像备份目录（{memoryDB}/backups/user-backups：L3 每轮首次写盘前的 `user-backup-*.md` 快照；2026-09-28 起写的是 USER-temp.md）。 */
 export const USER_BACKUPS_DIR = join("backups", "user-backups");
+/** L1 库备份根目录（{memoryDB}/backups/l1-admin：`{ts}-{tag}/l1/records/`，每次 l1-admin 写盘前自动快照）。
+ *  `rollback.mjs` 从此目录整体还原，查看器的还原面板也列它（此前只有写者没有列举者）。 */
+export const L1_BACKUPS_DIR = join("backups", "l1-admin");
 
 // ── profile 级运行态（**不经 MEMORY_DB_DIR**）────────────────────
 /**

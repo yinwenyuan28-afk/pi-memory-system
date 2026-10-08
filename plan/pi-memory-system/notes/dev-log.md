@@ -62,3 +62,21 @@
 ## 2026-10-05 状态栏对齐 L1 计数
 
 将 `Memory 0t` 替换为真实 L1 十轮剩余计数，组合当前 L1/L2/L3 运行层、L1 排队/暂停状态和 Skill 二十轮审查状态。统一状态栏渲染及各任务清理刷新，避免旧 Skill/旧会话回调覆盖当前进度。专项状态验证 16 项、生命周期 23 项、并发 5 项、串行 98 项、通知路由 58 项和现有提示词/类型门禁均通过。
+
+## 2026-10-08 查看器管理操作补齐
+
+用户先问"现在的可视化页面里有没有对 L1-L3 记忆的所有管理操作"，清点后的答案是**没有**：三层共 17 项操作，界面只覆盖 2 项（L1 任务状态切换、墓碑删除），其余全散在斜杠命令、agent 工具与 `l1-admin/*.mjs` 里；L3 的"备份还原"甚至连命令行实现都没有（`backups/user-backups/` 有生成者与陈列者，全仓库搜不到还原代码）。随后用户下达"补齐所有管理操作"，本轮把 17 项全部接进界面。
+
+**一条硬约束决定了半边实现形状**：L1/L2 的"手动触发"从桥侧**够不着** —— 桥是独立进程，而 `triggerManual` 依赖主进程的 `cachedCtx` + executors + `kick()`（`worker.ts` 的 `drain` 在 `!cachedCtx` 时直接 return）。全仓库原本只有 L3 有一条落盘通道（`l3/signal.ts` 的 `pending-trigger.json`，主进程 `agent_settled` 读后即删），于是把它泛化成 `memory/pipeline/pending-trigger.ts` 并给 L1/L2 各挂一个消费钩子（L1 的钩子必须放在 `L1_INTERVAL` 轮数闸**之前** —— 显式请求不该被计数挡住）。代价是语义必须如实写在界面上：触发**只是入队**，要 pi 会话活着并在下一轮结束时被消费。同类语义还有两条：L3 还原的目标恒为**提议稿**（备份文件名不记"捕获自 temp 还是 live"），要上 live 再走一次并入。
+
+**保护 live 画像**是本轮风险最高的一件事。`mergeTempIntoLive` 的三道闸不是设计洁癖 —— 实测真实 profile 就差点被一条命令毁掉：`USER-temp.md` 是 09-28 的 3 条残留，而 `USER.md` 是 09-30 的 24 条，**一次并入会删掉 25 条里的大部分**。因此加了：① 提议稿比 live 旧就拒（说明 live 之后被改过）；② 会删掉 live 过半条目再拒一次；③ 提议稿为空而 live 有内容也拒。三条各自独立、都要用户**逐条勾选**放行，实写还要打字 `MERGE`；每次写前自动留档（`-live-premerge` / `-pre-restore` 后缀标出来由）。另外把 `writeUserFile` 定为全仓库唯一写 live 画像的路径，并注明并入后运行中的会话仍注入旧快照、要 `/reload`。
+
+**避免第三份口径分叉**：`l3_edit` 的编排（预算闸 / 定位裁决 / 备份时机 / `markRunSeeded` 时点）原本内联在工具的 `execute()` 里，抽成 `memory/l3/edit-core.ts` 的 `applyL3Edit`，工具退化成薄壳；`runFix` 因为内部恒传 `--apply`（本来没有干跑路径），把四道闸抽成 `checkFixGates` 供 CLI 预演复用。9 个新 CLI 共用 `viewer-cli.mts` 骨架。
+
+**踩到并固化的坑**（都写进了 `scripts/l1-admin/README.md` 的清单）：① **收尾函数只写 JSON 不中止执行 ⇒ 脚本输出第二个 JSON ⇒ 桥整段 `JSON.parse` 失败** —— `trigger.mts --layer l9` 写完用法错误还继续去写了一个 `pending-trigger-l9.json`，两个 JSON 首尾相连，一次说得清清楚楚的拒绝被报成"CLI 未返回可解析的 JSON"；改成抛哨兵异常 + `run()` 包主体。② **桥的 URL 是 `req.url.split("?")[0]`**，GET 端点接不了查询串，需要参数的读操作只能用路径段。③ **"说人话"的 CLI 不能走 JSON 解析**（`rollback.mjs` / `scene-pool.mjs` 输出文本报告），单列 `passthroughText`。④ `positionals()` 忘了切 `process.argv` 前两位，把 `node.exe` 路径当成了第一个位置参数（`embedding.mts status` 的 op 变成 `C:\…\node.exe`）。⑤ **桥是单线程 + `execFileSync`**：长任务期间整座桥不响应，页面必须显示"运行中"。
+
+**验收方式是本轮最费心的部分**：把真实 profile 的 `memoryDB` 整份复制到 `C:/temp/pi/e2e-profile`，用 `viewer.mts --profile <副本>` 起桥，全部写操作落在副本上 —— 实测结束核对，真实 profile 的 `USER.md`（09-30）与 `USER-temp.md`（09-28）**逐字节未变**。浏览器里逐项走通：L1 批量标记完成（磁盘核对 `taskState=done`、`version` 仍为 1、审计 `by:"user"`、正文未动、分片数不变）、纠错的拒/放行两条路径、触发信号落盘、整库还原预演（输错令牌禁用、预演后无 `pre-rollback` 备份 = 确认没写盘）；L2 归档→恢复往返（live 15→14→15、账本 1→3 条，两条分别带 by `viewer` 与我键入的理由）；L3 预算闸先拒了 add，改删除后真实落盘（提议稿由 3 条**播种成 27 条**，正是"首次写盘以 live 播种"的设计语义，写前备份生成、live 未动）、还原令牌门、并入（陈旧闸拒绝 → 勾选放行 → live 25→27 + premerge 备份）。
+
+实测抓到两个**静态检查看不出来**的真缺陷，都是"误导态"这一类：① L1 侧栏 `#opsNote` 永远停在"管理操作区加载中…"（面板其实已经渲染好了），改成加载完成后写入真实状态、读不到时如实报"有 N 项没读到"；② L3 并入**成功**后不清"上一次被拒"的放行区，屏幕上同时出现"预演通过"与"服务端拒绝了这次并入"+ 一排放行勾选框，顺带把只在拒绝语境下才有意义的 `allow*` 勾选一并归零（否则会出现"勾选框已清掉、请求体里却仍带着放行标志"）。这两个都是页面在真实数据下跑一遍才暴露的。
+
+门禁：新增 `verify-viewer-write-paths.ts` **137 项**（触发通道含坏文件不卡死 / `applyL3Edit` / **工具路径与 CLI 路径落盘逐字节相同** / 并入三道闸各自验证"会拒"与"放行后落盘" / 还原的三条越界文件名 / `checkFixGates` / 9 个 CLI / 桥 13 个新端点与默认 dry-run 与 confirm 副验）；`verify-viewer-deploy.ts` 130 → **193 项**（新增 ⑱ 写盘端点契约节：每个预演/实写端点必有 `body.apply === true`、四处 `confirm` 副验在场、查询串约定、文本型 CLI 走 `passthroughText`、失败路径带 stdout；⑬ 节按"页面用到的端点"逐条断言，所以端点变多断言也变多）。全量回归 27 个脚本通过，2 个改动前既存的失败（`verify-agent-loop` 9/14、`verify-l3-commit` 145/1 —— 与上一轮基线数字完全一致，说明抽取 `applyL3Edit` 没动到 `l3_edit` 的行为）；`check-types` 0 新增；提示词契约 0 警告。未做：场景池 `cluster` 上界面、把长任务改成子进程 + 轮询（期间桥不响应）。详见[完成计划](../completed/查看器-管理操作补齐-计划.md)。

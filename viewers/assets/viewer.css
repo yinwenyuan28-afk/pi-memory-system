@@ -697,6 +697,82 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: var(--
 details.more > summary:hover { color: var(--text); }
 details.more[open] > summary { margin-bottom: 6px; }
 
+/* ── 管理操作面板（2026-10-08：把 L1-L3 的管理动作搬进界面） ─────────────────
+ *
+ * 为什么单独一组类，而不复用 .stats / .card：操作区要回答的是"这一栏能改什么、代价是什么、
+ * 现在可不可用"，与只读展示是两回事。四条契约照旧：
+ *   · 外壳无彩度 —— 危险动作只用 --danger 描边/文字，**不做底色块**（底色块就是给外壳上色相）；
+ *   · 形状编码种类 —— 破坏性动作 = 描边按钮，预演/只读 = 文字动作；
+ *   · 一层一条滚动轴 —— 日志与报告一律 <details> 展开 + 页面统一滚，**不做内滚动**；
+ *   · 度量值等宽。
+ */
+.ops { display: grid; gap: 10px; }
+.ops-row { display: grid; grid-template-columns: minmax(84px, 116px) 1fr; gap: 4px 10px; align-items: start; }
+.ops-row > .ops-label { color: var(--muted); font-size: var(--t-sm); padding-top: 7px; }
+.ops-row > .ops-ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.ops-note { grid-column: 2; color: var(--faint); font-size: var(--t-xs); line-height: 1.55; }
+.ops h3.sub { margin: 14px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
+.ops h3.sub:first-child { margin-top: 0; }
+
+/* 危险区：只换描边与标题色，不加底色（契约 1） */
+.danger-zone { border: 1px dashed var(--border); border-radius: var(--r-lg); padding: 10px 12px; }
+.danger-zone > h3 { margin: 0 0 8px; font-size: var(--t-sm); color: var(--danger); font-weight: 600; }
+
+/* 打字确认：要你打的字面量用等宽原样显示，减少"打错了"这种无谓失败 */
+.confirm-token {
+	font-family: var(--mono);
+	font-size: var(--t-xs);
+	color: var(--text);
+	background: var(--panel3);
+	border: 1px solid var(--border);
+	border-radius: var(--r-sm);
+	padding: 1px 5px;
+	word-break: break-all;
+}
+input.confirm-input { font-family: var(--mono); font-size: var(--t-sm); min-width: 220px; flex: 1 1 220px; }
+
+/* 长任务：整栏置灰 + 明说"运行中" —— 桥是单线程同步执行，这期间它真的不响应任何请求 */
+.ops-row.busy .ops-ctl { pointer-events: none; opacity: 0.5; }
+.busy-flag { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-size: var(--t-sm); }
+.busy-flag::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* 差异清单（并入 / 还原 / 归档前给人看"会变什么"）：增 = ok、删 = danger，两者都是数据状态 */
+.diff-list { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.diff-list li { font-size: var(--t-xs); line-height: 1.5; padding-left: 14px; position: relative; word-break: break-word; }
+.diff-list li::before { position: absolute; left: 0; font-family: var(--mono); }
+.diff-list li.add { color: var(--ok); }
+.diff-list li.add::before { content: "+"; }
+.diff-list li.del { color: var(--danger); }
+.diff-list li.del::before { content: "−"; }
+.diff-list li.more { color: var(--faint); }
+.diff-list li.more::before { content: "…"; }
+
+/* CLI 文本输出（场景池报告 / 整库还原预演）：<details> 展开，不内滚动 */
+details.log { margin-top: 8px; }
+details.log > summary { cursor: pointer; color: var(--muted); font-size: var(--t-sm); padding: 3px 0; }
+details.log > summary:hover { color: var(--text); }
+.log-text {
+	font-family: var(--mono);
+	font-size: var(--t-xs);
+	line-height: 1.55;
+	color: var(--muted);
+	white-space: pre-wrap;
+	word-break: break-word;
+	background: var(--panel2);
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	padding: 8px 10px;
+	margin: 6px 0 0;
+}
+
+/* 窄屏：标签列折到上面（116px 的标签列在手机上会把控件挤没） */
+@media (max-width: 620px) {
+	.ops-row { grid-template-columns: 1fr; }
+	.ops-row > .ops-label { padding-top: 0; }
+	.ops-note { grid-column: 1; }
+}
+
 /* ── 响应式 ───────────────────────────────────────────────────────────────── */
 @media (max-width: 620px) {
 	.cards { grid-template-columns: 1fr; }

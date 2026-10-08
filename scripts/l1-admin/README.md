@@ -13,11 +13,21 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 | `rollback.mjs` | 从备份目录恢复 L1 records | `--dry-run` 默认；实恢复前自动备份当前库 |
 | `scene-pool.mjs` | **工作场景池**运维：`report`（池状态 + 批级指标）/ `cluster`（历史场景名聚类）/ `seed`（按映射提案播种）/ `merge-report`（合并候选） | 除 `seed --apply` 外全部只读；`seed` 默认 dry-run，实写前自动备份 `scenes.json` |
 | `task-state.mts` | 标记任务生命周期（就地改顶层 `taskState`，与 `l1_task_state` 工具同一实现） | 默认 dry-run；`--apply` 写盘；`--backup` 可选（**默认不备份**，理由见下） |
+| `l1-fix.mts` | L1 纠错（改写正文 / 作废），转发 `fix-tool.ts` 的 `runFix` | 默认 dry-run（走抽出来的 `checkFixGates`，**不含 IO 级校验**）；`--force` 只解高价值那道闸 |
+| `embedding.mts` | 向量库 `status` / `backfill` / `rebuild` | `status` 只读且便宜；另两个要 `--apply`，`rebuild` 还要 `--confirm REBUILD`（会先清空向量库） |
+| `trigger.mts` | **请求某层入队**（`--layer l1\|l2\|l3`）或 `--status` 探查三层信号 | 只落一份待消费信号，**不是立即执行**；落完回读确认 |
+| `l1-mode.mts` | L1 提取模式读写（`--set code\|chat`） | 唯一不要求 `--apply` 的写操作（可逆、幂等）；写完回读确认 |
+| `subagent-stop.mts` | 停掉某层子代理（`--layer`，`--list` 看在跑哪些） | 与 `/my-memory:subagent-kill` 同序列；不可逆，故**无 dry-run** |
+| `l2-archive.mts` | L2 块 `list` / `archive --file --reason` / `restore --file` | 持 **L2 run-lock**；归档必须有 reason；默认 dry-run（预演不跑自愈） |
+| `l3-edit.mts` | L3 提议稿条目 `add` / `update` / `delete`，转发 `applyL3Edit` | 默认 dry-run；写 `USER-temp.md`（提议稿），不碰 live |
+| `l3-restore.mts` | 列出 / 还原画像备份到提议稿（`--list` / `--file --confirm`） | 写前先另存当前提议稿；空备份默认拒（`--allow-empty` 才放行） |
+| `l3-merge.mts` | **把提议稿并入 live `USER.md`**（全仓库唯一写 live 画像的路径） | 三道闸默认全开（陈旧 / 过半删除 / 清空），每条要单独放行；实写要 `--confirm MERGE` |
+| `viewer-cli.mts` | 上面那批包装的**共用骨架**（参数解析 / JSON 出口 / 哨兵收尾 / `run()`）；不是可执行入口 | — |
 | `viewer.mts` | **一键启动查看器**：同步最新页面 → 起桥 → 开浏览器（自动避让占用端口） | 只绑 `127.0.0.1`；`--no-open` / `--no-sync` 可关掉两件事 |
 | `启动查看器.cmd` | 上面的 Windows 双击入口（内容纯 ASCII，中文由 node 打印） | 同上 |
-| `viewer-bridge.mjs` | **查看器写盘桥**：静态托管 `memoryDB` + 写盘端点 + 目录列举 | 只绑 `127.0.0.1`；写盘端点各自校验 |
+| `viewer-bridge.mjs` | **查看器写盘桥**：静态托管 `memoryDB` + 写盘端点 + 目录列举 + 诊断 | 只绑 `127.0.0.1`；写端点默认 dry-run，破坏性动作另有 `confirm` 副验 |
 | `viewer-status.mts` | 查看器版本与漂移诊断（源码内容版本 vs 已部署版本） | 只读 |
-| `viewer-limits.mts` | 查看器要展示的阈值（`l2.maxScenes` / L3 各限额），从源码常量透出 | 只读；**不暴露含密钥的 `config/` 整份文件** |
+| `viewer-limits.mts` | 查看器要展示的阈值（`l1.mode` / `l2.maxScenes` / L3 各限额），从源码常量透出 | 只读；**不暴露含密钥的 `config/` 整份文件** |
 | `active-days.mts` | 活跃会话日清单（权威源 `l0/conversations`） | 只读 |
 
 公共参数：`--profile <dir>`（默认 `C:/Users/leaf/.pi/agent/profiles/default`）、`--dry-run` / `--apply`。
@@ -59,11 +69,24 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
 |---|---|
 | `POST /api/tombstone` | `{ids}` → `tombstone.mjs --apply`（备份 + 就地标记） |
 | `POST /api/task-state` | `{ids, state, reason?}` → `task-state.mts --apply`（**取跨进程写锁**，拿不到锁一条都不写） |
-| `GET /api/l1/shards` | `l1/records/*.jsonl` 清单 + 行数（浏览器列不了目录） |
-| `GET /api/l1/active-days` | 活跃会话日（权威源；`hit-stats.json` 侧车会滞后，实测差过 1 天） |
-| `GET /api/l2/blocks` · `GET /api/limits` | L2 块目录列举 / 阈值与配置节 |
-| `GET /api/l3/backups` · `GET /api/profile-files` | 画像备份清单 / profile 根的 `MEMORY.md`+`USER.md`+`USER-temp.md` |
-| `GET /api/health` · `GET /api/viewer-status` | 存活 / 版本与漂移 |
+| `POST /api/l1/fix` | 纠错（`l1-fix.mts` → `runFix`：证据门槛 / 24h 防抖 / 高价值保护） |
+| `POST /api/l1/rollback` | 整库还原（`rollback.mjs`；`confirm` 必须等于备份目录名） |
+| `POST /api/l1/embedding` | 向量回填 / 重建（`embedding.mts`；重建要 `confirm:"REBUILD"`；**长任务，期间整座桥不响应**） |
+| `POST /api/l1/mode` | L1 提取模式 `code`/`chat`（唯一无 `apply` 的配置写入，可逆幂等） |
+| `POST /api/trigger` · `POST /api/subagent/stop` | 请求某层入队（**只落信号**）/ 停掉某层子代理（不可逆） |
+| `POST /api/l2/archive` · `/api/l2/restore` · `/api/l2/scene-pool/seed` | 块归档 / 恢复（L2 run-lock）/ 场景池播种 |
+| `POST /api/l3/edit` · `/api/l3/restore` · `/api/l3/merge` | 提议稿条目增删改 / 还原到提议稿 / **并入 live 画像**（三道闸 + `confirm`） |
+| `GET /api/l1/shards` · `/api/l1/backups` | `l1/records/*.jsonl` 清单 + 行数；`backups/l1-admin/*` 备份目录（浏览器列不了目录） |
+| `GET /api/l1/embeddings` · `/api/l1/active-days` | 向量库状态（便宜）/ 活跃会话日（权威源；`hit-stats.json` 侧车会滞后，实测差过 1 天） |
+| `GET /api/l2/blocks` · `/api/l2/scene-pool/report` · `/merge-report` | L2 块目录列举；场景池只读报告（**输出是文本不是 JSON**，且可能较慢 ⇒ 页面按需拉取） |
+| `GET /api/l3/backups` · `/api/profile-files` | 画像备份清单 / profile 根的 `MEMORY.md`+`USER.md`+`USER-temp.md` |
+| `GET /api/limits` | 阈值与配置节（含 `l1.mode`） |
+| `GET /api/pending-triggers` · `/api/subagent-runs` | 三层待消费信号（**只读探查，不消费**）/ 在跑的子代理 |
+| `GET /api/health` · `/api/viewer-status` | 存活 / 版本与漂移 |
+
+**写端点一律默认 dry-run**（必须显式 `apply:true`），破坏性动作另有 `confirm` 副验（还原要备份名、
+重建要 `REBUILD`、并入要 `MERGE`）—— 桥里那道是**副验**，CLI 自己也会验一次，两道都在。
+这条安全默认由 `verify-viewer-deploy.ts` 的 ⑱ 节逐端点断言。
 
 七个**实测踩过**的点，改动时别踩回去：
 1. **`req.url` 必须 `decodeURIComponent`**。浏览器的 fetch 会把非 ASCII 文件名百分号编码，
@@ -97,6 +120,21 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
    就地返回 `index.html` 会让相对引用的 `assets/*` 解析成 `/assets/*` 全 404、连 `window.V` 都没有，
    而桥启动打印的第一行正好是这个根路径（终端里可点）；③ 真丢了 query 时页面顶部要给出可操作提示，
    与 `file://` 的提示分开写（两种降级原因不同）。三条由 ⑰ 节断言。
+8. **桥的 URL 是 `req.url.split("?")[0]` —— GET 端点接不了查询串**（2026-10-08 补齐管理操作时定的约定）。
+   加 `?cmd=report` 这种参数不会报错，只会静默走到 404 分支。需要参数的**读**操作一律用**路径段**
+   （`/api/l2/scene-pool/report`），**写**操作一律 POST + JSON body。⑱ 节断言这条约定还在，
+   并且页面里不许出现给 `/api/*` 挂查询串的写法。
+9. **收尾函数只写 JSON 不中止执行 ⇒ 脚本会输出第二个 JSON ⇒ 桥解析失败**（实测踩到）。
+   `viewer-cli.mts` 的 `finish/fail/usageError` 现在是**抛哨兵异常**（`ExitSignal`），脚本主体必须包在
+   `run(async () => …)` 里；否则守卫写完错误后代码会继续往下跑（`trigger.mts --layer l9` 甚至还会去写一个
+   `pending-trigger-l9.json`），两个 JSON 首尾相连，`JSON.parse` 整段失败 —— 一次说得清清楚楚的拒绝
+   被报成"CLI 未返回可解析的 JSON"。约定写在 `viewer-cli.mts` 头部。
+10. **"说人话"的 CLI 不能走 JSON 解析**。`rollback.mjs` / `scene-pool.mjs` 输出的是文本报告（分隔线 + 表格），
+   拿 `parseCliJson` 去啃要么得 null（把成功报成失败）、要么啃出半截对象。桥里为此单列了
+   `passthroughText`，与 `passthrough` 分开。
+11. **桥是单线程 + `execFileSync`：一次 CLI 调用期间整座桥不响应任何请求**（向量回填/重建、场景池报告）。
+   这不是能靠并发解决的问题，所以页面必须显示"运行中、勿重复点"，长任务用长超时
+   （回填/重建 30 分钟）。要真并发得把执行改成"子进程 + 轮询状态"，本轮没做。
 
 安全边界：桥只绑 `127.0.0.1`、只在手动运行时存在；但 CORS 全开（为了支持 `file://` 页面带 `?port=` 回连），
 所以**运行期间本机任何页面都能读 `l1/records/*.jsonl` 等内容**。`config/` 已被挡在静态托管之外

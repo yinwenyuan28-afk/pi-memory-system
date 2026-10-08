@@ -16,6 +16,7 @@ import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-livene
 import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
+import { consumePendingTrigger } from "../pipeline/pending-trigger.ts";
 import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } from "../pipeline/status.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
@@ -72,11 +73,40 @@ export function setupL1Extractor(
 
 	pi.on("agent_settled", (_event, ctx) => {
 		pipeline.setCachedCtx(ctx);
+		const profilePath = getProfilePath();
+		if (!profilePath) return;
+
+		// 通道：**进程外**的显式触发请求（查看器写盘桥 / l1-admin CLI 落的信号文件，读后即删）。
+		// 放在轮数闸之前 —— 它是"人点了按钮"，不该被 L1_INTERVAL 的计数挡住；
+		// 语义与 `/my-memory:l1-trigger` 一致（复位熔断 → 校验 L0 增量 → 入队），只是请求方在进程外。
+		const pending = consumePendingTrigger(profilePath, "l1");
+		if (pending) {
+			const from = [pending.by, pending.reason].filter(Boolean).join(" / ");
+			turnCount = 0;
+			const s0 = loadL1State(profilePath);
+			s0.cooledDown = false;
+			s0.consecutiveFailures = 0;
+			saveL1State(s0, profilePath);
+			if (listL0Files(profilePath, loadL1Cursor(profilePath)).length === 0) {
+				logEvent("l1", `外部触发${from ? `（${from}）` : ""}：无 L0 增量，跳过`, profilePath);
+				status?.refresh(ctx);
+				return;
+			}
+			const q0 = pipeline.enqueueL1("manual");
+			status?.refresh(ctx);
+			if (q0 && !q0.duplicate) {
+				logEvent("l1", `外部触发${from ? `（${from}）` : ""}：已入队 job ${q0.id}`, profilePath);
+				pipeline.kick();
+			} else {
+				// 去重命中 = 队列/运行中已有 L1。信号已消费，不再补排 —— 那次运行本来就是要干的活。
+				logEvent("l1", `外部触发${from ? `（${from}）` : ""}：队列中已有 L1，未重复入队`, profilePath);
+			}
+			return;
+		}
+
 		if (turnCount < L1_INTERVAL) return;
 		const st = loadL1State();
 		if (st.cooledDown) return;
-		const profilePath = getProfilePath();
-		if (!profilePath) return;
 
 		// 只做增量判空：真正的任务消息由 executeJob 构造一次。此前这里也调 buildL1Task，
 		// 导致同一轮两次全目录同步读（且两次注入的锚点可能不一致）。
