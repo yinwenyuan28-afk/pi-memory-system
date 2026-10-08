@@ -89,7 +89,7 @@ ScenePool (id | name; same-project first, recent first; max N):
 
 将情境展开为逐条 records，按下方契约检查字段。调用 `l1_commit({records:[...],cursor:"JSON 序列化的完整 nextCursor"})`，不传 main-agent 来源，不直接写文件。
 
-确认 success=true 后读取返回体：valueCheck.dropped/retyped 是正常价值复核结果，skipped 表示复核未运行；priorityDefaulted、provenanceMissing、overRecallBudget 提示后续提取需要改进。sceneWarns/projectWarnings 应在摘要说明。成功提交后不因这些计数或警告重交整批。
+确认 success=true 后读取返回体：valueCheck.dropped/retyped 是正常价值复核结果，skipped 表示复核未运行；priorityDefaulted、provenanceMissing、overRecallBudget 提示后续提取需要改进；`taskStateIgnored`（非任务记录带了任务状态，已被忽略）与 `taskStateDroppedOnReplace`（作废了已关闭的任务但替代行没继承状态）同样要在摘要里说明。sceneWarns/projectWarnings 应在摘要说明。成功提交后不因这些计数或警告重交整批。
 
 最后只回复一行摘要：`L1 done: 提取 N 条（store X / update Y / merge Z / skip W），已提交本批分片游标`，必要时附上警告。
 
@@ -141,10 +141,12 @@ projectEvidence 形如 `[{"message_id":"msg1","path":"C:/dev/B/src/file.ts"}]`�
 普通新增记录示例（场景、类型与 metadata 按实际模式填写）：
 
 ```json
-{"id":"l1_<epochMs>_<4位随机>","content":"记忆内容","type":"work_fact","priority":80,"scene_id":"sc0007","source_message_ids":["msg1"],"metadata":{"scope":"unknown","project":""},"timestamps":["2026-08-17T00:00:00.000Z"],"createdAt":"ISO","updatedAt":"ISO","version":1,"sessionKey":"源会话key","sessionId":null,"cwd":"源消息cwd","deleted":false}
+{"id":"l1_<epochMs>_<4位随机>","content":"记忆内容","type":"work_fact","priority":80,"scene_id":"sc0007","source_message_ids":["msg1"],"metadata":{"scope":"unknown","project":""},"timestamps":["2026-08-17T00:00:00.000Z"],"createdAt":"ISO","updatedAt":"ISO","version":1,"sessionKey":"源会话key","sessionId":null,"cwd":"源消息cwd","deleted":false,"taskState":"open"}
 ```
 
 - id 使用 `l1_{Date.now()}_{随机4位}`；priority 和模式 metadata 遵循提取规则。
+- `taskState` **只对 work_task 有意义**：取值 `open` / `done` / `dropped`（缺省按 `open`）。提取到新待办时省略即可；**只有在消息明确表明任务已完成/已放弃时**才写 `done` / `dropped`。
+- **状态继承（务必执行）**：update / merge 替换的记录若带非 `open` 的 `taskState`，替代记录必须把状态带过来（用 dedup 给出的 `merged_task_state`）——漏带会让已关闭的任务在新版本里退回「待办」，且旧行已作废、事后查不出；提交返回体的 `taskStateDroppedOnReplace` 计数就是这条被违反的信号。
 - 新记录 version=1、deleted=false；update/merge 的新版本为被替换记录版本 +1。
 - 删除项使用目标旧 ID 与 deleted=true。提交工具在历史分片中就地标记旧记录，将替代记录追加到提交当日分片；历史同 ID 多行始终按最后状态判断存活。
 - embedding 可选。仅最终 content 与 queryText 完全相同时复用 queryVector；改写或合并后省略，由提交端重新计算。

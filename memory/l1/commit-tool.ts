@@ -1,8 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CURSOR_FILE, PROMPT_DIR, RECORDS_DIR_NAME, loadL1Config } from "./config.ts";
+import { CURSOR_FILE, PROMPT_DIR, loadL1Config } from "./config.ts";
 import { applyVerdictsToBatch, loadChecklistFromFile, runValueCheck, splitBatch } from "./value-check.ts";
 // 标签契约模块（零 import 的纯函数）：只取归一化与归属决策两件事，
 // `SCOPE_HELP` 那一大段中文词表不进本模块——它由提示词侧（backfill 脚本 / l1-extractor.md）自己引用。
@@ -10,7 +9,9 @@ import { normalizeScope, projectForScope } from "./project-scope.ts";
 import { createProjectEvidenceVerifier } from "./project-evidence.ts";
 import { parseL1CursorToken, type L1CursorState } from "./cursor.ts";
 import { loadRecallConfig } from "../search/recall-config.ts";
-import { L1_RECORD_TYPES_TEXT, isL1RecordType } from "./record-types.ts";
+import { L1_RECORD_TYPES_TEXT, L1_TASK_STATES_TEXT, isL1RecordType, isL1TaskState, normalizeTaskState, taskStateOf } from "./record-types.ts";
+// 分片扫描 / 就地改写原语（与 task-state 的状态标记共用同一「最后一行」口径，见 in-place-mark.ts）
+import { contentHash, recordsDirOf, rewriteShardRows, scanRecordShards } from "./in-place-mark.ts";
 import {
 	createSceneResolver,
 	findSceneByNameOrAlias,
@@ -30,6 +31,7 @@ import { loadFailureState, saveFailureState } from "../failure-state.ts";
 import { acquireWriteLock } from "./write-lock.ts";
 import { loadEmbeddingConfig } from "../search/embedding/config.ts";
 import { isVectorizationReady } from "../search/embedding/vectorization-config.ts";
+import { loadAllL1Records } from "../search/embedding/record-loader.ts";
 import { render as renderPrompt } from "../../prompts/registry.ts";
 // 静态导入（不得改回执行期 await import()）：jiti(moduleCache:false) 下并发首次调用会拿到
 // 「求值未完成」的命名空间 → getter 读到未初始化的模块级绑定（2026-09-19 实测复现）
@@ -72,12 +74,6 @@ export function stampRecordTimes(record: Record<string, unknown>, isDeleted: boo
 	}
 	const created = record.createdAt;
 	if (typeof created !== "string" || Number.isNaN(Date.parse(created))) record.createdAt = now;
-}
-
-/** 内容归一化哈希（去重用）：去空白、转小写、sha1。 */
-function contentHash(content: string): string {
-	const norm = content.replace(/\s+/g, " ").trim().toLowerCase();
-	return createHash("sha1").update(norm, "utf-8").digest("hex");
 }
 
 /**
@@ -148,7 +144,7 @@ export function registerL1CommitTool(
 				},
 				records: {
 					type: "array",
-					description: "L1 memory record objects: {id, content, type, priority, scene_name, source_message_ids, metadata, timestamps, createdAt, updatedAt, version, sessionKey, sessionId, deleted}. 注意 timestamps 与 createdAt 分工：timestamps = 源消息事件时刻（子代理填，用于追溯该记忆对应哪段对话）；createdAt/updatedAt = 记录落盘时刻（由 l1_commit 用代码时间覆写，子代理填的值会被忽略）；deleted:true 的标记行 createdAt 保留原记录的创建时刻。main-agent 模式下只需 {content, type}，其余缺省由服务端补齐。",
+					description: "L1 memory record objects: {id, content, type, priority, scene_name, source_message_ids, metadata, timestamps, createdAt, updatedAt, version, sessionKey, sessionId, deleted, taskState}. 注意 timestamps 与 createdAt 分工：timestamps = 源消息事件时刻（子代理填，用于追溯该记忆对应哪段对话）；createdAt/updatedAt = 记录落盘时刻（由 l1_commit 用代码时间覆写，子代理填的值会被忽略）；deleted:true 的标记行 createdAt 保留原记录的创建时刻。taskState 仅 work_task 使用，取值 open|done|dropped（省略即 open；其它类型带该字段会被忽略并回报 taskStateIgnored）。**替换/合并一条已关闭（done/dropped）的任务时，替代记录必须把 taskState 一并带上**，否则新版本会退回待办（旧行已作废，事后查不出；服务端会以 taskStateDroppedOnReplace 计数提示）。main-agent 模式下只需 {content, type}，其余缺省由服务端补齐。",
 					items: { type: "object" },
 				},
 				cursor: {
@@ -366,15 +362,26 @@ export function registerL1CommitTool(
 				//
 				// 硬闸（拒绝整批，因为都是"真错"，且改起来是确定动作）：
 				//   · 非 deleted 记录 content 必须非空
-				//   · type 必须在枚举内（旧代码只判"是非空字符串"，报错文案却写着枚举 —— 于是
+				//   · type 必须在枚举内（旧代码只判"非空字符串"，报错文案却写着枚举 —— 于是
 				//     历史上有 type:"architecture" 这种越界值落库）
 				//   · priority 若给就必须在 0..100
+				//   · taskState 若给就必须在闭集内（2026-10-08 任务生命周期）
 				// 软闸（不拒绝，只在返回体暴露 + 留痕，避免把写盘路径变脆）：
 				//   · 子代理记录缺 source_message_ids（旧代码静默塞空数组，违反被无声吞掉）
 				//   · content 超过召回预算（会被 recall 的 maxCharsPerRecord 截断成半句）
+				//   · taskState 给了但 type 不是 work_task（忽略该字段并计数）
+				//
+				// ⚠ taskState 校验**必须**留在这一段（2026-10-08）：
+				//   ① 与 type 同格 —— 这里两条路径（main-agent / subagent）都会经过；
+				//   ② **不能**挪到后面的价值校验之后 —— 那一段只在 `!isMainAgent && enabled`
+				//      时运行，挪过去等于 main-agent 路径完全绕过闭集校验；
+				//   ③ 也不能挪到写锁之后（"拿了锁再拒"）。deleted 标记行照旧豁免（沿用原记录字段）。
+				//   ④ 缺省补 `open`：缺字段在读取侧等价于 open，显式写入是为了让存量与新记录
+				//      在库上口径一致（可直接 grep/统计），不是语义要求。
 				const provenanceMissingList: string[] = [];
 				const overBudget: number[] = [];
 				let priorityMissing = 0;
+				let taskStateIgnored = 0;
 				// 写锁句柄在 execute 作用域声明（见函数开头）：catch 里的 `writeLock?.release()` 才看得到
 				{
 					const recallBudget = loadRecallConfig(profilePath).maxCharsPerRecord;
@@ -392,6 +399,32 @@ export function registerL1CommitTool(
 							};
 						}
 						r.type = t;
+						if (t === "work_task") {
+							if (r.taskState === undefined) {
+								r.taskState = "open";
+							} else {
+								const st = normalizeTaskState(r.taskState);
+								if (!st) {
+									return {
+										content: [
+											{
+												type: "text",
+												text: JSON.stringify({
+													success: false,
+													error: `records[${i}].taskState 越出枚举：${JSON.stringify(r.taskState)}（只能是 ${L1_TASK_STATES_TEXT}，或省略由服务端补 open）`,
+												}),
+											},
+										],
+										details: {},
+									};
+								}
+								r.taskState = st;
+							}
+						} else if (r.taskState !== undefined) {
+							// 非 work_task 不给该字段（注入侧只给任务渲染状态标签，写进去没人读）
+							delete r.taskState;
+							taskStateIgnored++;
+						}
 						// 子代理路径原先**不补**默认 priority（只有 main-agent 路径补），漏填就落成 undefined、
 						// 让 quality.ts 的优先级权重失效。这里统一补 70 并计数（软闸，不改写盘行为）。
 						if (r.priority === undefined) {
@@ -616,30 +649,33 @@ export function registerL1CommitTool(
 
 			// 0. 去重：扫描现有 records 建 id 集合 + 内容哈希集合（仅非 deleted）
 			// 目的：重试 / 部分提交 / 子代理重新提取同一事实时，不产生重复 records。
-			const recordsDir = join(profilePath, MEMORY_DB_DIR, RECORDS_DIR_NAME);
-			const existingIds = new Set<string>();
-			const existingHashes = new Set<string>();
-			// B2（2026-09-11）：记录每个 id 追加序最后的活跃行位置（用于 deleted 行就地标记）
-			const lastAliveById = new Map<string, { file: string; lineIdx: number }>();
-			if (existsSync(recordsDir)) {
-				for (const f of readdirSync(recordsDir).filter((f) => /\.jsonl$/.test(f))) {
-					try {
-						const text = readFileSync(join(recordsDir, f), "utf-8");
-						const fileLines = text.split(/\r?\n/);
-						for (let li = 0; li < fileLines.length; li++) {
-							const t = fileLines[li].trim();
-							if (!t) continue;
-							try {
-								const o = JSON.parse(t);
-								if (typeof o?.id === "string") existingIds.add(o.id);
-								if (!o?.deleted && typeof o?.content === "string") existingHashes.add(contentHash(String(o.content)));
-								if (typeof o?.id === "string" && o.deleted !== true) lastAliveById.set(o.id, { file: f, lineIdx: li });
-							} catch {
-								// 跳过坏行
-							}
-						}
-					} catch {
-						// 跳过坏文件
+			// 扫描口径（分片按文件名升序 + LWW 最后一行）见 in-place-mark.ts —— 与 task-state 的状态标记共用同一实现。
+			const recordsDir = recordsDirOf(profilePath);
+			const {
+				allIds: existingIds,
+				aliveContentHashes: existingHashes,
+				lastById,
+				lastAliveById,
+			} = scanRecordShards(recordsDir);
+
+			// 0.5 任务状态继承观测（2026-10-08）——dedup 的 update/merge 是"新 id + 旧行墓碑"，
+			//     替代行完全来自子代理本次输出；若被替换的记录带非 open 的 taskState，而本批没有任何
+			//     新记录把已关闭状态带过来，新版本就会**静默退回"待办"**（旧行已是墓碑，事后查不出）。
+			//     这里只做观测（软闸计数），真正的约束在提示词契约（dedup.md / l1-extractor.md）
+			//     与 l1-admin/rewrite.mjs 的字段继承上。
+			//     为什么不做代码硬继承：batch 内"墓碑行 ↔ 替代行"没有结构化对应关系
+			//     （metadata.replaced 目前没有任何写入方），配对只能是猜测，猜错等于用错状态覆盖。
+			let taskStateDroppedOnReplace = 0;
+			{
+				// 本批只要有一条新记录带着"已关闭"状态，就认为子代理处理了状态（保守，避免误报）
+				const replacementCarriesState = recordsToWrite.some(
+					(r) => r.deleted !== true && r.type === "work_task" && taskStateOf(r) !== "open",
+				);
+				if (!replacementCarriesState) {
+					for (const r of recordsToWrite) {
+						if (r.deleted !== true) continue;
+						const prev = lastById.get(String(r.id ?? ""));
+						if (prev && prev.obj.deleted !== true && taskStateOf(prev.obj) !== "open") taskStateDroppedOnReplace++;
 					}
 				}
 			}
@@ -686,31 +722,17 @@ export function registerL1CommitTool(
 
 			// B2（2026-09-11）：就地标记段——对受影响历史分片整文件重写（原子 tmp+rename；已持跨进程锁）。
 			// 顺序在后：等新行 append 完再重写历史分片（两者不冲突，但避免同日分片被两阶段写）。
-			for (const [file, lineSet] of markByFile) {
-				const fp = join(recordsDir, file);
-				if (!existsSync(fp)) continue;
-				const fileLines = readFileSync(fp, "utf-8").split(/\r?\n/);
-				let changed = 0;
-				const out = fileLines.map((l, i) => {
-					const t = l.trim();
-					if (!t || !lineSet.has(i)) return l;
-					try {
-						const o = JSON.parse(t);
-						if (o.deleted === true) return l; // 幂等
-						o.deleted = true;
-						o.updatedAt = nowStamp;
-						o.metadata = { ...(o.metadata || {}), l1Cleanup: { ...(o.metadata?.l1Cleanup || {}), action: "commit-deleted", tool: "l1_commit", appliedAt: nowStamp } };
-						changed++;
-						return JSON.stringify(o);
-					} catch {
-						return l;
-					}
-				});
-				if (changed > 0) {
-					writeFileSync(fp + ".tmp", out.join("\n"), "utf-8");
-					renameSync(fp + ".tmp", fp);
-				}
-			}
+			const markStats = rewriteShardRows(recordsDir, markByFile, (o) => {
+				if (o.deleted === true) return false; // 幂等
+				o.deleted = true;
+				o.updatedAt = nowStamp;
+				const md = (typeof o.metadata === "object" && o.metadata !== null ? o.metadata : {}) as Record<string, unknown>;
+				o.metadata = {
+					...md,
+					l1Cleanup: { ...((md.l1Cleanup as Record<string, unknown>) ?? {}), action: "commit-deleted", tool: "l1_commit", appliedAt: nowStamp },
+				};
+				return true;
+			});
 
 			// 2. 同步写入向量（仅当 VECTORIZATION_ENABLED=true 且 embedding 配置可用）
 			let vectorStats: { inserted: number; deleted: number } | null = null;
@@ -718,8 +740,8 @@ export function registerL1CommitTool(
 				const embConfig = loadEmbeddingConfig(profilePath);
 				if (!embConfig) {
 					// embedding 未配置，跳过向量写入
-				} else if (!isVectorizationReady(profilePath)) {
-					// VECTORIZATION_ENABLED=false 或未达阈值，跳过向量写入
+				} else if (!isVectorizationReady(profilePath, (await loadAllL1Records(profilePath, 365)).length)) {
+					// 向量化关闭或最近 365 天 L1 记录未达到阈值，跳过向量写入
 				} else if (toEmbed.length > 0 || toDelete.length > 0) {
 					// 两个单例由文件头部静态导入（见那里的注释）；此处保持静态引用，避免半成品命名空间竞态
 					const embService = await getEmbeddingService(profilePath);
@@ -860,7 +882,10 @@ export function registerL1CommitTool(
 									...(projectWarnings.length > 0 ? { projectWarnings } : {}),
 									// 口径：被**改写的分片文件数**（Map 的 key 是文件名），不是墓碑条数——
 									// 3 条墓碑全在同一分片时这里就是 1（2026-09-20 子代理据此误判“计数与落盘不一致”）。
-									markedInPlace: markByFile.size,
+									// 2026-10-08：改用 rewriteShardRows 的返回值 = **实际改写成功的**分片数
+									//（旧写法用 markByFile.size，把"幂等未改"的分片也算进去了）。
+									markedInPlace: markStats.changedFiles,
+									markedInPlaceRows: markStats.changedRows,
 									sceneStats,
 									sceneWarns,
 									poolWriteFailed,
@@ -871,6 +896,10 @@ export function registerL1CommitTool(
 									// 软闸观测（硬闸已在前面直接拒绝）：本来只该是 0；非 0 即说明规则没被遵守
 									...(provenanceMissingList.length > 0 ? { provenanceMissing: provenanceMissingList.length } : {}),
 									...(priorityMissing > 0 ? { priorityDefaulted: priorityMissing } : {}),
+									// 非 work_task 记录带了 taskState ⇒ 已忽略该字段（写了没人读，见 record-types.ts）
+									...(taskStateIgnored > 0 ? { taskStateIgnored } : {}),
+									// >0 ⇒ 本批作废了带进度的任务但没有替代行继承其状态（见 0.5 段注释）
+									...(taskStateDroppedOnReplace > 0 ? { taskStateDroppedOnReplace } : {}),
 									...(overBudget.length > 0 ? { overRecallBudget: overBudget.length, overBudgetMax: Math.max(...overBudget) } : {}),
 									...(mainAgentUnclassified > 0 ? { sceneHint: `${mainAgentUnclassified} 条未归类：记录前请先调 list_l1_scenes 从清单里挑 scene_id（或给稳定的 scene_name），否则只能落占位 ${MAIN_AGENT_SCENE_FALLBACK}。` } : {}),
 								}),

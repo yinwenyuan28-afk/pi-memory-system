@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// l1-admin rewrite：改写一条 L1 记忆 = 新 id 追加 + 旧行就地标记（loader 无 LWW，必须就地标记旧行）
+// l1-admin rewrite：改写一条 L1 记忆 = 新 id 追加 + 旧行就地标记
+// （loader 为 LWW：同 id 取最后一行 ⇒ 就地标记旧行才能让它不再存活，同时保留 content 溯源。
+//  2026-10-08 更正：本行原写「loader 无 LWW」，那是 2026-09-11 之前的形态。）
 // 语义（本次 L1 清理验证并定版）：
 //   - 新 id 规范 l1_{Date.now()}_{4位}，批内唯一
 //   - 新行 createdAt=now（保 quality 7 天保护），原 createdAt 入 metadata.origCreatedAt
@@ -48,6 +50,9 @@ const newObj = {
   priority: newPriority ?? oldObj.priority,
   scene_name: oldObj.scene_name,
   scene_id: oldObj.scene_id, // 2026-09-15：场景池链路——漏拷会让改写后的记录脱离池（静默断链）
+  // 2026-10-08：任务生命周期（work_task）——本表是**白名单重建**，漏拷即静默丢字段：
+  // 一次改写就会让已标记完成/废弃的任务退回「待办」（同 scene_id 的教训）。
+  taskState: oldObj.taskState,
   source_message_ids: oldObj.source_message_ids,
   timestamps: oldObj.timestamps,
   createdAt: NOW,

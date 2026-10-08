@@ -16,10 +16,16 @@
 //   **静态** import `@earendil-works/pi-ai/compat`，而该包的 exports 只声明了 import 条件
 //   （没有 require），少了就报 `ERR_PACKAGE_PATH_NOT_EXPORTED: './compat'`。
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import extension from "../index.ts";
 
-const EXT_ROOT = "C:/Users/leaf/.pi/agent/extensions/memory-system";
+// 扩展根目录**从脚本自身位置推导**，不写死插件安装路径（2026-10-08 修）。
+// 原值 `C:/Users/leaf/.pi/agent/extensions/memory-system` 是迁移前的安装位置；扩展后来改为从
+// 开发仓库直接加载，该目录已不存在 —— 后果不只是第 5 节的 readdirSync 直接 ENOENT 崩掉，
+// 更隐蔽的是第 5/6 节的静态扫描**整段被跳过**（路径不存在 → 每个文件 existsSync 为假 → return），
+// 于是"源码无内联 required""本次无 schema 归一化告警"一直是**真空通过**：门禁看着在跑，其实没查。
+const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 let pass = 0;
 let fail = 0;

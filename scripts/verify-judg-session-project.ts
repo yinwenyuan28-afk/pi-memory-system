@@ -52,6 +52,9 @@ import { buildJudgePayload, JUDGE_MAX_TOKENS, judgeProject, parseJudgeJson, reso
 import { registerL1CommitTool } from "../memory/l1/commit-tool.ts";
 import { judgeAndPersist, persistJudgement, readSessionCwd, sessionKeyOf } from "../util/judg-session-project/setup.ts";
 
+/** 合法 v2 游标：子代理路径自 2026-10-04 起只接受 v2（旧 ISO 串会被入口拒收，见 verify-l1-value-check.ts 同款说明）。 */
+const V2_CURSOR = JSON.stringify({ version: 2, files: { "2026-09-30.jsonl": 0 } });
+
 let pass = 0;
 let fail = 0;
 function check(name: string, cond: boolean, extra = ""): void {
@@ -418,7 +421,7 @@ console.log("\n=== G. 端到端：l1_commit 两条路径 ===");
 	// G1 subagent + flag:true（decidedBy=llm）
 	const g1 = tempProfile();
 	upsertSessionJudg(g1, "sk1", { project: "C:/dev/proj", flag: true, decidedBy: "llm", confidence: 0.9, evidence: [{ path: "C:/dev/proj", filesTouched: 5 }] });
-	await commitIn(g1, { cursor: "2026-09-30T00:00:00.000Z", records: [{ content: "G1", type: "work_fact", sessionKey: "sk1", cwd: "C:/LLM瞎填的", metadata: { scope: "self" } }] });
+	await commitIn(g1, { cursor: V2_CURSOR, records: [{ content: "G1", type: "work_fact", sessionKey: "sk1", cwd: "C:/LLM瞎填的", metadata: { scope: "self" } }] });
 	const r1 = readRecs(g1).find((r) => r.content === "G1");
 	check("G1 subagent：cwd 原样保留自填值（永不被改写成项目）", r1?.cwd === "C:/LLM瞎填的", String(r1?.cwd));
 	check("G1 subagent：判定出的项目落进 metadata.project", (r1?.metadata as Record<string, unknown>)?.project === "C:/dev/proj", JSON.stringify(r1?.metadata));
@@ -427,7 +430,7 @@ console.log("\n=== G. 端到端：l1_commit 两条路径 ===");
 	// G2 subagent + flag:false → 判定不可用：project 写空串，**cwd 仍原样保留**（不退回 ctx.cwd）
 	const g2 = tempProfile();
 	upsertSessionJudg(g2, "sk2", { project: "C:/dev/占位", flag: false, decidedBy: "llm", confidence: 0.1, evidence: [{ path: "C:/dev/占位", filesTouched: 1 }] });
-	await commitIn(g2, { cursor: "2026-09-30T00:00:00.000Z", records: [{ content: "G2", type: "work_fact", sessionKey: "sk2", cwd: "C:/LLM瞎填的" }] });
+	await commitIn(g2, { cursor: V2_CURSOR, records: [{ content: "G2", type: "work_fact", sessionKey: "sk2", cwd: "C:/LLM瞎填的" }] });
 	const r2 = readRecs(g2).find((r) => r.content === "G2");
 	check("G2 flag:false → cwd 仍原样保留（判定不可用也不动 cwd）", r2?.cwd === "C:/LLM瞎填的", String(r2?.cwd));
 	check("G2 flag:false → metadata.project 为空串（占位 project 不取）", (r2?.metadata as Record<string, unknown>)?.project === "", JSON.stringify(r2?.metadata?.project));
@@ -453,7 +456,7 @@ console.log("\n=== G. 端到端：l1_commit 两条路径 ===");
 	mkdirSync(recDir4, { recursive: true });
 	const oldRow = { id: "l1_1_aaaa", content: "G4", type: "work_fact", priority: 70, scene_name: "x｜y", cwd: "C:/老归属", deleted: false, version: 1, timestamps: ["2026-09-30T00:00:00.000Z"], createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z", metadata: {}, source_message_ids: [], sessionKey: "sk4" };
 	writeFileSync(join(recDir4, "2026-09-30.jsonl"), JSON.stringify(oldRow) + "\n", "utf-8");
-	const g4res = await commitIn(g4, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_aaaa", content: "G4", type: "work_fact", deleted: true, sessionKey: "sk4", cwd: "C:/新归属也不该写" }] });
+	const g4res = await commitIn(g4, { cursor: V2_CURSOR, records: [{ id: "l1_1_aaaa", content: "G4", type: "work_fact", deleted: true, sessionKey: "sk4", cwd: "C:/新归属也不该写" }] });
 	check("G4 墓碑就地标记成功", g4res.success === true && (g4res.markedInPlace as number) >= 0, JSON.stringify(g4res).slice(0, 140));
 	const rows4 = readRecs(g4).filter((r) => r.id === "l1_1_aaaa");
 	const last4 = rows4[rows4.length - 1];
@@ -461,7 +464,7 @@ console.log("\n=== G. 端到端：l1_commit 两条路径 ===");
 
 	// G5 无条目 + 空 sessionKey（B7）→ project 走空串 + projectSource=fallback，**不抛**，cwd 不动
 	const g5 = tempProfile();
-	await commitIn(g5, { cursor: "2026-09-30T00:00:00.000Z", records: [{ content: "G5", type: "work_fact", cwd: "C:/瞎填" }] });
+	await commitIn(g5, { cursor: V2_CURSOR, records: [{ content: "G5", type: "work_fact", cwd: "C:/瞎填" }] });
 	const r5 = readRecs(g5).find((r) => r.content === "G5");
 	check("G5 空 sessionKey → 提交成功且不抛（记录已落盘）", !!r5, JSON.stringify(readRecs(g5).map((r) => r.content)));
 	check("G5 空 sessionKey → cwd 原样保留自填值", r5?.cwd === "C:/瞎填", String(r5?.cwd));
@@ -471,7 +474,7 @@ console.log("\n=== G. 端到端：l1_commit 两条路径 ===");
 	// ⚠ 两条记录必须各带 id：子代理路径**不像 main-agent 那样服务端生成 id**，
 	//   缺 id 的第二条会被「同 id 重投跳过」静默丢掉（`existingIds` 已含 undefined）。
 	const g6 = tempProfile();
-	await commitIn(g6, { cursor: "2026-09-30T00:00:00.000Z", records: [{ id: "l1_1_aaaa", content: "G6缺字段", type: "work_fact" }, { id: "l1_1_bbbb", content: "G6空串", type: "work_fact", cwd: "" }] });
+	await commitIn(g6, { cursor: V2_CURSOR, records: [{ id: "l1_1_aaaa", content: "G6缺字段", type: "work_fact" }, { id: "l1_1_bbbb", content: "G6空串", type: "work_fact", cwd: "" }] });
 	const recs6 = readRecs(g6);
 	const g6a = recs6.find((r) => r.content === "G6缺字段");
 	const g6b = recs6.find((r) => r.content === "G6空串");

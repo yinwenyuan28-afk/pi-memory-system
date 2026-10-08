@@ -8,7 +8,8 @@
 //      防止有人把整段批量逻辑删了而回归不报（这条分支的收益是"少往返"，删了不会报错）
 // 用 tsx 跑：tsx scripts/verify-embed-batch.ts
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { registerEmbedAndSearchTool } from "../memory/search/embedding/tool.ts";
 
 let pass = 0;
@@ -23,7 +24,10 @@ function check(name: string, cond: boolean, extra = ""): void {
 	}
 }
 
-const EXT = "C:/Users/leaf/.pi/agent/extensions/memory-system";
+// 扩展根目录**从脚本自身位置推导**，不写死插件安装路径（2026-10-08 修，与 verify-tool-schemas.ts 同款问题）。
+// 原值 `C:/Users/leaf/.pi/agent/extensions/memory-system` 是迁移前的安装位置；扩展改为从开发仓库加载后
+// 该目录不存在，第 3 节的静态检查会直接 ENOENT 崩掉 —— 也就是说这段"防被无声删除"的断言一直没在跑。
+const EXT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(EXT, "memory", "search", "embedding", "tool.ts");
 
 interface CapturedTool {

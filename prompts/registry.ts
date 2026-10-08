@@ -56,7 +56,7 @@ const BUILTIN: Record<string, { template: string; vars: string[] }> = {
 	"shared#l1-selffix-hint": {
 		vars: [],
 		template:
-			"[L1 自纠提示] 若某条召回记忆与当前事实/代码矛盾且有可复核证据，可调 l1_fix 就地修正（需附 evidence）；仅可疑无证据时用 clear_invalid_l1_records 标记。",
+			"[L1 自纠提示] 若某条召回记忆与当前事实/代码矛盾且有可复核证据，可调 l1_fix 就地修正（需附 evidence）；仅可疑无证据时用 clear_invalid_l1_records 标记。行首标 `[待办]` 的任务完成后（或已决定不做）用行内 id 调 l1_task_state 标记。",
 	},
 	// 原先这里有 "shared#protected-files"，2026-10-02（P1-9）删除：
 	// 它的内容（保护哪些文件）写死了本机绝对路径，且自建 spawn 之后指向的

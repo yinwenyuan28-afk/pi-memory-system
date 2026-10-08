@@ -85,6 +85,15 @@ const REC = (over: Record<string, unknown> = {}) => ({
 	...over,
 });
 
+/**
+ * 合法 v2 游标（`{version, files:{分片名: 字节偏移}}` 的序列化）。
+ *
+ * 2026-10-08 修：第 6/7 节此前传的是旧 ISO 串 `"2026-09-17T00:00:00.000Z"`，而子代理路径自
+ * 2026-10-04 起只接受 v2（ISO 串只作一次性迁移输入，`parseL1CursorToken` 会原样返回 string ⇒ 入口拒收），
+ * 于是那 11 项断言一直失败却没人发现——与 `verify-tool-schemas.ts` 的硬编码路径同一类"门禁没在跑"。
+ */
+const V2_CURSOR = JSON.stringify({ version: 2, files: { "2026-09-17.jsonl": 0 } });
+
 async function main(): Promise<void> {
 	// ════════════════════════════════════════════════════════════════════════
 	console.log("\n=== 1. 判据摘取（与提取规则同源，且能抗标题漂移） ===");
@@ -296,7 +305,7 @@ async function main(): Promise<void> {
 	{
 		const root = makeProfile({ enabled: false }); // 关掉价值校验，单独验闸门
 		const commit = captureCommitTool(root);
-		const base = { source: "subagent", cursor: "2026-09-17T00:00:00.000Z", records: [REC()] };
+		const base = { source: "subagent", cursor: V2_CURSOR, records: [REC()] };
 
 		const okRes = await commit(base);
 		check("正常记录可提交", okRes.success === true, `written=${okRes.written}`);
@@ -333,13 +342,13 @@ async function main(): Promise<void> {
 	{
 		const root = makeProfile({ enabled: true, maxTurns: 1 }); // 默认开；ctx 无 model → 应 skipped
 		const commit = captureCommitTool(root);
-		const res = await commit({ source: "subagent", cursor: "2026-09-17T00:00:00.000Z", records: [REC()] });
+		const res = await commit({ source: "subagent", cursor: V2_CURSOR, records: [REC()] });
 		check("价值校验开着也不阻断写盘", res.success === true);
 		check("无可用模型 → 返回体带 skipped（fail-open 可观测）", !!res.valueCheck && !!res.valueCheck.skipped, JSON.stringify(res.valueCheck));
 
 		const root2 = makeProfile({ enabled: false });
 		const commit2 = captureCommitTool(root2);
-		const res2 = await commit2({ source: "subagent", cursor: "2026-09-17T00:00:00.000Z", records: [REC()] });
+		const res2 = await commit2({ source: "subagent", cursor: V2_CURSOR, records: [REC()] });
 		check("关掉时不出现 valueCheck 字段", res2.success === true && res2.valueCheck === undefined);
 
 		// 主代理路径不跑价值校验（同步工具调用不能被 LLM 卡住）

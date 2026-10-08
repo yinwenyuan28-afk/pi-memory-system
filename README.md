@@ -8,7 +8,7 @@ L0–L3 记忆管线扩展。会话进行中自动提取原子记忆、整合进
 |---|---|---|
 | **操作系统** | **仅 Windows** | 停止子代理依赖 `taskkill /T /F` 的进程树语义；项目归属判定用盘符形状规则。见下方「已知限制」 |
 | Node | `>= 22.13` | 用到内置的 `node:sqlite` |
-| pi | **实测可用**：pi 0.84.2 + pi-coding-agent 0.83.0 + pi-ai 0.74.2 | 扩展 API。**不需要额外安装任何 `@earendil-works/*`**——pi 的扩展加载器通过 jiti 别名 / Bun 虚拟模块把这些包指向它自己 bundle 的副本，扩展 import 它们不落 `node_modules`。这条是实测的：发布产物装在一条向上五级都没有 `node_modules` 的路径上，仍 0 错误加载、18 工具 + 16 命令全在位 |
+| pi | **实测可用**：pi 0.84.2 + pi-coding-agent 0.83.0 + pi-ai 0.74.2 | 扩展 API。**不需要额外安装任何 `@earendil-works/*`**——pi 的扩展加载器通过 jiti 别名 / Bun 虚拟模块把这些包指向它自己 bundle 的副本，扩展 import 它们不落 `node_modules`。这条是实测的：发布产物装在一条向上五级都没有 `node_modules` 的路径上，仍 0 错误加载、工具与命令全在位（2026-10-08 用 `scripts/verify-tool-schemas.ts` 实测当前工作区：19 工具 / 18 命令） |
 
 **不依赖 pi-subagents**（2026-10-01 起）。L1/L2/L3/review/skill-review 五条链的后台子代理由本扩展**自己 spawn 一个 pi 子进程**执行（`util/spawn.ts`），不需要安装、也不需要修改任何其它扩展的源码。
 
@@ -55,12 +55,30 @@ JSONC 格式（支持 `//` 注释）。四个节：
 
 | 节 | 作用 | 缺省会怎样 |
 |---|---|---|
-| `recall` | 召回闸门：相似度下限、注入条数上限、注入超时与模式 | 全部回落到内置默认，**不崩** |
+| `recall` | 召回闸门：相似度下限、注入条数上限、注入超时与模式、已关闭任务是否剔除（`hideClosedTasks`） | 全部回落到内置默认，**不崩** |
 | `vectorization` | 向量化开关与触发阈值 | 默认关闭，**不崩** |
 | `subagent` | 子代理存活门控：软/硬阈值、停止序列宽限 | 全部回落到内置默认 |
 | `model` | `llm`（后台模型）与 `embedding`（向量化服务） | `llm` 缺省跟随前台模型；**`embedding` 的 `url` / `apiKey` 缺失时，用到向量化的功能会抛错** |
 
 配置项的完整语义见各节源码注释（`config/app-config.ts`）。
+
+### 交互配置命令
+
+- `/my-memory:model`：交互选择后台 LLM（从 Pi 当前可用模型中选）、配置 Embedding 服务，以及明确开启/关闭向量化。后台 LLM 设置只影响记忆系统的后台调用，不会切换当前对话模型。向量化开启后，L1 提交按最近 365 天有效记录数执行阈值（默认 500 条）；已有未向量化记录需手动回填。
+- `/my-memory:model:peek`：只读查看当前 profile 的后台模型来源、Embedding 配置状态、向量化开关/阈值、最近 365 天 L1 记录数和本地向量数。它不写配置或数据库、不请求远端，也不显示 API Key。
+- Embedding API Key 通过 Pi 的输入框录入；Pi 当前扩展 UI 不提供密码掩码，输入过程中密钥可能可见。保存后密钥仍按现有格式存入 profile 配置文件。
+- 修改 Embedding 配置后建议重启 Pi，以确保主进程和后台子代理都使用新服务配置。向量化默认关闭，配置 Embedding 不会自动开启，也不会自动回填历史记忆。
+- 若本地向量库已存在，交互配置器会阻止把 Embedding 维度改成与向量表不同的值，以避免后续召回/写入错误；向导不自动迁移已有向量表。
+
+## 任务生命周期（work_task）
+
+L1 的 `work_task` 记录带一个开关状态，存在记录的**顶层**字段 `taskState`：`open`（待办，缺省）/ `done`（已完成）/ `dropped`（已废弃、不做了）。
+
+- 召回块里每行都带编号与状态标签：`- [待办] (l1_1789097476492_xtah) 正文…`。agent 确认待办已完成后调 `l1_task_state` 工具标记（`{ids, state, reason?}`）；用户改主意要重做 → `state: "open"`。
+- 用户侧等价入口：`/my-memory:l1:task [list|done|drop|reopen] [id…] [--all] [--reason "原因"]`，`list` 列出未关闭任务（`--all` 含已关闭）。
+- 标记是**就地**改状态：正文、编号、向量、命中统计都不变 —— 任务照旧可被召回，默认带 `[已完成]` / `[已废弃]` 标签注入（"这件事做过"本身常是有用的答案）。想彻底不注入已关闭任务，把 `recall.hideClosedTasks` 设为 `true`（记录仍在库里、仍可 reopen）。
+- **与 `deleted` 的区别**：`deleted` 表示"这条记录不该存在"（查重覆盖 / 纠错作废），会让记录退出召回与向量库；"任务关了"不是删除，两件事各有各的入口（前者 `l1_fix`，后者 `l1_task_state`）。
+- 存量记录迁移（把历史 `metadata.status="done"` 升格成 `taskState`）：`node scripts/migrate-task-state.mts --profile <profileDir>` 先看 dry-run 报告，确认后加 `--apply`（自动备份；只映射明确的 `done`，其余不猜）。
 
 ## 已知限制
 

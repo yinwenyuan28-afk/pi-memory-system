@@ -114,7 +114,7 @@
 
 4. **策略倾向**：
    - work_fact：同一事实/决策/状态的补充或修正 → 倾向 update 或 merge。
-   - work_task：同一任务的 owner、deadline、状态变化 → 倾向 update；补充依赖或验收标准 → 倾向 merge。
+   - work_task：同一任务的 owner、deadline、状态变化 → 倾向 update；补充依赖或验收标准 → 倾向 merge。**任务状态必须继承（最易丢的一条，务必逐字执行）**：只要被替换的候选里任一条 `taskState` 是 `done` / `dropped`，或新记忆本身表明该任务已完成/已放弃，合并结果就**必须**给出 `merged_task_state`（多条状态取最新那个），**绝不允许把已关闭的任务并回 `open`** —— 替代记录一旦漏带状态，新版本就退回「待办」，而旧行已被作废，事后查不出来（服务端只会在返回体里以 `taskStateDroppedOnReplace` 计数提示）。
    - work_method：同一 SOP、禁忌、原则、经验的补充 → 倾向 merge；更清晰通用的表述 → 倾向 update。原则类记忆出现语义矛盾时，先判断适用范围是否不同——范围不同 → 新记忆 store（不指定 target_ids），content 写明自身适用范围，不得与旧记忆 merge；同范围直接矛盾（用户改主意/依据被证伪）→ 必须 update 覆盖，不得 merge 共存。
    - work_artifact：同一文档、PR、Prompt、报告等资产的用途、版本、链接补充 → 倾向 merge 或 update。
    - 跨类型示例：一条 work_fact "用户决定 L1 分类收为 3 类" + 一条 work_task "待跟进 L1 分类的切换验证" → 可 merge（同一决策的事件与跟进）。注意 work_fact 与 work_method 不得跨抽象层级合并（见核心规则）。
@@ -134,6 +134,7 @@
     "target_ids": ["要删除的候选记忆 record_id 1", "record_id 2"],
     "merged_content": "合并/更新后的记忆内容（merge/update 时必填）",
     "merged_type": "合并后的最佳 type：work_fact|work_task|work_method|work_artifact（merge/update 时必填）",
+    "merged_task_state": "open|done|dropped（merge/update 涉及 work_task 时必填；见第 4 条的状态继承规则）",
     "merged_priority": 85,
     "merged_timestamps": ["合并后的时间戳数组，包含所有新旧记忆时间戳的并集（merge/update 时必填）"]
   }
@@ -143,5 +144,6 @@
 - target_ids：要删除替换的旧记忆 ID **数组**（可以 1 条或多条）。store/skip 时省略或为空。
 - merged_content：merge/update 时的最终记忆文本。store/skip 时省略。
 - merged_type：merge/update 后记忆应归属的 type。根据合并后内容本质判断。
+- merged_task_state：merge/update 后该任务的**生命周期状态**（`open` / `done` / `dropped`，只对 `work_task` 有意义）。被替换记忆里已有 `done` / `dropped` 时**必须原样带过来**（多条取最新），或新记忆明确说明任务已完成/已放弃时据此给出 —— 漏掉即任务静默退回「待办」（见第 4 条）。
 - merged_priority：merge/update 后的新优先级（0-100 整数，merge/update 时必填）。合并后信息更完整、更确定，通常应**酌情提升** priority。参考标准：80-100（关键事实/重要任务/核心方法/重要资产），60-79（一般工作信息），<60（次要信息）。
 - merged_timestamps：合并后的时间戳数组。收集新记忆 + 所有被合并旧记忆的时间戳，去重排序。

@@ -40,6 +40,14 @@ interface CompactL1Record {
 	updatedAt: string;
 	version: number;
 	deleted: boolean;
+	/**
+	 * 任务生命周期状态（2026-10-08）：只对 `work_task` 有意义，缺字段 = `open`。
+	 *
+	 * 为什么必须进这个精简投影（顶层字段而不是 metadata）：L2 整理场景块时要写「相关任务与资产」，
+	 * 而那条口径是"只列仍需跟进的任务" —— 看不见状态就只能把已完成的任务一直列着
+	 * （历史教训：`metadata.status` 因为被这个投影剔除，37 条任务的真实进度对 L2 完全不可见）。
+	 */
+	taskState?: string;
 }
 
 /** 解析 L1 record，宽容坏行。 */
@@ -59,6 +67,7 @@ function parseL1Record(line: string): CompactL1Record | null {
 			updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : "",
 			version: typeof obj.version === "number" ? obj.version : 1,
 			deleted: obj.deleted === true,
+			taskState: typeof obj.taskState === "string" ? obj.taskState : undefined,
 		};
 	} catch {
 		return null;

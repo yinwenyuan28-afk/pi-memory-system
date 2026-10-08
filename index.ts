@@ -34,6 +34,7 @@ import { clearSubagentRun, listSubagentRuns, readSubagentRun } from "./memory/pi
 import { stopSubagent } from "./memory/pipeline/subagent-kill.ts";
 import { loadSubagentTimeouts } from "./memory/pipeline/timeout-config.ts";
 import { resolveAgentDir } from "./util/agent-dir.ts";
+import { registerModelSetupCommands } from "./config/model-setup.ts";
 import { holdUntilFrom, loadFailureState, saveFailureState } from "./memory/failure-state.ts";
 import { registerL2CommitTool, repairSceneMembers, syncSceneIndex } from "./memory/l2/commit-tool.ts";
 import { setupL3Persona } from "./memory/l3/index.ts";
@@ -43,6 +44,8 @@ import { registerEmbedAndSearchTool } from "./memory/search/embedding/tool.ts";
 import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-tool.ts";
 import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.ts";
 import { registerFixTool } from "./memory/l1/fix-tool.ts";
+import { registerTaskStateTool } from "./memory/l1/task-state.ts";
+import { formatInjectedRecordLine } from "./memory/l1/record-types.ts";
 import { loadRecallConfig } from "./memory/search/recall-config.ts";
 import { AUTO_INJECT_TOP_K } from "./config/thresholds.ts";
 import { createRecallScheduler } from "./memory/search/recall-scheduler.ts";
@@ -414,6 +417,9 @@ export default function (pi: ExtensionAPI) {
   registerClearInvalidL1RecordsTool(pi);
   // l1_fix 工具：agent 自发纠错（护栏 + exec l1-admin；对应命令 /my-memory:l1:fix）——2026-09-11 A 档
   registerFixTool(pi, () => manager?.getProfileManager()?.getActiveProfile()?.path);
+  // l1_task_state 工具：任务生命周期标记（就地改 taskState，无证据门槛；对应命令 /my-memory:l1:task）
+  // ——2026-10-08，与 l1_fix 刻意分开：纠错要证据，任务开关是例行动作（见 task-state.ts 文件头）
+  registerTaskStateTool(pi, () => manager?.getProfileManager()?.getActiveProfile()?.path);
 
   pi.on("session_start", async (_event, ctx) => {
     statusCtx = ctx;
@@ -852,8 +858,10 @@ export default function (pi: ExtensionAPI) {
           if (myTurn !== turnToken || !_pendingContext) return;
           if (settlement.outcome !== "ok" || !settlement.value || settlement.value.length === 0) return;
           const records = settlement.value;
+          // 注入行格式与三条约束（每行带编号 / 只给任务渲染状态标签 / 正文换行折成空格）集中在
+          // `formatInjectedRecordLine()`，理由见那里的注释（含"标了没人读"与伪造记忆行的教训）。
           _pendingContext.subMemories = renderPrompt("injection/l1-records", {
-            recordsLines: records.map((r) => `- ${r.content}`).join("\n"),
+            recordsLines: records.map((r) => formatInjectedRecordLine(r)).join("\n"),
           });
           _pendingContext.l1RecordIds = records.map((r) => r.recordId);
           _pendingContext.hitsCounted = false;
@@ -1186,6 +1194,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ── L1 Mode Command ───────────────────────────────────────
+
+  // ── Memory model setup / read-only peek ───────────────────
+  registerModelSetupCommands(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
 
   pi.registerCommand("my-memory:l1-mode", {
     description: "切换 L1 提取模式：code（work_fact/work_task/work_method/work_artifact）或 chat（persona/episodic/instruction）。用法：/my-memory:l1-mode [code|chat]",
@@ -1589,6 +1600,82 @@ export default function (pi: ExtensionAPI) {
         return text;
       } catch (err) {
         ctx.ui.notify(`l1:fix 异常：${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+  // 任务生命周期标记（2026-10-08）——与 l1_fix 的分工见 task-state.ts 文件头：
+  // l1_fix 是"记录写错了"（要证据、有防抖），本命令是"任务关了"（例行动作、无门槛、可回退）。
+  pi.registerCommand("my-memory:l1:task", {
+    description: "任务生命周期标记（work_task）。用法：/my-memory:l1:task [list|done|drop|reopen] [id...] [--all] [--reason \"原因\"]",
+    handler: async (args, ctx) => {
+      try {
+        const profilePath = manager?.getProfileManager()?.getActiveProfile()?.path;
+        if (!profilePath) { ctx.ui.notify("无活跃 profile", "error"); return; }
+        const argv = (args || "").trim().split(/\s+/).filter(Boolean);
+        const hasSub = Boolean(argv[0]) && !argv[0].startsWith("-");
+        const sub = (hasSub ? argv[0] : "list").toLowerCase();
+        const rest = hasSub ? argv.slice(1) : argv;
+        // 参数解析：`--all` 是布尔；其余 `--key value` 取下一个非 `--` 开头的 token 作为值
+        const flags: Record<string, string> = {};
+        const ids: string[] = [];
+        for (let i = 0; i < rest.length; i++) {
+          const t = rest[i];
+          if (t.startsWith("--")) {
+            const key = t.slice(2);
+            const next = rest[i + 1];
+            if (next !== undefined && !next.startsWith("--")) { flags[key] = next; i++; }
+            else flags[key] = "1";
+          } else ids.push(t);
+        }
+        const { listTaskRecords, applyTaskStateChanges } = await import("./memory/l1/task-state.ts");
+
+        if (sub === "list") {
+          const includeClosed = flags.all === "1";
+          const rows = listTaskRecords(profilePath, includeClosed);
+          if (rows.length === 0) {
+            ctx.ui.notify(includeClosed ? "库里没有 work_task 记录" : "没有未关闭的 work_task（--all 可看已关闭的）", "info");
+            return;
+          }
+          const lines = [
+            `${includeClosed ? "全部" : "未关闭"} work_task ${rows.length} 条（状态变更用 /my-memory:l1:task done|drop|reopen <id...>）:`,
+            "状态 | 创建日 | pri | id | 正文",
+          ];
+          for (const r of rows) {
+            const st = r.state === "open" ? "待办" : r.state === "done" ? "已完成" : "已废弃";
+            lines.push(`${st} | ${(r.createdAt || "?").slice(0, 10)} | ${String(r.priority).padStart(2)} | ${r.id} | ${r.content.replace(/\s+/g, " ").slice(0, 60)}`);
+          }
+          noticeReport("L1 任务清单", lines.join("\n"), { level: "info", maxSummaryLines: 30 });
+          return lines.join("\n");
+        }
+
+        const stateMap: Record<string, "open" | "done" | "dropped"> = { done: "done", drop: "dropped", reopen: "open" };
+        const state = stateMap[sub];
+        if (!state) {
+          ctx.ui.notify(`未知子命令 ${sub}（可用：list|done|drop|reopen）`, "error");
+          return;
+        }
+        if (ids.length === 0) {
+          ctx.ui.notify(`用法：/my-memory:l1:task ${sub} <id...> [--reason "原因"]`, "error");
+          return;
+        }
+        const out = applyTaskStateChanges(
+          profilePath,
+          ids.map((id) => ({ id, state })),
+          { by: "user", reason: flags.reason && flags.reason !== "1" ? flags.reason : undefined },
+        );
+        const label = state === "open" ? "重开" : state === "done" ? "标记完成" : "标记废弃";
+        if (out.lockError) {
+          ctx.ui.notify(`${label}失败：${out.lockError}`, "error");
+          return;
+        }
+        const lines = [`${label}：成功 ${out.changed} / 幂等 ${out.noop} / 失败 ${out.failed}（分片 ${out.changedFiles} 个）`];
+        for (const r of out.results) {
+          lines.push(r.ok ? (r.changed ? `✓ ${r.id}  ${r.from} → ${r.to}` : `= ${r.id}  已是 ${r.to}（无操作）`) : `✗ ${r.id}  ${r.error}`);
+        }
+        noticeReport("L1 任务状态", lines.join("\n"), { level: out.failed > 0 ? "warning" : "info", maxSummaryLines: 20 });
+        return lines.join("\n");
+      } catch (err) {
+        ctx.ui.notify(`l1:task 异常：${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });

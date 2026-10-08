@@ -67,6 +67,17 @@ export interface RecallConfig {
   maxHoldMs: number;
   /** 会话启动是否后台预热向量库/embedding 客户端（只开库建客户端，不发 embedding 请求）。 */
   prewarm: boolean;
+  /**
+   * 已关闭（`taskState` 为 `done` / `dropped`）的 `work_task` 是否从召回里**剔除**（2026-10-08）。
+   *
+   * - `false`（默认）：照常召回，注入行带 `[已完成]` / `[已废弃]` 标签 —— "已经做过 X"
+   *   本身常是问题的答案，且不毁数据、可回退（`reopen`）。
+   * - `true`：与 `deleted` 同效（不进候选、不注入），但记录仍在库里、仍可 reopen。
+   *
+   * 过滤位置在 `hybrid-recall.ts` 的闸门 1.5（加权截断**之前**），开启时 `fetchK` 同步放大：
+   * 若在截断之后再滤，自动注入 topK=3 会"滤掉几条就少几条"，等于随机丢记忆。
+   */
+  hideClosedTasks: boolean;
 }
 
 /** 内置默认值。minScore 由 scripts/sample-recall-scores.mjs 采样标定（2026-09-02）。 */
@@ -85,6 +96,7 @@ export const DEFAULT_RECALL_CONFIG: RecallConfig = {
   // 工折中：不追求覆盖 121s 最坏（会让闸门长期被占），取「远超正常、可脱离」。
   maxHoldMs: 35000,
   prewarm: true,
+  hideClosedTasks: false,
 };
 
 /** 从 JSON 解析 + 逐项校验回退默认（兼容 undefined / 类型错误 / 非法枚举）。 */
@@ -122,6 +134,8 @@ function mergeRecallConfig(raw: Partial<RecallConfig> | null | undefined): Recal
         ? raw.maxHoldMs
         : DEFAULT_RECALL_CONFIG.maxHoldMs,
     prewarm: typeof raw.prewarm === "boolean" ? raw.prewarm : DEFAULT_RECALL_CONFIG.prewarm,
+    hideClosedTasks:
+      typeof raw.hideClosedTasks === "boolean" ? raw.hideClosedTasks : DEFAULT_RECALL_CONFIG.hideClosedTasks,
   };
   // 语义约束：闸门持有上限必须大于结果预算，否则结果永远来不及用（配置写错时自动纠正并保留可解释性）
   if (merged.maxHoldMs <= merged.injectTimeoutMs) {

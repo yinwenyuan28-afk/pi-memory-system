@@ -25,6 +25,7 @@ import type { HitSource } from "../stats/l1-hit-stats-db.ts";
 import { logEvent } from "../../util/notice.ts";
 import { TOOL_RECALL_TOP_K_DEFAULT } from "../../config/thresholds.ts";
 import { CROSS_PROJECT_WEIGHT, scoreRecord } from "../../util/recall-score.ts";
+import { type L1TaskState, taskStateLabel, taskStateOf } from "../l1/record-types.ts";
 
 /**
  * 项目加权时的**检索放大倍数**（2026-10-02）。
@@ -33,6 +34,9 @@ import { CROSS_PROJECT_WEIGHT, scoreRecord } from "../../util/recall-score.ts";
  * 若仍只取 topK，被压下去的同项目记忆就永远没机会参与竞争。
  * 取 2× 是折中 —— 向量库单次检索成本几乎不随 K 增长，但也不能无限放大
  * （后面闸门 2 的字符预算会按顺序截断，放大倍数只影响「参与排序的池子大小」）。
+ *
+ * 2026-10-08：`recall.hideClosedTasks` 开启时**同样需要放大**，理由同款 —— 已关闭的
+ * 任务要先被滤掉，池子太小就补不上来（见闸门 1.5）。
  */
 export const PROJECT_WEIGHT_FETCH_MULTIPLIER = 2;
 
@@ -45,6 +49,12 @@ export interface L1RecordCandidate {
   priority?: number;
   scene_name?: string;
   createdAt?: string;
+  /**
+   * 任务生命周期状态（2026-10-08）：仅 `work_task` 记录带值；缺字段 = `open`。
+   * 注入侧据此渲染 `[待办]` / `[已完成]` / `[已废弃]` 标签 —— 没有这一步，
+   * 已完成的任务会与待办长得一模一样（历史教训：`metadata.status` 就是这么变成死字段的）。
+   */
+  taskState?: L1TaskState;
 }
 
 /** recallL1Records 返回结果 */
@@ -132,6 +142,8 @@ export async function recallL1Records(
   const cfg = loadRecallConfig(profilePath);
   const minScore = options.minScore ?? cfg.minScore;
   const shadowMode = cfg.shadowMode;
+  /** 已关闭任务是否从召回里剔除（默认 false = 照常注入并加状态标签，见 recall-config.ts）。 */
+  const hideClosed = cfg.hideClosedTasks === true;
 
   try {
     // 两个单例由文件头部静态导入（见那里的注释）；此处保持静态引用，避免半成品命名空间竞态
@@ -148,8 +160,16 @@ export async function recallL1Records(
       //   原来 topK=3 直接取前 3，加权后跨项目记忆被压后，留在候选里的同项目记忆
       //   可能不够 3 条（实测平台期：异项目被压到 6.7%），导致注入条数变少。
       //   故放大检索量再排序截断；放大倍数 2×，向量库单次检索的成本几乎不随 K 增长。
-      const fetchK = sessionProject ? topK * PROJECT_WEIGHT_FETCH_MULTIPLIER : topK;
+      const fetchK = sessionProject || hideClosed ? topK * PROJECT_WEIGHT_FETCH_MULTIPLIER : topK;
       const hits = await vecStore.search(queryVec, fetchK);
+
+      // 同一次召回里每条记录只加载一次（闸门 1.5 / 加权 / 字符预算三处都要完整记录）。
+      // 没有它，开关开启后每条候选会被读盘 2–3 次；2026-10-08 加闸门 1.5 时一并收束。
+      const recCache = new Map<string, Awaited<ReturnType<typeof loadL1RecordById>>>();
+      const loadRec = async (recordId: string) => {
+        if (!recCache.has(recordId)) recCache.set(recordId, await loadL1RecordById(recordId, profilePath));
+        return recCache.get(recordId) ?? null;
+      };
 
       // ── 闸门 1：相关性阈值（**加权前**，按真余弦卡） ─────────
       // shadowMode=true：只统计会被滤掉多少，不真剔除（标定期观察用）
@@ -158,6 +178,23 @@ export async function recallL1Records(
       if (minScore > 0) {
         filtered = hits.filter((h) => h.score < minScore).length;
         if (!shadowMode) kept = hits.filter((h) => h.score >= minScore);
+      }
+
+      // ── 闸门 1.5：已关闭任务（`recall.hideClosedTasks`）───────────
+      // 位置**必须在加权截断（下一段）之前**，刻意不照抄字符预算里 `deleted` 的处理位置：
+      // 自动注入 topK 只有 3，若在截断之后再滤，3 条里滤掉 2 条就只剩 1 条，池中第 4 名
+      // 永远补不上来 —— 那不是"静音"，而是"随机少注入记忆"。fetchK 因此同样放大（见上）。
+      // 语义：**只滤已关闭的 work_task**；`open` 与其它类型一律照常。过滤后不足 topK 不回退
+      // （宁可少注入，也不把"已关闭"当"待办"塞回去）。默认开关关闭时，本段整体不执行。
+      if (hideClosed) {
+        const keptOpen: typeof kept = [];
+        for (const hit of kept) {
+          const rec = await loadRec(hit.recordId);
+          if (!rec || rec.deleted) continue;
+          if (rec.type === "work_task" && taskStateOf(rec) !== "open") continue;
+          keptOpen.push(hit);
+        }
+        kept = keptOpen;
       }
 
       // ── 项目加权排序（2026-10-02）─────────────────────────
@@ -171,7 +208,7 @@ export async function recallL1Records(
       if (sessionProject) {
         const scored: { hit: (typeof hits)[number]; adj: number }[] = [];
         for (const hit of kept) {
-          const rec = await loadL1RecordById(hit.recordId, profilePath);
+          const rec = await loadRec(hit.recordId);
           if (!rec || rec.deleted) continue;
           const md = (typeof rec.metadata === "object" && rec.metadata !== null ? rec.metadata : {}) as Record<string, unknown>;
           const r = scoreRecord(
@@ -192,7 +229,7 @@ export async function recallL1Records(
       // 加载完整 record 内容
       let totalChars = 0;
       for (const hit of kept) {
-        const rec = await loadL1RecordById(hit.recordId, profilePath);
+        const rec = await loadRec(hit.recordId);
         if (!rec || rec.deleted) continue;
         let content = rec.content;
         if (cfg.maxCharsPerRecord > 0 && content.length > cfg.maxCharsPerRecord) {
@@ -208,6 +245,7 @@ export async function recallL1Records(
           priority: rec.priority,
           scene_name: rec.scene_name,
           createdAt: rec.createdAt,
+          taskState: rec.type === "work_task" ? taskStateOf(rec) : undefined,
         });
       }
 
@@ -286,8 +324,10 @@ export function formatRecallL1Records(
 
   for (let i = 0; i < Math.min(result.l1Records.length, limit); i++) {
     const r = result.l1Records[i];
+    // 任务状态（2026-10-08）：与自动注入同一份标签文案（record-types.ts 的 L1_TASK_STATE_LABELS）
+    const st = r.type === "work_task" ? taskStateLabel(r.taskState) : null;
     lines.push(
-      `[${i + 1}] score=${r.score.toFixed(4)} | ${r.type || "?"} | priority=${r.priority ?? "?"} | ${r.recordId}`
+      `[${i + 1}] score=${r.score.toFixed(4)} | ${r.type || "?"}${st ? ` (${st})` : ""} | priority=${r.priority ?? "?"} | ${r.recordId}`
     );
     lines.push(
       `    ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`

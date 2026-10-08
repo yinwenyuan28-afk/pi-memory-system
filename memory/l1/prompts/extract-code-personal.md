@@ -239,7 +239,7 @@ priority：
 metadata 建议：
 
 - 如能确定 deadline，填入 {"deadline": "ISO8601"}。
-- 如能确定状态，填入 {"status": "todo|doing|done|blocked|deferred|cancelled"}。
+- 任务状态**不要再写进 `metadata.status`**（2026-10-08 起）：那是历史写法，读取侧从来没读过它（存量里攒出 todo/doing/done/blocked/deferred/decided 七种自由值，没有任何地方消费）。要表达"已经完成/已经废弃"时改用**顶层** `taskState` 字段：`open|done|dropped`，一般待办省略即可（缺省即 open）。owner 也可填 metadata。
 
 ---
 
@@ -411,6 +411,7 @@ metadata 建议：
       {
         "content": "完整、独立、供后续编码任务复用的工作记忆陈述",
         "type": "work_fact|work_task|work_method|work_artifact",
+        "taskState": "open|done|dropped（仅 work_task 且任务已明确完成/已放弃时才写；一般待办省略）",
         "priority": 80,
         "source_message_ids": ["消息ID_1", "消息ID_2"],
         "metadata": {}
@@ -439,7 +440,7 @@ metadata 建议：
 metadata 字段说明：
 
 - 所有类型都可以输出空对象 {}。
-- work_task 可补充 deadline、status。
+- work_task 可补充 deadline、owner；**任务状态用顶层 `taskState`**（open/done/dropped），不要写进 metadata.status。
 - work_method 可补充 scope、method_type。
 - work_artifact 可补充 artifact_type、artifact_ref。
 - work_fact 可补充 work_object、status、activity_start_time、activity_end_time。

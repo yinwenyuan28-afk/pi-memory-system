@@ -1,5 +1,11 @@
 # 开发记录
 
+## 2026-10-08
+
+为 L1 的 `work_task` 补上任务生命周期：新增顶层闭集字段 `taskState`（open/done/dropped），提供 agent 工具 `l1_task_state` 与用户命令 `/my-memory:l1:task`，读取侧（召回候选、自动注入、L2 精简投影与场景「相关任务与资产」）全部接上该状态，并新增 `recall.hideClosedTasks` 开关。写入路径把分片扫描/就地改写抽为 `memory/l1/in-place-mark.ts` 单一实现，`rewrite.mjs` 白名单补字段继承，dedup 增加 `merged_task_state` 契约，另交付存量迁移脚本 `scripts/migrate-task-state.mts`（默认 dry-run）。原有 `metadata.status` 是只写不读的死字段（真实库 37 条存活任务全部带该键、7 种自由取值、零读取者），新字段取代其生命周期语义。
+
+顺带修掉三处"门禁没在跑"的既有缺陷：`verify-tool-schemas.ts` 与 `verify-embed-batch.ts` 的硬编码安装路径（前者第 5/6 节长期真空通过，后者直接崩）；`verify-l1-value-check.ts` 与 `verify-judg-session-project.ts` 使用旧 ISO 游标导致的 23 项长期失败（子代理路径自 2026-10-04 起只接受 v2）。任务状态专项回归 64 项、工具 schema 142 项、通知路由 58 项、价值校验 73 项、会话项目判定 140 项、场景池 155 项、L2 四类 257 项、流水线四类 142 项与提示词契约（0 警告）全部通过；`verify-l3-commit`（145/1）与 `verify-agent-loop`（9/14）两项既有失败经 HEAD 干净检出复核与本轮无关。真实库迁移**未执行**（dry-run 报告 4 条可迁移 + 12 条待人工过目），真实 TUI 未走查。详见[完成计划](../completed/L1-任务生命周期标记-计划.md)。
+
 ## 2026-10-04
 
 核实并修复 L1 提示词的五项契约问题：场景与空批、删除态折叠、向量分块、事件时间、记忆出处。同步工具 golden 和架构说明，并加固数值时间戳的旧来源 ID 回退。L1 场景/游标集成验证 155 项、项目出处验证 120 项全部通过；提示词契约与仓库类型检查门禁通过。详细核实依据见[完成计划](../completed/L1-提示词契约收敛-计划.md)。

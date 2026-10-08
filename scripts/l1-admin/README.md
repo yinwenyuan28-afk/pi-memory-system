@@ -15,6 +15,8 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 
 公共参数：`--profile <dir>`（默认 `C:/Users/leaf/.pi/agent/profiles/default`）、`--dry-run` / `--apply`。
 
+> **相邻工具**：`scripts/migrate-task-state.mts`（在仓库 `scripts/` 下，不在本目录）——把历史 `metadata.status="done"` 升格为顶层 `taskState="done"`。它复用本目录 `lib.mjs` 的 `autoBackup`，并走 `memory/l1/task-state.ts` 的写锁 + 就地改写；默认 dry-run，`--apply` 实写前自动备份，只映射明确的 `done`（其余取值语义不明，不猜）。
+
 ## 用法示例
 
 ```bash
