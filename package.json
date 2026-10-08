@@ -10,7 +10,8 @@
 	"pi": {
 		"extensions": [
 			"./index.ts"
-		]
+		],
+		"video": "https://raw.githubusercontent.com/yinwenyuan28-afk/pi-memory-system/main/assets/pi-memory-system-preview.mp4"
 	},
 	"files": [
 		"index.ts",
@@ -21,12 +22,14 @@
 		"config/",
 		"prompts/",
 		"agents/",
+		"viewers/",
 		"scripts/l1-admin/",
 		"README.md"
 	],
 	"scripts": {
 		"check-types": "node scripts/check-types.mjs",
-		"test": "node scripts/verify-prompt-contracts.mjs"
+		"test": "node scripts/verify-prompt-contracts.mjs",
+		"viewer": "node --experimental-strip-types scripts/l1-admin/viewer.mts"
 	},
 	"dependencies": {
 		"better-sqlite3": "^13.0.3",
@@ -46,7 +49,8 @@
 		"pi",
 		"pi-extension",
 		"memory",
-		"pi-agent"
+		"pi-agent",
+		"pi-package"
 	],
 	"devDependencies": {
 		"@earendil-works/pi-agent-core": "^0.83.0",

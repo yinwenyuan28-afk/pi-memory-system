@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>L1 原子记忆 · records + 质量分 + 任务状态</title>
+		<link rel="stylesheet" href="assets/viewer.css" />
+	</head>
+	<body>
+		<div class="nav" id="nav"></div>
+
+		<header class="page">
+			<h1>L1 原子记忆</h1>
+			<p class="sub">
+				记录库 + 质量分 + 淘汰候选 + 任务状态 + 场景/项目归属。被价值校验判 drop 的记录从不写进库，
+				它们的留痕在「价值校验丢弃」页签里。
+			</p>
+			<div id="modeBanner" class="notice" style="display: none"></div>
+
+			<div class="toolbar">
+				<button type="button" class="primary" id="reloadBtn">重新加载</button>
+				<button type="button" id="pickFiles">选择 JSONL…</button>
+				<button type="button" id="pickDir">选择 records 目录…</button>
+				<button type="button" id="pickHit">选择 hit-stats.json…</button>
+				<button type="button" id="clearBtn">清空</button>
+				<button type="button" id="exportBtn">导出当前视图</button>
+			</div>
+			<div class="toolbar">
+				<input type="search" id="q" placeholder="搜索 content / 场景 / 项目 / id / cwd …" />
+				<select id="qualityFilter">
+					<option value="">全部质量</option>
+					<option value="热">热</option>
+					<option value="温">温</option>
+					<option value="冷">冷</option>
+					<option value="新">新</option>
+					<option value="待观察">待观察</option>
+					<option value="噪">噪</option>
+				</select>
+				<select id="dateFilter"><option value="">全部日期</option></select>
+				<select id="sort">
+					<option value="quality-desc">质量分 ↓</option>
+					<option value="quality-asc">质量分 ↑</option>
+					<option value="updated-desc">更新时间 ↓</option>
+					<option value="updated-asc">更新时间 ↑</option>
+					<option value="prio-desc">优先级 ↓</option>
+					<option value="prio-asc">优先级 ↑</option>
+					<option value="type">按类型</option>
+				</select>
+				<label class="check"><input type="checkbox" id="hideDeleted" checked /> 隐藏已删除</label>
+				<label class="check"><input type="checkbox" id="onlyDeleted" /> 仅看已删除</label>
+			</div>
+			<p class="hint" id="loadNote">加载中…</p>
+
+			<input type="file" id="fileInput" accept=".jsonl,.json,text/plain" multiple hidden />
+			<input type="file" id="dirInput" webkitdirectory directory multiple hidden />
+			<input type="file" id="hitInput" accept=".json,application/json" hidden />
+		</header>
+
+		<main>
+			<aside>
+				<h2>概览</h2>
+				<div class="stats" id="stats"><div class="stat"><span>已加载</span><span>0</span></div></div>
+
+				<div id="qualityStats"></div>
+
+				<h2>类型筛选</h2>
+				<div class="btn-list" id="typeList"></div>
+
+				<h2>任务状态（仅 work_task）</h2>
+				<div class="btn-list" id="taskList">
+					<button type="button" class="active" data-taskfilter=""><span>全部</span></button>
+					<button type="button" data-taskfilter="open"><span>待办</span></button>
+					<button type="button" data-taskfilter="done"><span>已完成</span></button>
+					<button type="button" data-taskfilter="dropped"><span>已废弃</span></button>
+					<button type="button" data-taskfilter="none"><span>非任务记录</span></button>
+				</div>
+				<div id="taskCounts"></div>
+
+				<h2>场景（按 scene_id 解析到池中 canonical 名）</h2>
+				<select id="sceneList" style="width: 100%"><option value="">全部场景</option></select>
+				<div class="hint" id="sceneNote" style="margin-top: 6px"></div>
+
+				<h2>项目（metadata.project）</h2>
+				<select id="projectList" style="width: 100%"><option value="">全部项目</option></select>
+
+				<h2>来源分片</h2>
+				<div class="hint" id="fileList">尚未加载</div>
+
+				<h2>怎么读这页</h2>
+				<div class="hint">
+					<p><b>两根独立的轴</b>：<span class="chip del">deleted</span> 表示"这条记录不成立"（查重覆盖 / 纠错作废），
+					记录连同向量一起退出召回；<span class="chip task-done">已完成</span> 只表示任务关了，记录照旧存活、照旧被召回。
+					同一条记录可以两者兼有，所以页面上它们分别渲染、不合并成一个状态。</p>
+					<p><b>场景名以池为准</b>：记录里的 <code>scene_name</code> 只是落盘当时的历史快照，真源是
+					<code>l1/scenes.json</code>。带「⇢合并」的表示该 id 已被合并到另一个场景，按 canonical 名归组。</p>
+					<p><b>质量分 ≠ 能不能删</b>：质量分是"热度"，长期不被命中就会衰减到 0（符合遗忘曲线）；
+					能不能删由 <code>judgePrune</code> 单独判定 —— 高 priority 与 <code>work_method</code> 类永不自动淘汰。
+					「淘汰候选」就是这一半信息。</p>
+					<p><b>衰减时钟</b>：<code>days</code> 按<b>活跃会话日</b>算（停工期间不增长），
+					只有侧车缺 <code>activeDays</code> 时才退化为日历天 —— 卡片上会标明用的是哪种。</p>
+					<p class="hint">质量分公式与 <code>memory/l1/quality.ts</code> 的一致性由
+					<code>scripts/verify-viewer-quality-parity.ts</code> 断言数值全等（不是靠注释声明）。</p>
+				</div>
+			</aside>
+
+			<section class="content">
+				<div class="toolbar">
+					<button type="button" class="active" id="tabRecords">记录</button>
+					<button type="button" id="tabDrops">价值校验丢弃</button>
+				</div>
+
+				<div id="paneRecords">
+					<p class="hint" id="resultMeta"></p>
+					<div id="list" class="empty"><strong>还没有数据</strong>用上方「重新加载」或手动选择 JSONL。</div>
+				</div>
+
+				<div id="paneDrops" hidden>
+					<p class="hint" id="dropMeta"></p>
+					<div id="dropList" class="hint">尚未加载</div>
+				</div>
+			</section>
+		</main>
+
+		<div class="modal" id="modal">
+			<div class="sheet"><div id="modalBody"></div></div>
+		</div>
+
+		<script src="assets/viewer-core.js"></script>
+		<script src="assets/quality-core.js"></script>
+		<script src="assets/records-view.js"></script>
+	</body>
+</html>

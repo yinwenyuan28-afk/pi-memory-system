@@ -45,6 +45,7 @@ import { registerRecallL1RecordsTool } from "./memory/search/recall-l1-records-t
 import { registerClearInvalidL1RecordsTool } from "./memory/search/clear-invalid-l1-records-tool.ts";
 import { registerFixTool } from "./memory/l1/fix-tool.ts";
 import { registerTaskStateTool } from "./memory/l1/task-state.ts";
+import { deployViewers } from "./memory/viewers/deploy.ts";
 import { formatInjectedRecordLine } from "./memory/l1/record-types.ts";
 import { loadRecallConfig } from "./memory/search/recall-config.ts";
 import { AUTO_INJECT_TOP_K } from "./config/thresholds.ts";
@@ -149,6 +150,8 @@ export default function (pi: ExtensionAPI) {
   let sessionId = "";
   // M8：reviewer 只注册一次（防 session_start 重复触发时重复监听）
   let reviewersInitialized = false;
+  // 查看器部署每进程只做一次（源码跟着扩展代码走，扩展重载 = 新进程，届时自然重部署）
+  let viewersDeployed = false;
 
   // ── load_memory_rules 状态变量 ─────────────────────────────
 
@@ -480,6 +483,32 @@ export default function (pi: ExtensionAPI) {
 
     // 新会话：重置一次性告警去重（同一会话只报一次的那些，如价值校验 fail-open）
     resetNoticeDedup();
+
+    // ── 查看器部署（2026-10-08）────────────────────────────────
+    // 查看器源码在仓库 `viewers/`，运行位置在 `{memoryDB}/viewers/`。这里做一次按内容哈希比对的
+    // 同步：页面没变就不写盘，变了才原子换入。旧查看器正是**因为没有任何代码负责让它跟版**
+    // 而落后了 4 次 schema 变更（场景池 / L2 归档 / type 收束 / taskState），页头还声称与
+    // quality.ts 1:1 —— 详见 plan/pi-memory-system/completed/查看器-跟版重写-计划.md。
+    // 部署问题不该阻塞记忆系统启动：一律降级为日志/卡片，不抛。
+    if (!viewersDeployed && profile) {
+      viewersDeployed = true;
+      try {
+        const r = deployViewers(profile.path);
+        if (r.written.length > 0 || r.retired.length > 0) {
+          logEvent(
+            "store",
+            `查看器已同步 ${r.version}：写入 ${r.written.length} 个文件` +
+              `${r.retired.length > 0 ? `，退役 ${r.retired.join(", ")}` : ""}`,
+            profile.path,
+          );
+        }
+        if (r.errors.length > 0) {
+          logEvent("store", `查看器部署有 ${r.errors.length} 项失败：${r.errors.join("；")}`, profile.path);
+        }
+      } catch (e) {
+        logEvent("store", `查看器部署异常（已忽略，不影响记忆功能）：${e instanceof Error ? e.message : String(e)}`, profile.path);
+      }
+    }
 
     skillManager = new SkillManager(profile.path, [
       resolve(agentDir, "skills"),

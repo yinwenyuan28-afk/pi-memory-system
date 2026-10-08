@@ -18,7 +18,7 @@
  *   ├── search/vectors/                      （l1-vectors.sqlite）
  *   ├── pipeline/jobs.sqlite
  *   ├── state/failure-state.json
- *   ├── viewers/                             （records-viewer.html / vue-viewer/）
+ *   ├── viewers/                             （部署产物：index/records/l2/l3 页 + assets/ + viewer-manifest.json）
  *   └── backups/{l1-admin/, user-backups/}
  *
  * 边界（不归 memoryDB）：
@@ -216,10 +216,26 @@ export const MEMORY_LOGS_DIR = "logs";
 export const NOTICE_QUEUE_FILE = join("logs", "notices.jsonl");
 
 // ── viewer / 备份 ──────────────────────────────────────────
-/** 查看器目录（{memoryDB}/viewers：records-viewer.html / vue-viewer/）。 */
+/**
+ * 查看器目录（{memoryDB}/viewers）。
+ *
+ * **2026-10-08 起是「部署产物」而非手写文件**：源码在仓库 `viewers/`（进 git、随包发布），
+ * 扩展激活时由 `memory/viewers/deploy.ts` 按内容哈希比对后原子同步到这里。此前它只是
+ * profile 里手维护的单个 HTML，后端每次改 schema（场景池 / type 收束 / taskState）都会
+ * 静默把它甩开 —— 见 plan/pi-memory-system/completed/查看器-跟版重写-计划.md。
+ */
 export const VIEWER_DIR = "viewers";
+/**
+ * 查看器版本清单（{memoryDB}/viewers/viewer-manifest.json）。
+ *
+ * 由部署写出，记 `{version, generatedAt, files[], retired[]}`；页面读它显示版本，
+ * 「这份页面是哪天的」一眼可见 —— 这正是旧版查不出来的东西。
+ */
+export const VIEWER_MANIFEST_FILE = join("viewers", "viewer-manifest.json");
 /** 备份目录（{memoryDB}/backups：l1-admin/ 与 user-backups/）。 */
 export const BACKUP_DIR = "backups";
+/** 退役查看器备份目录（{memoryDB}/backups/viewers-retired）。部署时把废弃页面挪进来而非删除。 */
+export const VIEWERS_RETIRED_DIR = join(BACKUP_DIR, "viewers-retired");
 /** 用户画像备份目录（{memoryDB}/backups/user-backups：L3 每轮首次写盘前的 `user-backup-*.md` 快照；2026-09-28 起写的是 USER-temp.md）。 */
 export const USER_BACKUPS_DIR = join("backups", "user-backups");
 

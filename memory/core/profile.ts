@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWriteFile } from "../../util/atomic-write.ts";
 import { spliceJsonKey } from "../../util/json-edit.ts";
 import { DEFAULT_PROFILE, PROFILES_DIR_NAME, type Profile } from "./types.ts";
 import { MEMORY_FILE, ROUTES_FILE, USER_FILE } from "./types.ts";
@@ -203,7 +203,7 @@ export class ProfileManager {
 				if (this.readActiveProfileKey(base) === name) return;
 
 				const spliced = spliceJsonKey(base, ACTIVE_PROFILE_KEY, rawValue);
-				this.atomicWrite(settingsPath, spliced.text);
+				atomicWriteFile(settingsPath, spliced.text);
 
 				// 校验：自己的值真的落到位了吗（被并发覆盖时这里不通过）
 				const after = existsSync(settingsPath) ? readFileSync(settingsPath, "utf-8") : "";
@@ -232,40 +232,10 @@ export class ProfileManager {
 	}
 
 	/**
-	 * 原子写：写同目录 tmp → rename 覆盖。Windows 上 rename 撞 EBUSY/EPERM
-	 * （别的进程正开着这个文件）是已知现象，重试 3 次 / 0·50·50ms。
-	 *
-	 * ⚠ 不要写成「先 `rmSync` 再 `renameSync`」—— 仓库里 `config/app-config.ts` 和
-	 * `util/judg-session-project` 都是那么写的，那会在两者之间留一个「文件不存在」的
-	 * 空窗，比不原子还糟。Node 的 `fs.renameSync` 在 Windows 上走
-	 * `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`，本机实测能直接覆盖已存在文件，
-	 * `rmSync` 纯属多余（方法落地时实测过，见 scripts/verify-profile-settings.ts）。
+	 * 原子写由 `util/atomic-write.ts` 单源提供（2026-10-08 抽出）：原先它是这里的私有方法，
+	 * 查看器部署（`memory/viewers/deploy.ts`）需要同一段「tmp → rename + 重试」逻辑，
+	 * 与其照抄一份，不如并成一份。那里也记着「为什么不能用 rm → rename」的完整理由。
 	 */
-	private atomicWrite(file: string, text: string): void {
-		const tmp = `${file}.tmp-${randomUUID()}`;
-		const delays = [0, 50, 50];
-		let lastErr: unknown = null;
-		for (const d of delays) {
-			if (d > 0) {
-				// 同步接口只能忙等（这里不能 await）
-				const until = Date.now() + d;
-				while (Date.now() < until) { /* spin */ }
-			}
-			try {
-				writeFileSync(tmp, text, "utf-8");
-				renameSync(tmp, file);
-				return;
-			} catch (e) {
-				lastErr = e;
-			}
-		}
-		try {
-			rmSync(tmp, { force: true });
-		} catch {
-			/* 临时文件残留不影响正确性 */
-		}
-		throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
-	}
 
 	private profilePath(name: string): string {
 		return join(this.baseDir, name);

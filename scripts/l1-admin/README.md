@@ -12,8 +12,95 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 | `health.mjs` | 健康指标：超长/test 残留/孤儿 stats/自造 id/畸形/错误串 | 只读 |
 | `rollback.mjs` | 从备份目录恢复 L1 records | `--dry-run` 默认；实恢复前自动备份当前库 |
 | `scene-pool.mjs` | **工作场景池**运维：`report`（池状态 + 批级指标）/ `cluster`（历史场景名聚类）/ `seed`（按映射提案播种）/ `merge-report`（合并候选） | 除 `seed --apply` 外全部只读；`seed` 默认 dry-run，实写前自动备份 `scenes.json` |
+| `task-state.mts` | 标记任务生命周期（就地改顶层 `taskState`，与 `l1_task_state` 工具同一实现） | 默认 dry-run；`--apply` 写盘；`--backup` 可选（**默认不备份**，理由见下） |
+| `viewer.mts` | **一键启动查看器**：同步最新页面 → 起桥 → 开浏览器（自动避让占用端口） | 只绑 `127.0.0.1`；`--no-open` / `--no-sync` 可关掉两件事 |
+| `启动查看器.cmd` | 上面的 Windows 双击入口（内容纯 ASCII，中文由 node 打印） | 同上 |
+| `viewer-bridge.mjs` | **查看器写盘桥**：静态托管 `memoryDB` + 写盘端点 + 目录列举 | 只绑 `127.0.0.1`；写盘端点各自校验 |
+| `viewer-status.mts` | 查看器版本与漂移诊断（源码内容版本 vs 已部署版本） | 只读 |
+| `viewer-limits.mts` | 查看器要展示的阈值（`l2.maxScenes` / L3 各限额），从源码常量透出 | 只读；**不暴露含密钥的 `config/` 整份文件** |
+| `active-days.mts` | 活跃会话日清单（权威源 `l0/conversations`） | 只读 |
 
 公共参数：`--profile <dir>`（默认 `C:/Users/leaf/.pi/agent/profiles/default`）、`--dry-run` / `--apply`。
+
+> `.mts` 需 `node --experimental-strip-types` 执行（Node ≥22.13）。之所以有这几个 `.mts`：它们是
+> 「网页 ↔ 扩展 `.ts` 实现」的桥 —— `.mjs` 不能 import `.ts`，而查看器用到的阈值、版本哈希、
+> 活跃日口径必须与源码**同一份实现**，所以由 `.mts` 转发，绝不在 `.mjs` 里重写一遍。
+
+### `task-state.mts` 为什么默认不备份
+
+本目录其它写者（`tombstone` / `rewrite` / `migrate-task-state`）都是"实写前自动备份"，那是它们的安全默认。
+`task-state` 刻意不同，因为这个动作的风险档次不一样：
+
+- `tombstone` 让记录**死掉**（退出召回与向量）、`rewrite` 换掉正文 —— 从结果看不出原来的样子，必须能回滚；
+- `taskState` 只是就地改一个状态字段：**可逆**（改回去即可）、幂等、留审计、不动正文/编号/向量。
+  而且**查看器界面上的切换按钮**会随时调用它 —— 每次点击都把整个 `l1/records` 备份一遍，
+  既拖慢交互又把 `backups/` 淹没。
+
+所以备份改为显式 `--backup`（人工批量操作时加）。批量迁移另有 `scripts/migrate-task-state.mts`，自带 `--apply` 前备份。
+
+## 查看器写盘桥（viewer-bridge.mjs）
+
+```bash
+# 一键（推荐）：同步页面 + 起桥 + 开浏览器
+npm run viewer                       # 或 node --experimental-strip-types scripts/l1-admin/viewer.mts
+# Windows 双击：scripts\l1-admin\启动查看器.cmd
+
+# 只起桥（自己控制端口、不自动开浏览器）
+node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>]
+```
+
+`viewer.mts` 的三件事，都是"每次都要做、忘了就出问题"的机械步骤：
+① 调 `deployViewers` 同步最新页面（幂等，内容没变零写入）；② 从 5174 起探测空闲端口（**5174 被占时
+不再直接退出**——实测被占过一次，之后每次都要手动 `taskkill`）；③ 打开浏览器到 `viewers/index.html`。
+profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `memorySystem.activeProfile`），
+避免"查看器看 A profile、扩展写 B profile"这种无声错配。停止：关掉控制台窗口，或 Ctrl+C。
+
+| 端点 | 作用 |
+|---|---|
+| `POST /api/tombstone` | `{ids}` → `tombstone.mjs --apply`（备份 + 就地标记） |
+| `POST /api/task-state` | `{ids, state, reason?}` → `task-state.mts --apply`（**取跨进程写锁**，拿不到锁一条都不写） |
+| `GET /api/l1/shards` | `l1/records/*.jsonl` 清单 + 行数（浏览器列不了目录） |
+| `GET /api/l1/active-days` | 活跃会话日（权威源；`hit-stats.json` 侧车会滞后，实测差过 1 天） |
+| `GET /api/l2/blocks` · `GET /api/limits` | L2 块目录列举 / 阈值与配置节 |
+| `GET /api/l3/backups` · `GET /api/profile-files` | 画像备份清单 / profile 根的 `MEMORY.md`+`USER.md`+`USER-temp.md` |
+| `GET /api/health` · `GET /api/viewer-status` | 存活 / 版本与漂移 |
+
+七个**实测踩过**的点，改动时别踩回去：
+1. **`req.url` 必须 `decodeURIComponent`**。浏览器的 fetch 会把非 ASCII 文件名百分号编码，
+   不解码就会去找字面名为 `%E4%B8%AA…` 的文件 → **L2 的块（全是中文名）整批 404**，而页面不报错、
+   只是默默显示索引兜底值。
+2. **`/api/profile-files` 是必需的**，不能靠相对路径。桥只挂载 `memoryDB`，而画像文件在 profile **根**
+   （上一级）；页面里写 `../../USER.md` 只会解析回 `/USER.md` = `{memoryDB}/USER.md` → 404。
+3. **CLI 的 stdout 要先跳过前置日志再解析 JSON**。`autoBackup` 会 `console.log` 一行
+   「已自动备份：…」，整段 `JSON.parse` 会把一次**成功**的写盘报成 500。桥里用 `parseCliJson`
+   从第一个 `{` 起解析。
+4. **别用 `node --check <file.mts>` 做语法门禁 —— 它会对含 `import` 的 `.mts` 假绿**。
+   Node 24 实测：`.mts` 带 import 时 `--check` 走 `cjs/loader.wrapSafe` 那条路径后**静默返回 0**，
+   而同样内容写成 `.mjs` 才会真的报错。也就是说这个组合恰好对**本目录所有真实 CLI**（都以 import 开头）
+   失效 —— 一条从不报警的门禁比没有门禁更糟。可行做法见 `verify-viewer-deploy.ts` 的检查 ⑮：
+   先用 `module.stripTypeScriptTypes` 去类型，再把源码从 stdin 交给 `node --input-type=module --check -`。
+5. **改查看器样式时别写 `scrollbar-color` —— 它会让滚动条变宽**。实测（Chrome 146 / Electron 41）：
+   侧栏滚动条不指定 = 11px，一指定 `scrollbar-color` 就退回 16px 的经典滚动条（带箭头），
+   比完全不指定更糟；让原生控件（滚动条 / select 弹层 / 复选框 / search 清除按钮）变暗的是
+   `:root { color-scheme: dark }`，滚动条外形交给 `::-webkit-scrollbar`。
+   同一类"静默失真"的坑还有：别在 JS 里内联十六进制色值（色值只留 `viewer.css` 的 `:root` 一份）、
+   别用 `.bar-track > i` 这种 (0,1,1) 选择器给 `.c-*` 工具类兜底（会压过 (0,1,0)，把条形图变成兜底灰）。
+   完整界面契约在 `viewers/assets/viewer.css` 文件头；以上三条由 `verify-viewer-deploy.ts` 的 ⑯ 节断言。
+6. **别在 `aside` / `.wrap-scroll` 上写 `overscroll-behavior: contain`**（用户报过"L2 页鼠标滚动失效"）。
+   实测只要容器带 `contain`，滚轮就被它吞掉，**哪怕它根本没有可滚内容** —— L2 的块表格是
+   `overflow:auto` 但内容不溢出、又占了内容列大半，于是滚轮在那一大片区域完全没反应；
+   把 `overscroll-behavior` 改回 `auto`，同一个手势立刻能把页面滚下去（同坐标对照实验）。
+   `contain` 只保留在弹层上（打开弹层时拦住滚轮、别滚动背景）。这条同样由 ⑯ 节断言。
+7. **`?port=` 丢了不会报错，只会静默变只读**（用户就是拿"无写盘桥"来问的）。页面靠 query 里的 `?port=`
+   才知道桥在哪，所以：① 页内跳转必须带 `location.search`（顶部导航曾漏掉，在总览页点一下导航就中招，
+   L2 会冒出 3 处"无写盘桥"）；② 桥的根路径 `/` 必须 **302 到带 `?port=` 的总览页** ——
+   就地返回 `index.html` 会让相对引用的 `assets/*` 解析成 `/assets/*` 全 404、连 `window.V` 都没有，
+   而桥启动打印的第一行正好是这个根路径（终端里可点）；③ 真丢了 query 时页面顶部要给出可操作提示，
+   与 `file://` 的提示分开写（两种降级原因不同）。三条由 ⑰ 节断言。
+
+安全边界：桥只绑 `127.0.0.1`、只在手动运行时存在；但 CORS 全开（为了支持 `file://` 页面带 `?port=` 回连），
+所以**运行期间本机任何页面都能读 `l1/records/*.jsonl` 等内容**。`config/` 已被挡在静态托管之外
+（那份 JSONC 含 `model.embedding.apiKey`），需要配置节走 `/api/limits`。用完关掉。
 
 > **相邻工具**：`scripts/migrate-task-state.mts`（在仓库 `scripts/` 下，不在本目录）——把历史 `metadata.status="done"` 升格为顶层 `taskState="done"`。它复用本目录 `lib.mjs` 的 `autoBackup`，并走 `memory/l1/task-state.ts` 的写锁 + 就地改写；默认 dry-run，`--apply` 实写前自动备份，只映射明确的 `done`（其余取值语义不明，不猜）。
 
@@ -32,6 +119,19 @@ node scripts/l1-admin/scene-pool.mjs cluster --out /tmp/聚类.json   # 聚类�
 node scripts/l1-admin/scene-pool.mjs seed --file 映射.json  # 播种预览
 node scripts/l1-admin/scene-pool.mjs seed --file 映射.json --apply   # 播种实写
 node scripts/l1-admin/scene-pool.mjs merge-report          # 合并候选（只读）
+```
+
+```bash
+# 任务生命周期（与 l1_task_state 工具同一实现；默认 dry-run）
+node --experimental-strip-types scripts/l1-admin/task-state.mts l1_xxx --state done          # 预览
+node --experimental-strip-types scripts/l1-admin/task-state.mts l1_xxx --state done \
+     --reason "已完成" --apply --backup                                                       # 实写 + 备份
+
+# 查看器
+node scripts/l1-admin/viewer-bridge.mjs                    # 起查看器（打印打开地址）
+node --experimental-strip-types scripts/l1-admin/viewer-status.mts   # 版本/漂移诊断
+node --experimental-strip-types scripts/l1-admin/viewer-limits.mts   # 阈值（来自源码常量）
+node --experimental-strip-types scripts/l1-admin/active-days.mts     # 活跃会话日（权威源）
 ```
 
 ## 工作场景池（scene pool）

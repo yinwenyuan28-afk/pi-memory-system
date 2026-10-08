@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>记忆库查看器 · 总览</title>
+		<link rel="stylesheet" href="assets/viewer.css" />
+	</head>
+	<body>
+		<div class="nav" id="nav"></div>
+
+		<header class="page">
+			<h1>记忆库查看器</h1>
+			<p class="sub">
+				L0–L3 记忆库的本地查看器。源码在插件仓库的 <code>viewers/</code>，扩展激活时按内容哈希比对后
+				自动同步到 <code>{profile}/memoryDB/viewers/</code> —— 所以它跟着 schema 走，不会再悄悄落后。
+			</p>
+			<div id="modeBanner" class="notice" style="display: none"></div>
+			<div class="toolbar">
+				<button type="button" class="primary" id="reloadBtn">刷新摘要</button>
+				<button type="button" id="openBridge">写盘状态</button>
+			</div>
+			<p class="hint" id="loadNote">加载中…</p>
+			<div id="hint"></div>
+		</header>
+
+		<main>
+			<aside>
+				<h2>怎么用</h2>
+				<div class="hint">
+					<p><b>推荐经写盘桥打开</b>：<code>node scripts/l1-admin/viewer-bridge.mjs</code>，
+					然后打开终端打印的 <code>http://localhost:5174/viewers/index.html?port=5174</code>。
+					带 <code>?port=</code> 才有：全部分片的自动加载、目录列举（解开日期窗口）、以及写盘（改任务状态 / 删除）。</p>
+					<p><b>直接双击 HTML（file://）</b>：只能手动选 JSONL 查看，自动加载与写回都不可用
+					（浏览器禁止 <code>file://</code> 下的 fetch）。</p>
+					<p><b>版本 chip</b>：右上角显示已部署版本；若源码改过但还没部署，会标黄提示
+					「源码已更新未部署」。</p>
+				</div>
+
+				<h2>页面</h2>
+				<div class="btn-list">
+					<button type="button" onclick="location.href='records-viewer.html' + location.search"><span>L1 原子记忆</span><span class="n">记录 / 质量分 / 任务状态</span></button>
+					<button type="button" onclick="location.href='l2-viewer.html' + location.search"><span>L2 场景层</span><span class="n">块 / 成员 / 归档账本</span></button>
+					<button type="button" onclick="location.href='l3-viewer.html' + location.search"><span>L3 画像层</span><span class="n">游标 / 三份画像文件</span></button>
+				</div>
+			</aside>
+
+			<section class="content">
+				<div id="health"></div>
+
+				<h2>L1 记录库</h2>
+				<div class="stats" id="l1"><div class="stat"><span>加载中</span><span>…</span></div></div>
+				<div class="stats" id="l1sample" style="margin-top: 6px"></div>
+
+				<h2>衰减时钟来源</h2>
+				<div class="stats" id="clock"></div>
+
+				<h2>L2 场景层</h2>
+				<div class="stats" id="l2"><div class="stat"><span>加载中</span><span>…</span></div></div>
+
+				<h2>L3 画像层</h2>
+				<div class="stats" id="l3"><div class="stat"><span>加载中</span><span>…</span></div></div>
+			</section>
+		</main>
+
+		<script src="assets/viewer-core.js"></script>
+		<script src="assets/index-view.js"></script>
+	</body>
+</html>

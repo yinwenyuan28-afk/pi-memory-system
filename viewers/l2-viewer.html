@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>L2 场景层 · 块 / 成员 / 归档账本</title>
+		<link rel="stylesheet" href="assets/viewer.css" />
+	</head>
+	<body>
+		<div class="nav" id="nav"></div>
+
+		<header class="page">
+			<h1>L2 场景层</h1>
+			<p class="sub">
+				场景块（live + 归档）、成员侧车、归档账本与对账。这一页刻意把「权威」和「派生」分开核对，
+				不假设索引自洽。
+			</p>
+			<div id="modeBanner" class="notice" style="display: none"></div>
+			<div class="toolbar">
+				<button type="button" class="primary" id="reloadBtn">重新加载</button>
+				<input type="search" id="q" placeholder="搜索块名 / summary / 成员 id …" />
+			</div>
+			<p class="hint" id="loadNote">加载中…</p>
+		</header>
+
+		<main>
+			<aside>
+				<h2>概览</h2>
+				<div class="stats" id="stats"><div class="stat"><span>加载中</span><span>…</span></div></div>
+
+				<h2>块数上限（l2.maxScenes）</h2>
+				<div id="capNote"></div>
+
+				<h2>L2 游标水位</h2>
+				<div class="hint" id="cursorNote">—</div>
+
+				<h2>权威 / 派生的分工</h2>
+				<div class="hint">
+					<p><b>权威</b>：块文件正文与 META、两份 <code>scene_members.json</code> 侧车、
+					<code>archive/ledger.jsonl</code>（append-only，不可重建）。</p>
+					<p><b>派生</b>：<code>index/scene_index.json</code> —— 每次提交都从块文件**全量重建**，
+					所以只存在于索引里的字段下次重建就没了；它的 <code>members</code> 也是从侧车并进去的。</p>
+					<p>因此「数成员」一律以侧车为准；索引与侧车不一致时会显示为告警。</p>
+					<p><b>归档 ≠ 删除</b>：归档把块搬到与 <code>scene-blocks/</code> 平级的 <code>archive/</code>
+					（不占 maxScenes 名额），有账、可 restore；<code>delete</code> 才是真的消失、且不留痕。</p>
+				</div>
+			</aside>
+
+			<section class="content">
+				<h2>对账结果</h2>
+				<div id="reconcile"></div>
+
+				<h2>场景块</h2>
+				<div id="blockTable" class="hint">尚未加载</div>
+
+				<h2>归档 / 恢复账本（时间线）</h2>
+				<div id="ledger" class="hint">尚未加载</div>
+
+				<h2>成员归属反查</h2>
+				<div id="memberIndex" class="hint">尚未加载</div>
+			</section>
+		</main>
+
+		<div class="modal" id="modal">
+			<div class="sheet"><div id="detail"></div></div>
+		</div>
+
+		<script src="assets/viewer-core.js"></script>
+		<script src="assets/l2-view.js"></script>
+	</body>
+</html>

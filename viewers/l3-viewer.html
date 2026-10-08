@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>L3 画像层 · 游标 / MEMORY / USER / 提议稿</title>
+		<link rel="stylesheet" href="assets/viewer.css" />
+	</head>
+	<body>
+		<div class="nav" id="nav"></div>
+
+		<header class="page">
+			<h1>L3 画像层</h1>
+			<p class="sub">
+				游标与触发进度、三份「§ 分隔条目」文件（MEMORY.md / USER.md / USER-temp.md）的字符预算与逐条自检、
+				提议稿与 live 的差异、以及画像备份。预算口径与 <code>entryBudget</code> 一致，不是文件字节数。
+			</p>
+			<div id="modeBanner" class="notice" style="display: none"></div>
+			<div class="toolbar">
+				<button type="button" class="primary" id="reloadBtn">重新加载</button>
+			</div>
+			<p class="hint" id="loadNote">加载中…</p>
+		</header>
+
+		<main>
+			<aside>
+				<h2>怎么读这页</h2>
+				<div class="hint">
+					<p><b>三份文件的分工</b>：<code>MEMORY.md</code> 由 <code>core/store</code> 维护（不是 L3 产物）；
+					<code>USER.md</code> 是 live 画像，**L3 自 2026-09-28 起只读它**；
+					<code>USER-temp.md</code> 是 L3 的提议稿，合并进 live 是**人工动作** ——
+					所以「temp 独有」那一段就是待你决定要不要合入的条目。</p>
+					<p><b>预算是字符不是字节</b>：<code>entryBudget = 条目正文 + 分隔符（\n§\n 记 3 字符）</code>。
+					中文一个字 3 字节，用 <code>ls</code> 的字节数看会误判成严重超限（实测 USER.md 磁盘 4745 字节 vs 预算 1921/2200）。</p>
+					<p><b>触发分级</b>：P1 显式请求 / P2 冷启动 / P2.5 恢复 / P3 首次场景 / P4 记忆阈值（累计新增记忆到阈值）。
+					<code>lastTriggeredAt</code> 与 <code>lastCommittedAt</code> 分开记，是为了让「跑了但没提交」可见。</p>
+					<p><b>单条契约</b>：每条必须单行、不含 <code>§</code>。首条若以 <code>§</code> 开头，说明文件开头多了一个分隔符，
+					那个 <code>§</code> 会被并进正文 —— 本页会把它标成异常。</p>
+				</div>
+
+				<h2>L3 游标与触发</h2>
+				<div id="cursor"><div class="hint">加载中…</div></div>
+			</aside>
+
+			<section class="content">
+				<h2>字符预算与自检</h2>
+				<div id="budgets" class="hint">加载中…</div>
+
+				<h2>提议稿与 live 的差异</h2>
+				<div id="diff" class="hint">加载中…</div>
+
+				<h2>逐条清单</h2>
+				<div id="entries" class="hint">加载中…</div>
+
+				<h2>画像备份（backups/user-backups）</h2>
+				<div id="backups" class="hint">加载中…</div>
+			</section>
+		</main>
+
+		<script src="assets/viewer-core.js"></script>
+		<script src="assets/l3-view.js"></script>
+	</body>
+</html>
