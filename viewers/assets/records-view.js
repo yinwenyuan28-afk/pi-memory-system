@@ -1398,13 +1398,17 @@
 			"<dt>sourceFile</dt><dd>" + V.escapeHtml(r.sourceFile || "—") + "</dd>" +
 			"</dl><pre class=\"json\">" + V.escapeHtml(JSON.stringify(r, null, 2)) + "</pre></details>" +
 			// 纠错面板（l1_fix）：预演（checkFixGates 裁决）→ 执行。审计标注会**追加进正文本身**。
-			// 它是整页**唯一**写正文的入口 —— 页脚的「编辑正文」只是把光标送进下面的「新正文」框。
+			// **默认收起**（2026-10-10）：这一块实测 382px、占弹层一半高（746px 里的 51%），而它是
+			// agent 自纠的走法（要填证据、可能被 24h 防抖拒），人手动走一遍很罕见 —— 人的日常动作是
+			// 看正文、标任务状态、作废。收进 <details> 后弹层回到 ~300px，露出来的正是正文。
+			// summary 就是它的唯一入口：此前另在页脚放了个「编辑正文」按钮做入口，那等于同一件事给
+			// 两个把手（与用户报过的"改写/作废重复入口"同类），已删 —— 页脚只留不可逆动作与关闭。
 			// 动作选择器已删：`l1_fix` 的另一个动作 `tombstone` 与页脚「删除（墓碑）」走的是同一句
 			// `tombstone.mjs --apply`（同一个 `deleted:true`、同一份自动备份、同一条 `l1Cleanup` 审计），
 			// 摆两个入口只会让人犹豫点哪个；而 `l1_fix` 那四道闸（尤其 24h 防抖）是为 agent 自纠设计的，
 			// 人已经点了确认再被防抖挡住反而莫名其妙。分工：改写走这里（有闸），作废走页脚（人的授权）。
-			'<div class="ops" style="margin-top:12px">' +
-			'<h3 class="sub">改写正文（l1_fix）</h3>' +
+			'<details class="more"><summary>改写正文（l1_fix）· 需填证据、会写盘' + (hasPort ? "" : " · 只读：需带 <code>?port=</code> 打开") + "</summary>" +
+			'<div class="ops">' +
 			(hasPort ? "" : '<div class="hint">写盘需要写盘桥：请以带 <code>?port=</code> 的地址打开本页。以下控件在只读模式下不可用。</div>') +
 			'<div class="hint">作废某条请用右下<b>删除（墓碑）</b> —— 与 l1_fix 的 tombstone 是同一个写盘动作，这里不再重复入口。改写会把审计标注【YYYY-MM-DD L1 修正：…】<b>追加进正文本身</b>（不是独立审计键），同时记 <code>metadata.l1Cleanup</code> —— 正文会真的变长。四道闸：证据 ≥20 字符、新正文 ≥10 字符、24h 防抖、高价值保护。</div>' +
 			'<div class="ops-row"><div class="ops-label">新正文</div><div class="ops-ctl">' +
@@ -1425,11 +1429,10 @@
 			'<button type="button" class="danger" id="fixApply" hidden>执行（写盘）</button>' +
 			"</div>" +
 			'<div id="fixVerdict"></div>' +
-			"</div>" +
+			"</div></details>" +
 			'<div class="foot">' +
-			// 「编辑正文」不再是本页内存预览（那个半成品已删）：它把光标送进纠错面板的「新正文」框 ——
-			// 那里是整页唯一的正文编辑入口，且写盘要过 l1_fix 的四道闸。只读模式下没有可编辑的东西。
-			'<button type="button" id="editContentBtn"' + (hasPort ? "" : ' disabled title="写盘需要写盘桥，请以带 ?port= 的地址打开本页"') + ">编辑正文</button>" +
+			// 页脚只放**不可逆**的那一个动作（删除墓碑）与关闭。原先这里还有个「编辑正文」按钮把光标
+			// 送进纠错面板 —— 面板收起后它的 summary 就是入口，页脚再放一个等于同一件事两个把手。
 			'<button type="button" class="danger" id="delBtn">删除（墓碑）</button>' +
 			'<button type="button" data-close>关闭</button>' +
 			"</div>";
@@ -1827,17 +1830,8 @@
 				});
 				return;
 			}
-			// 「编辑正文」＝把光标送进纠错面板的「新正文」框（整页唯一的正文编辑入口）。只读模式下
-			// 该按钮已 disabled（disabled 的按钮不派发 click），所以这里不必再判断能不能写。
-			if (t.id === "editContentBtn") {
-				var box = $("fixContent");
-				if (!box) return;
-				box.scrollIntoView({ block: "center" });
-				box.focus();
-				box.setSelectionRange(box.value.length, box.value.length); // 光标落到末尾，接着往下写
-				return;
-			}
-			// 纠错面板：预演 → 执行（两步；执行才写盘）
+			// 纠错面板：预演 → 执行（两步；执行才写盘）。面板默认收在 <details> 里，但控件照旧渲染，
+			// 所以这里不需要先展开 —— 用户是在展开后点这两个按钮的。
 			if (t.id === "fixPreview") { previewFix(); return; }
 			if (t.id === "fixApply") { applyFix(); return; }
 		});
