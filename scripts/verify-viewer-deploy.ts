@@ -456,14 +456,23 @@ try {
 		/^button\s*\{[^}]*background:\s*transparent[^}]*border:\s*1px solid transparent[^}]*color:\s*var\(--muted\)[^}]*font-size:\s*var\(--t-sm\)[^}]*padding:\s*5px 9px/m.test(css),
 	);
 	ok(
-		"⑯ 三个语义 + 一个状态都在基样式一节（.active 墨色横条 / .primary 墨色描边 / .danger danger 描边）",
-		/^button\.active\s*\{[^}]*background:\s*var\(--panel2\)[^}]*box-shadow:\s*inset 0 -2px 0 var\(--ink\)/m.test(css) &&
+		"⑯ 三个语义 + 一个状态都在基样式一节（.active 底色块 / .primary 墨色描边 / .danger danger 描边）",
+		/^button\.active\s*\{[^}]*background:\s*var\(--panel3\)[^}]*color:\s*var\(--text\)/m.test(css) &&
 			/^button\.primary\s*\{[^}]*border-color:\s*var\(--ink\)/m.test(css) &&
 			/^button\.danger\s*\{[^}]*border-color:\s*var\(--danger\)/m.test(css),
 	);
+	// 选中项划过去不许掉色：`button:hover:not(:disabled)` 的特异度比 `button.active` 高，
+	// 少了这条，鼠标划过选中行会把它从 --panel3 压回 --panel2（看着像"选中丢了"）。
 	ok(
-		"⑯ 纵向列表的 .active 用左沿墨色条（.btn-list，与横向行只有朝向不同）",
-		/\.btn-list button\.active\s*\{\s*box-shadow:\s*inset 2px 0 0 var\(--ink\)/.test(css),
+		"⑯ 选中项 hover 时保持 --panel3（不掉色）",
+		/^button\.active:hover:not\(:disabled\)\s*\{[^}]*background:\s*var\(--panel3\)/m.test(css),
+	);
+	// 2026-10-10 用户报"按钮被点击之后的样式是在侧边多一条白线，不太好看" —— 选中态改成
+	// 只给一层 `--panel3` 底色，**不再画任何线**。这条断言把"线"彻底钉死：全 CSS 里任何
+	// 含 `.active` 的规则都不许再声明 box-shadow（含后来者顺手给某个作用域加回墨色条）。
+	ok(
+		"⑯ 选中态不画线（任何 .active 规则都没有 box-shadow）",
+		!/\.active[^{]*\{[^}]*box-shadow/.test(css),
 	);
 	ok(
 		"⑯ 紧凑档只有两处：卡片脚（与同行胶囊对齐）与播种表行内按钮（列宽 36px 会折行）",

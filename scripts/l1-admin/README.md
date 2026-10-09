@@ -236,6 +236,15 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
    0 圆角 / 22px 高 / 13.33px 字 —— 紧挨着它的文本域却是 1px 描边 / 8px 圆角 / 34px 高。
    它不报错、不溢出、体检脚本也不查控件内部，**只有把两个框并排量才会发现**。
    修法是按"除了勾选类都算字段"写：`input:not([type="checkbox"]):not([type="radio"]), select, textarea`。
+24. **选中态有两个隐形规则：线在不同朝向要写两套，而且 `.active` 的特异度比 hover 低**（2026-10-10）。
+   用户报"按钮被点击之后的样式是在侧边多一条白线，不太好看"。那条线是 `box-shadow: inset 0 -2px 0
+   var(--ink)`（横排）/ `inset 2px 0 0`（竖排）—— `--ink`(#c8d4e0) 在深底上读起来是一条**发白的
+   线**，像渲染残留而不像"选中"，而且同一条状态因为朝向不同有两副样子。改成只给一层 `--panel3`
+   底色、不画线（顺带把 `.nav a.item.active` 从"panel2 + 描边"收进同一档）。
+   第二个坑是改完才发现的：`button:hover:not(:disabled)` 的特异度 (0,2,1) **高于** `.active` 的
+   (0,1,1) —— 只写 `.active` 的话，鼠标划过选中项会把它从 `--panel3` 压回 `--panel2`（比选中更暗），
+   看着像"选中丢了"。必须补一条 `button.active:hover:not(:disabled)`。
+   量法：`cua.move` 悬停 → `el.matches(":hover")` + `getComputedStyle(el).backgroundColor` 前后对比。
 
 安全边界：桥**默认只绑 `127.0.0.1`**、只在手动运行时存在；但 CORS 全开（为了支持 `file://` 页面带 `?port=` 回连），
 所以**运行期间本机任何页面都能读 `l1/records/*.jsonl` 等内容**。`config/` 已被挡在静态托管之外

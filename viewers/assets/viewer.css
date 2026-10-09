@@ -27,10 +27,10 @@
  *
  * 5. 外壳只做「文字动作」，不做底色块。
  *    按钮只有三个语义 + 一个状态（默认文字动作 / `.primary` 墨色描边 = 写入内容 / `.danger`
- *    danger 描边 = 让既有内容消失或被替换 / `.active` 墨色横条 = 当前选中），尺寸只有一档
- *    （31px；卡片脚与播种表行内两处紧凑档 25px）。**作用域只准覆盖尺寸与间距，不准决定按钮长相** ——
- *    细则与理由见下面「动作语言」一节。2026-10-10 之前正是因为语言写在某一个作用域里，
- *    同一页长出了 7 种按钮外观、4 档尺寸。
+ *    danger 描边 = 让既有内容消失或被替换 / `.active` = 当前选中，给一层 `--panel3` 底色、
+ *    **不画线**），尺寸只有一档（31px；卡片脚与播种表行内两处紧凑档 25px）。**作用域只准覆盖
+ *    尺寸与间距，不准决定按钮长相** —— 细则与理由见下面「动作语言」一节。2026-10-10 之前正是
+ *    因为语言写在某一个作用域里，同一页长出了 7 种按钮外观、4 档尺寸。
  *
  * 主题基线：`:root { color-scheme: dark }` 是所有原生控件（滚动条 / select 弹层 / 复选框 /
  * search 的清除按钮）变暗的前提；删掉它这一页会退回浅色原生控件 + 浅灰滚动条。
@@ -187,7 +187,9 @@ td.num, .num, .stat > span:last-child, .bar-row .num, .hist .val, .budget .meta,
 	transition: background-color 120ms, color 120ms, border-color 120ms;
 }
 .nav a.item:hover { background: var(--panel2); color: var(--text); }
-.nav a.item.active { background: var(--panel2); border-color: var(--border); color: var(--text); }
+/* 当前页与按钮的"选中"用同一档底色（`--panel3`），也顺手去掉那条描边 —— 顶部导航原来靠
+   panel2 + 1px 描边表示"当前页"，与侧栏/页签的选中态是两副样子。 */
+.nav a.item.active { background: var(--panel3); color: var(--text); }
 .nav .spacer { flex: 1; }
 .nav .version {
 	font-family: var(--mono);
@@ -253,8 +255,12 @@ select { cursor: pointer; }
  *     适用：读 / 预演 / 导航 / 展开 / 选中某一项 / 清空 —— 凡是不写 memoryDB 的。
  *   · `.primary` = **墨色描边**：向 memoryDB **写入新内容**（写前留备份，可回退）。
  *   · `.danger` = **danger 描边**：让数据**消失或被覆盖**（删除墓碑 / 整库还原 / 归档 / 恢复覆盖）。
- *   · `.active` = **墨色横条**（状态，不是动作）：当前选中项。横向行用下沿 2px，纵向列表用左沿
- *     2px —— 只有朝向不同，颜色与粗细是同一套（此前页签用 panel3、类型菜单用左沿，是两副样子）。
+ *   · `.active` = **底色块**（状态，不是动作）：当前选中项 —— panel3 底 + 文字提亮，**不画任何线**。
+ *     2026-10-10 用户反馈改过一版：原先横排在页签下沿画 2px、竖排在列表左沿画 2px 墨色条
+ *     （`--ink` #c8d4e0），实测在深底上就是多出一条发白的线，看着像渲染残留而不是"选中"，
+ *     而且同一条状态因为朝向不同有两副样子。现在只有一种形态：给那一行/一格浮一层底色。
+ *     层次靠三级面板色区分：静置 = 页面底 `--panel`(#141b25) < hover = `--panel2`(#1c2634)
+ *     < 选中 = `--panel3`(#24313f)，选中比 hover 更亮，方向一致。
  * 尺寸只有一档：`--t-sm` / `5px 9px`（实测 31px，与侧栏菜单行齐平）。
  *
  * **唯一的例外**：紧凑档 `--t-xs`（25px 高），只有两处 —— 卡片脚（`.card-foot .expand-btn`，
@@ -279,7 +285,11 @@ button {
 }
 button:hover:not(:disabled) { background: var(--panel2); border-color: transparent; color: var(--text); }
 button:disabled { opacity: 0.45; cursor: default; }
-button.active { background: var(--panel2); color: var(--text); box-shadow: inset 0 -2px 0 var(--ink); }
+button.active { background: var(--panel3); color: var(--text); }
+/* 选中项划过去时**不许掉色**：`button:hover:not(:disabled)` 的特异度是 (0,2,1)、比
+   `button.active` 的 (0,1,1) 高，所以光有上一条的话，鼠标划过选中项会把它从 `--panel3`
+   压回 `--panel2`（比选中更暗）—— 看着像"选中丢了"。这条把它钉住。 */
+button.active:hover:not(:disabled) { background: var(--panel3); color: var(--text); }
 button.primary { border-color: var(--ink); color: var(--text); font-weight: 600; }
 button.primary:hover:not(:disabled) { background: var(--panel2); border-color: var(--ink); color: var(--text); }
 button.danger { border-color: var(--danger); color: var(--danger); }
@@ -397,9 +407,8 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); 
 	gap: 8px;
 	text-align: left;
 }
-/* 选中态：纵向列表用**左沿**墨色条（横向行用下沿，见动作语言一节）—— 同一条状态，
-   只有朝向跟着列表方向走，避免在竖排里画一条"底部横线"看着像分割线。 */
-.btn-list button.active { box-shadow: inset 2px 0 0 var(--ink); }
+/* 选中态走全局那条 `.active`（底色块，不画线）—— 这里不再覆写任何东西。
+   （曾经这里有一条"纵向列表用左沿墨色条"的规则；用户嫌那条线难看，已连带取消。） */
 .btn-list .n { color: var(--muted); }
 .btn-list .n .alive { color: var(--ok); font-weight: 600; }
 
