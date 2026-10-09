@@ -11,10 +11,8 @@
 
 		<header class="page">
 			<h1>L2 场景层</h1>
-			<p class="sub">
-				场景块（live + 归档）、成员侧车、归档账本与对账。这一页刻意把「权威」和「派生」分开核对，
-				不假设索引自洽。
-			</p>
+				<!-- 只列区块；「权威 vs 派生」那句方法论侧栏里已折叠成一份，页头不重复 -->
+				<p class="sub">场景块（live + 归档）· 成员侧车 · 归档账本 · 对账。</p>
 			<div id="modeBanner" class="notice" style="display: none"></div>
 			<div class="toolbar">
 				<button type="button" class="primary" id="reloadBtn">重新加载</button>
@@ -79,24 +77,34 @@
 						<div class="ops-note" id="seedOut"></div>
 					</div>
 
+					<!-- 契约三段（块数预算 / 恢复要先腾位 / 归档≠删除）是长解释，默认收起：
+					     它们描述"为什么会被拒"，只有真被拒时才需要读。 -->
 					<h3 class="sub">契约</h3>
-					<div class="ops-note" id="opsContract"></div>
+					<details class="more">
+						<summary>块数预算 / 恢复要先腾位 / 归档 ≠ 删除</summary>
+						<div class="ops-note" id="opsContract"></div>
+					</details>
 				</div>
 				<div id="opsResult"></div>
 
 				<h2>L2 游标水位</h2>
 				<div class="hint" id="cursorNote">—</div>
 
+				<!-- 这四段是方法论（谁是权威源、归档为什么不是删除），默认收起 ——
+				     侧栏原本 1,903px 高、要滚 1,049px 才看得见下面的内容，大半是这段。 -->
 				<h2>权威 / 派生的分工</h2>
-				<div class="hint">
-					<p><b>权威</b>：块文件正文与 META、两份 <code>scene_members.json</code> 侧车、
-					<code>archive/ledger.jsonl</code>（append-only，不可重建）。</p>
-					<p><b>派生</b>：<code>index/scene_index.json</code> —— 每次提交都从块文件<b>全量重建</b>，
-					所以只存在于索引里的字段下次重建就没了；它的 <code>members</code> 也是从侧车并进去的。</p>
-					<p>因此「数成员」一律以侧车为准；索引与侧车不一致时会显示为告警。</p>
-					<p><b>归档 ≠ 删除</b>：归档把块搬到与 <code>scene-blocks/</code> 平级的 <code>archive/</code>
-					（不占 maxScenes 名额），有账、可 restore；<code>delete</code> 才是真的消失、且不留痕。</p>
-				</div>
+				<details class="more">
+					<summary>权威源是哪些 / 索引为什么是派生 / 归档 ≠ 删除</summary>
+					<div class="hint">
+						<p><b>权威</b>：块文件正文与 META、两份 <code>scene_members.json</code> 侧车、
+						<code>archive/ledger.jsonl</code>（append-only，不可重建）。</p>
+						<p><b>派生</b>：<code>index/scene_index.json</code> —— 每次提交都从块文件<b>全量重建</b>，
+						所以只存在于索引里的字段下次重建就没了；它的 <code>members</code> 也是从侧车并进去的。</p>
+						<p>因此「数成员」一律以侧车为准；索引与侧车不一致时会显示为告警。</p>
+						<p><b>归档 ≠ 删除</b>：归档把块搬到与 <code>scene-blocks/</code> 平级的 <code>archive/</code>
+						（不占 maxScenes 名额），有账、可 restore；<code>delete</code> 才是真的消失、且不留痕。</p>
+					</div>
+				</details>
 			</aside>
 
 			<section class="content">

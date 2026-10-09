@@ -181,12 +181,18 @@
 		V.note("loadNote", "汇总中…");
 		return V.bridge("/api/viewer-status").then(function (r) {
 			var v = r.ok && r.data ? r.data : null;
+			// 版本号由右上角的版本 chip 负责（viewer-core 注入），这里不再抄一遍 ——
+			// 同一个 0.1.0+hash 在首屏出现两次，读者要自己确认它们说的是同一件事。
+			// 这里只留 chip 没有的：是否漂移、是否从未部署、退役清单。
 			V.note(
 				"loadNote",
 				v
-					? "源码版本 <b>" + V.escapeHtml(v.sourceVersion) + "</b>，已部署 <b>" + V.escapeHtml(v.deployedVersion || "（从未部署）") + "</b>" +
-						(v.drifted ? ' —— <b class="text-warn">源码已更新但未部署</b>（重启会话或 /reload 会触发部署）' : "，两者一致") +
-						(v.retired && v.retired.length ? "。已退役：" + V.escapeHtml(v.retired.join("、")) : "")
+					? (v.drifted
+							? '<b class="text-warn">源码已更新但未部署</b>（重启会话或 /reload 会触发部署）'
+							: v.deployedVersion
+								? "源码与已部署版本一致"
+								: '<b class="text-warn">从未部署</b>') +
+						(v.retired && v.retired.length ? " · 已退役：" + V.escapeHtml(v.retired.join("、")) : "")
 					: "无写盘桥：无法做版本/漂移检查（只能只读浏览本地文件）。",
 				v && v.drifted ? "warn" : "",
 			);

@@ -9,12 +9,11 @@
 	<body>
 		<div class="nav" id="nav"></div>
 
-		<header class="page">
-			<h1>L1 原子记忆</h1>
-			<p class="sub">
-				记录库 + 质量分 + 淘汰候选 + 任务状态 + 场景/项目归属。被价值校验判 drop 的记录从不写进库，
-				它们的留痕在「价值校验丢弃」页签里。
-			</p>
+			<header class="page">
+				<h1>L1 原子记忆</h1>
+				<!-- 页头只留一句定位：这一页是**筛选 + 浏览**的地方，方法论（drop 留痕在哪、
+				     两根轴怎么区分…）一律下放到侧栏【说明】组，别在首屏替读者读一遍。 -->
+				<p class="sub">记录库 · 质量分 · 淘汰候选 · 任务状态 · 场景 / 项目归属。</p>
 			<div id="modeBanner" class="notice" style="display: none"></div>
 
 			<div class="toolbar">
@@ -90,6 +89,8 @@
 				<h2>统计</h2>
 				<details class="more">
 					<summary>概览 · 质量标签 · 质量分直方图 · 淘汰候选 · 来源分片</summary>
+					<!-- 数据从哪来 / 用哪种时钟 —— 是健康信息不是操作信息，展开才看 -->
+					<div class="hint" id="sourceNote"></div>
 					<h3 class="sub">概览</h3>
 					<div class="stats" id="stats"><div class="stat"><span>已加载</span><span>0</span></div></div>
 
@@ -101,8 +102,11 @@
 
 				<h2>说明</h2>
 				<details class="more">
-					<summary>怎么读这页（两根独立的轴 / 场景名以池为准 / 质量分 ≠ 能不能删 / 衰减时钟）</summary>
+					<summary>价值校验留痕 / 两根独立的轴 / 场景名以池为准 / 质量分 ≠ 能不能删 / 衰减时钟</summary>
 					<div class="hint">
+						<p><b>drop 的记录从不写进库</b>：被价值校验判 drop 的记录压根不会落进 <code>l1/records/</code>，
+						它们的唯一留痕是 <code>value-check-log.jsonl</code> —— 页面上的「价值校验丢弃」页签就是那份日志，
+						118 条被丢弃的记录连同理由都在那里（否则只有幸存者偏差）。</p>
 						<p><b>两根独立的轴</b>：<span class="chip del">deleted</span> 表示"这条记录不成立"（查重覆盖 / 纠错作废），
 						记录连同向量一起退出召回；<span class="chip task-done">已完成</span> 只表示任务关了，记录照旧存活、照旧被召回。
 						同一条记录可以两者兼有，所以页面上它们分别渲染、不合并成一个状态。</p>

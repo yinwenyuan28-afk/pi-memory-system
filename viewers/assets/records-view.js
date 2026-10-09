@@ -394,26 +394,29 @@
 				return Promise.all([loadHitStats(), loadScenes(), loadDropLog()]);
 			})
 			.then(loadRecords)
-			.then(function (records) {
-				state.rows = enrichAll(records);
-				var alive = state.rows.filter(function (r) {
-					return !r.deleted;
-				}).length;
-				var clockLabel =
-					state.clockSource === "bridge"
-						? "活跃会话日 " + state.activeDays.length + " 个（源：l0/conversations，权威）"
-						: state.clockSource === "sidecar"
-							? "活跃会话日 " + (state.activeDays ? state.activeDays.length : 0) + " 个（源：hit-stats.json 侧车，可能滞后于 l0）"
-							: "日历天（拿不到活跃日数据，已退化）";
-				var srcLabel = state.source === "bridge" ? "写盘桥（全部分片）" : "静态探测（最近 90 天；更早的分片需要写盘桥）";
-				var msg =
-					"已加载 <b>" + state.rows.length + "</b> 条（存活 " + alive + "，已删除 " +
-					(state.rows.length - alive) + "），来自 " + state.files.length + " 个分片。<br>" +
-					"场景池 " + state.scenes.byId.size + " 条，丢弃留痕 " + state.drops.length + " 条。<br>" +
-					"来源：" + srcLabel + "；时钟：" + clockLabel + "；保护带阈值 P" + VQ.PRUNE_RULES.protectedPercentile + " = " + state.protectedPriority;
-				V.note("loadNote", msg);
-				renderAll();
-				return true;
+				.then(function (records) {
+					state.rows = enrichAll(records);
+					var clockLabel =
+						state.clockSource === "bridge"
+							? "活跃会话日 " + state.activeDays.length + " 个（源：l0/conversations，权威）"
+							: state.clockSource === "sidecar"
+								? "活跃会话日 " + (state.activeDays ? state.activeDays.length : 0) + " 个（源：hit-stats.json 侧车，可能滞后于 l0）"
+								: "日历天（拿不到活跃日数据，已退化）";
+					var srcLabel = state.source === "bridge" ? "写盘桥（全部分片）" : "静态探测（最近 90 天；更早的分片需要写盘桥）";
+					// 页头只报**别处没有的**：总/存活/已删除、场景池、丢弃留痕都在侧栏【统计】组里，
+					// 「显示 X / Y」由页签下的 #resultMeta 负责（它还会跟着筛选变）。同组数字在首屏
+					// 抄两三遍，读者得自己判断这几个 840 是不是同一个 840。
+					V.note(
+						"loadNote",
+						"来自 <b>" + state.files.length + "</b> 个分片 · 来源：" + srcLabel,
+					);
+					// 口径类信息（用哪种时钟、保护带取到多少）放默认收起的统计组 —— 它是健康信息，
+					// 不是每次打开都要读一遍的东西。
+					$("sourceNote").innerHTML =
+						"时钟：" + clockLabel +
+						"<br>保护带阈值 P" + VQ.PRUNE_RULES.protectedPercentile + " = " + state.protectedPriority;
+					renderAll();
+					return true;
 			})
 			.catch(function (e) {
 				state.source = state.source || "static";

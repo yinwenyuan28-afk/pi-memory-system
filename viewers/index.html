@@ -11,10 +11,7 @@
 
 		<header class="page">
 			<h1>记忆库查看器</h1>
-			<p class="sub">
-				L0–L3 记忆库的本地查看器。源码在插件仓库的 <code>viewers/</code>，扩展激活时按内容哈希比对后
-				自动同步到 <code>{profile}/memoryDB/viewers/</code> —— 所以它跟着 schema 走，不会再悄悄落后。
-			</p>
+				<p class="sub">L0–L3 记忆库的本地查看器。源码在插件仓库 <code>viewers/</code>，激活时按内容哈希同步到 <code>{profile}/memoryDB/viewers/</code>。</p>
 			<div id="modeBanner" class="notice" style="display: none"></div>
 			<div class="toolbar">
 				<button type="button" class="primary" id="reloadBtn">刷新摘要</button>
@@ -26,23 +23,28 @@
 
 		<main>
 			<aside>
-				<h2>怎么用</h2>
-				<div class="hint">
-					<p><b>推荐经写盘桥打开</b>：<code>node scripts/l1-admin/viewer-bridge.mjs</code>，
-					然后打开终端打印的 <code>http://localhost:5174/viewers/index.html?port=5174</code>。
-					带 <code>?port=</code> 才有：全部分片的自动加载、目录列举（解开日期窗口）、以及写盘（改任务状态 / 删除）。</p>
-					<p><b>直接双击 HTML（file://）</b>：页面能打开，但自动加载与写回都不可用
-					（浏览器禁止 <code>file://</code> 下的 fetch），所以看不到数据。必须经写盘桥。</p>
-					<p><b>版本 chip</b>：右上角显示已部署版本；若源码改过但还没部署，会标黄提示
-					「源码已更新未部署」。</p>
-				</div>
-
+				<!-- 导航放最前：这一页的左栏是入口，不是说明书。
+				     「怎么用」三段是 366 字的教程，此前占着左栏第一屏（整页 53% 的字都是它）。 -->
 				<h2>页面</h2>
 				<div class="btn-list">
 					<button type="button" onclick="location.href='records-viewer.html' + location.search"><span>L1 原子记忆</span><span class="n">记录 / 质量分 / 任务状态</span></button>
 					<button type="button" onclick="location.href='l2-viewer.html' + location.search"><span>L2 场景层</span><span class="n">块 / 成员 / 归档账本</span></button>
 					<button type="button" onclick="location.href='l3-viewer.html' + location.search"><span>L3 画像层</span><span class="n">游标 / 三份画像文件</span></button>
 				</div>
+
+				<h2>怎么用</h2>
+				<details class="more">
+					<summary>经写盘桥打开 / file:// 会降级 / 版本 chip 怎么看</summary>
+					<div class="hint">
+						<p><b>推荐经写盘桥打开</b>：<code>node scripts/l1-admin/viewer-bridge.mjs</code>，
+						然后打开终端打印的 <code>http://localhost:5174/viewers/index.html?port=5174</code>。
+						带 <code>?port=</code> 才有：全部分片的自动加载、目录列举（解开日期窗口）、以及写盘（改任务状态 / 删除）。</p>
+						<p><b>直接双击 HTML（file://）</b>：页面能打开，但自动加载与写回都不可用
+						（浏览器禁止 <code>file://</code> 下的 fetch），所以看不到数据。必须经写盘桥。</p>
+						<p><b>版本 chip</b>：右上角显示已部署版本；若源码改过但还没部署，会标黄提示
+						「源码已更新未部署」。</p>
+					</div>
+				</details>
 			</aside>
 
 			<section class="content">
