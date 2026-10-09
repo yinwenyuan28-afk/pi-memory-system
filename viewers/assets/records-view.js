@@ -1345,7 +1345,10 @@
 				metric(r.id || "?", "记录 id：l1_fix / l1_task_state 的入参", "id") +
 				chip(q.tag + " " + fmtQ(q.quality), V.QUALITY_CLASS[q.tag] || "", "质量分 " + fmtQ(q.quality) + " —— 热度，按天数衰减") +
 				chip(r.prune.eligible ? "淘汰候选：" + (VQ.PRUNE_REASON_LABELS[r.prune.reason] || r.prune.reason) : "不淘汰：" + (VQ.PRUNE_REASON_LABELS[r.prune.reason] || r.prune.reason), r.prune.eligible ? "prune" : "") +
-				(r.isTask ? chip(V.TASK_STATE_LABELS[r.taskState], "task-" + r.taskState) : "") +
+				// 这里**刻意不再放任务状态胶囊**（2026-10-10，用户问"明明状态是已完成，为什么三种都显示"）。
+				// 状态由下面那个三选一自己说明：当前值 = 唯一有底色（--panel3）且带状态色描边的那颗。
+				// 原先两处都写一遍，等于同一件事在 100px 内说两次；卡片列表上那枚照旧保留
+				// （卡片没有切换器，状态只能靠胶囊表达）。
 				(r.deleted ? chip("deleted", "del") : "") +
 				"</div>" +
 				// 诊断值全在这里：卡片只留了「多久没动」，其余从列表层搬进来 ——
