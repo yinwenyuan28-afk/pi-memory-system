@@ -235,7 +235,15 @@
 						.join("") +
 					"</details>");
 
-		// 逐条清单（三份文件）
+		// 逐条清单（三份文件）——**全页唯一一份**，改写 / 删除按钮就在行上。
+		// 原先操作区里还有一份带按钮的 28 行副本，两份同源于 state.files 却各刷各的；
+		// 合并后这里同时是 entryLists 的唯一产地：data-idx 必须与 entryLists[sid] 的数组下标对齐，
+		// 否则点第 3 条改写、真正被改的却是另一条。
+		entryLists = { USER: entriesOf.USER, temp: entriesOf.temp };
+		$("entriesCount").textContent =
+			"展开 " + (entriesOf.MEMORY.length + entriesOf.USER.length + entriesOf.temp.length) +
+			" 条（MEMORY " + entriesOf.MEMORY.length + " · USER " + entriesOf.USER.length +
+			" · temp " + entriesOf.temp.length + "，改写 / 删除在行上）";
 		$("entries").innerHTML = ["MEMORY", "USER", "temp"]
 			.map(function (k) {
 				var f = state.files[k];
@@ -247,34 +255,54 @@
 					(list.length === 0 ? ' <span class="chip">空</span>' : "") + "</h2>" +
 					(list.length === 0
 						? '<div class="hint">（空文件或不存在）' + V.escapeHtml(f.note) + "</div>"
-						: list
-								.map(function (e, i) {
-									var bad = /\r?\n/.test(e) || e.length > (state.limits ? state.limits.entryCharLimit : 500);
-									return (
-										'<div class="entry' + (bad ? "" : "") + '"><span class="idx">' + (i + 1) + ".</span>" + V.escapeHtml(e) +
-										'<span class="chip">' + e.length + " 字符</span></div>"
-									);
-								})
-								.join(""))
+						: entryRows(k, list, { readonly: k === "MEMORY" }))
 				);
 			})
 			.join("");
+
+		// 醒目的一句：改的是提议稿，不是注入画像。跟着条目清单走（按钮在哪，这句话就在哪）。
+		$("opsEntryWarn").style.display = "";
+		$("opsEntryWarn").innerHTML =
+			"改写 / 删除 / 新增都落在 <code>USER-temp.md</code>（<b>提议稿</b>），<b>不会</b>立刻改变注入画像 —— " +
+			"只有到「并入区」把它写进 live <code>USER.md</code> 之后才生效。" +
+			"下面 live 列表本身只读（MEMORY 与 USER 都不给按钮）；对 USER 条目点改写 / 删除，改的同样是提议稿。";
 	}
 
+	/**
+	 * 画像备份 —— **全页唯一一份**，预览 / 还原按钮就在行上。
+	 * 曾经这里是一张只读表、操作区里另有一份带按钮的列表，同一批 state.backups 渲染两遍：
+	 * 白占 330px，而且两份 DOM 各刷各的，一旦不同步就是自相矛盾的屏。
+	 * 这里**不设** max-height：设了就是一层内滚动（本页纪律：长内容进 <details>，页面统一滚）。
+	 */
 	function renderBackups() {
-		// 这里**不设** max-height：设了就是一层内滚动（本页纪律：长内容进 <details>，页面统一滚）。
-		// 备份清单通常很短，直接让它随页面滚即可。
-		$("backups").innerHTML = state.backups.length
-			? '<div class="wrap-scroll"><table><thead><tr><th>备份文件</th><th>大小</th><th>时间</th></tr></thead><tbody>' +
-				state.backups
-					.slice()
-					.reverse()
-					.map(function (b) {
-						return "<tr><td>" + V.escapeHtml(b.file) + '</td><td class="num">' + b.size + "</td><td>" + V.escapeHtml(V.fmtTime(b.mtime)) + "</td></tr>";
-					})
-					.join("") +
-				"</tbody></table></div>"
-			: '<div class="hint">没有备份（或未用写盘桥：<code>backups/user-backups/</code> 需要桥来列目录）。</div>';
+		// 还原目标的说明跟着清单走（它解释的正是这一列按钮会把文件写到哪）。
+		$("opsBackupNote").innerHTML =
+			"还原目标是<b>提议稿 <code>USER-temp.md</code>，不是 live <code>USER.md</code></b>：" +
+			"备份文件名只记时间戳、不记当时捕的是哪一份，所以统一还原到 L3 唯一的写目标，要上 live 再走一次「并入」。";
+		$("backupsCount").textContent = state.backups.length
+			? "展开 " + state.backups.length + " 份（预览 / 还原在行上）"
+			: "没有备份（或未用写盘桥）";
+		if (!state.backups.length) {
+			$("backups").innerHTML =
+				'<div class="hint">没有备份（或未用写盘桥：<code>backups/user-backups/</code> 需要桥来列目录）。</div>';
+			return;
+		}
+		// 每行：文件名 / 大小 / 时间 + 预览（读静态路径）+ 还原（预演 → 打字确认 → 执行）。
+		$("backups").innerHTML = state.backups
+			.slice()
+			.reverse()
+			.map(function (b) {
+				var f = V.escapeHtml(b.file);
+				return (
+					'<div class="entry"><span class="idx">·</span>' + f +
+					'<span class="chip">' + b.size + " B</span>" +
+					'<span class="chip">' + V.escapeHtml(V.fmtTime(b.mtime)) + "</span>" +
+					'<button type="button" data-op="preview" data-file="' + f + '">预览</button>' +
+					'<button type="button" class="danger" data-op="restore" data-file="' + f + '">还原</button>' +
+					'<div data-role="preview"></div></div>'
+				);
+			})
+			.join("");
 	}
 
 	// ══ 管理操作区 ══════════════════════════════════════════════════════════════
@@ -326,13 +354,20 @@
 		return t.closest(selector || "button");
 	}
 
-	/** 一条条目一行：正文 + 长度 + 改写 / 删除。动作经 data-* 交给容器委托（不生成 id）。 */
-	function entryRows(sid, entries) {
+	/**
+	 * 一条条目一行：正文 + 长度 + 改写 / 删除。动作经 data-* 交给容器委托（不生成 id）。
+	 * @param sid 文件键（USER/temp；MEMORY 只读时不带按钮，见 opts）
+	 * @param opts {readonly:true} —— MEMORY 由 core/store 维护，本页根本改不了它，
+	 *   而 stageEdit 无论选中谁写的都是 USER-temp.md；给 MEMORY 按钮就是给一个必然写错地方的按钮。
+	 */
+	function entryRows(sid, entries, opts) {
+		var readonly = !!(opts && opts.readonly);
 		return entries
 			.map(function (e, i) {
 				var head =
 					'<div class="entry"><span class="idx">' + (i + 1) + ".</span>" + V.escapeHtml(e) +
 					'<span class="chip">' + e.length + " 字符</span>";
+				if (readonly) return head + "</div>";
 				return (
 					head +
 					'<button type="button" data-op="edit" data-sid="' + sid + '" data-idx="' + i + '">改写</button>' +
@@ -343,39 +378,23 @@
 			.join("");
 	}
 
-	/** 无写盘桥时：给出提示并禁用整块操作区（否则按钮只会去调一个不存在的端口）。 */
+	/**
+	 * 无写盘桥时：给出提示并禁用所有会发请求的控件（否则按钮只会去调一个不存在的端口）。
+	 * 条目 / 备份清单已经搬到 #ops 之外（见 l3-viewer.html 的两个 <details>），所以必须一起扫。
+	 */
 	function disableOpsControls() {
-		Array.prototype.forEach.call($("ops").querySelectorAll("button, input"), function (el) {
-			el.disabled = true;
+		["ops", "entries", "backups", "opsRestoreOut"].forEach(function (id) {
+			var box = $(id);
+			if (!box) return;
+			Array.prototype.forEach.call(box.querySelectorAll("button, input"), function (el) {
+				el.disabled = true;
+			});
 		});
 	}
 
 	function renderTriggerState() {
 		var p = state.pendingTriggers && state.pendingTriggers.pending ? state.pendingTriggers.pending.l3 : null;
 		$("opsTriggerState").textContent = p ? "已有信号待消费" + (p.at ? "（" + p.at + "）" : "") : "当前无待消费信号";
-	}
-
-	function renderOpsBackups() {
-		if (!state.backups.length) {
-			$("opsBackups").innerHTML = '<div class="hint">没有备份（或未用写盘桥）。</div>';
-			return;
-		}
-		// 每行：文件名 / 大小 / 时间 + 预览（读静态路径）+ 还原（预演 → 打字确认 → 执行）。
-		$("opsBackups").innerHTML = state.backups
-			.slice()
-			.reverse()
-			.map(function (b) {
-				var f = V.escapeHtml(b.file);
-				return (
-					'<div class="entry"><span class="idx">·</span>' + f +
-					'<span class="chip">' + b.size + " B</span>" +
-					'<span class="chip">' + V.escapeHtml(V.fmtTime(b.mtime)) + "</span>" +
-					'<button type="button" data-op="preview" data-file="' + f + '">预览</button>' +
-					'<button type="button" class="danger" data-op="restore" data-file="' + f + '">还原</button>' +
-					'<div data-role="preview"></div></div>'
-				);
-			})
-			.join("");
 	}
 
 	function renderMergeGates() {
@@ -429,31 +448,10 @@
 				"这些按钮都要经桥转发到 <code>scripts/l1-admin/*.mts</code>，没有桥就只是调一个不存在的端口。";
 		}
 
-		var entriesOf = {};
-		Object.keys(state.files).forEach(function (k) {
-			entriesOf[k] = parseEntries(state.files[k].raw);
-		});
-		entryLists = { USER: entriesOf.USER, temp: entriesOf.temp };
-
+		// 条目清单与备份清单都不在这里渲染了 —— 它们各自只有**一份**，在 renderFiles /
+		// renderBackups 里产出（含 entryLists 的唯一一次赋值），本区只剩写动作本身。
 		var eLimit = state.limits && state.limits.entryCharLimit ? state.limits.entryCharLimit : 500;
 		$("opsContentNote").textContent = "必须单行、不含 §、" + eLimit + " 字符以内。";
-		// 醒目的一句：改的是提议稿，不是注入画像。
-		$("opsEntryWarn").style.display = "";
-		$("opsEntryWarn").innerHTML =
-			"改写 / 删除 / 新增都落在 <code>USER-temp.md</code>（<b>提议稿</b>），<b>不会</b>立刻改变注入画像 —— " +
-			"只有到「并入区」把它写进 live <code>USER.md</code> 之后才生效。" +
-			"下面 live 列表本身只读；对它点改写 / 删除，改的同样是提议稿。";
-
-		$("opsEntries").innerHTML =
-			'<h3 class="sub">USER.md（live 画像，' + entriesOf.USER.length + " 条）</h3>" +
-			(entriesOf.USER.length ? entryRows("USER", entriesOf.USER) : '<div class="hint">（无条目）</div>') +
-			'<h3 class="sub">USER-temp.md（提议稿，' + entriesOf.temp.length + " 条）</h3>" +
-			(entriesOf.temp.length ? entryRows("temp", entriesOf.temp) : '<div class="hint">（无条目）</div>');
-
-		$("opsBackupNote").innerHTML =
-			"还原目标是<b>提议稿 <code>USER-temp.md</code>，不是 live <code>USER.md</code></b>：" +
-			"备份文件名只记时间戳、不记当时捕的是哪一份，所以统一还原到 L3 唯一的写目标，要上 live 再走一次「并入」。";
-		renderOpsBackups();
 
 		$("opsMergeNote").innerHTML =
 			"这是<b>全仓库唯一会写 live <code>USER.md</code></b> 的动作。写前会先把 live 现况留档一份备份，" +
@@ -827,7 +825,8 @@
 		});
 
 		// 条目区：容器上委托（条目行是渲染出来的，逐个挂监听会随每次重绘泄漏）。
-		$("opsEntries").addEventListener("click", onEntryClick);
+		// 容器是 #entries —— 它在折叠的 <details> 里，委托照样有效（点开后才点得到按钮）。
+		$("entries").addEventListener("click", onEntryClick);
 		$("opsPreview").addEventListener("click", previewEdit);
 		$("opsApply").addEventListener("click", applyEdit);
 		$("opsResetEdit").addEventListener("click", resetEdit);
@@ -838,7 +837,7 @@
 
 		// 备份区：预览 / 还原的按钮是渲染出来的，同样用容器委托；
 		// 还原面板内部（预演 / 执行 / token 输入 / 空备份放行）也委托到它自己那层。
-		$("opsBackups").addEventListener("click", onBackupClick);
+		$("backups").addEventListener("click", onBackupClick);
 		$("opsRestoreOut").addEventListener("click", onRestoreClick);
 		$("opsRestoreOut").addEventListener("input", function (ev) {
 			if (ev.target && ev.target.id === "opsRestoreConfirm") toggleRestoreApply();

@@ -49,20 +49,28 @@
 				<h2>提议稿与 live 的差异</h2>
 				<div id="diff" class="hint">加载中…</div>
 
+				<!-- 条目清单：全页唯一一份（改写 / 删除按钮就在行上），默认收起 ——
+				     31 条 × 每条带按钮，常开会占掉近 4 屏，把下面的操作区压到第 3 屏之外。 -->
 				<h2>逐条清单</h2>
-				<div id="entries" class="hint">加载中…</div>
+				<details class="more" id="entriesBox">
+					<summary><span id="entriesCount">加载中…</span></summary>
+					<div class="notice" id="opsEntryWarn" style="display: none"></div>
+					<div id="entries" class="hint">加载中…</div>
+				</details>
 
-			<h2>画像备份（backups/user-backups）</h2>
-			<div id="backups" class="hint">加载中…</div>
+				<!-- 备份清单：同样只留一份（预览 / 还原按钮在行上），默认收起 -->
+				<h2>画像备份（backups/user-backups）</h2>
+				<details class="more" id="backupsBox">
+					<summary><span id="backupsCount">加载中…</span></summary>
+					<div class="hint" id="opsBackupNote"></div>
+					<div id="backups" class="hint">加载中…</div>
+					<div id="opsRestoreOut"></div>
+				</details>
 
-			<h2>管理操作区</h2>
-			<div id="opsReadonly" class="hint" style="display: none"></div>
-			<div class="ops" id="ops">
-				<div class="notice" id="opsEntryWarn" style="display: none"></div>
-				<h3 class="sub">条目区 · 条目改写 / 删除，以及加一条</h3>
-				<div id="opsEntries"></div>
-
-				<h3 class="sub" id="opsEditTitle">加一条（写 USER-temp.md）</h3>
+				<h2>管理操作区</h2>
+				<div id="opsReadonly" class="hint" style="display: none"></div>
+				<div class="ops" id="ops">
+					<h3 class="sub" id="opsEditTitle">加一条（写 USER-temp.md）</h3>
 				<div class="ops-row">
 					<div class="ops-label">正文</div>
 					<div class="ops-ctl">
@@ -89,11 +97,6 @@
 					<div class="ops-note" id="opsEditHint">先「预演」看用量与后果，再按提示输入确认词启用「执行」。</div>
 				</div>
 				<div id="opsEditOut"></div>
-
-				<h3 class="sub">备份区 · 预览 / 还原（还原目标是提议稿，不是 live）</h3>
-				<div class="hint" id="opsBackupNote"></div>
-				<div id="opsBackups"></div>
-				<div id="opsRestoreOut"></div>
 
 				<div class="danger-zone" id="opsMergeZone">
 					<h3>并入区 · 把提议稿并入 live USER.md</h3>
