@@ -1085,12 +1085,14 @@
 		var dis = ro ? " disabled" : "";
 
 		// ── 提取模式 ──
+		// 当前值用 `.active`（与页签同一套"墨色横条"，见 viewer.css 的 .ops-ctl 一节）而不是 `.primary`：
+		// 这是**显示当前选中**，不是"要动手的按钮"，用实心块会把侧栏里最亮的东西给一个只读状态。
 		var modeRow =
 			'<div class="ops-row" id="opsModeRow">' +
 			'<div class="ops-label">提取模式</div>' +
 			'<div class="ops-ctl">' +
-			'<button type="button" id="opsModeCode" class="' + (o.mode === "code" ? "primary" : "") + '"' + dis + ">code</button>" +
-			'<button type="button" id="opsModeChat" class="' + (o.mode === "chat" ? "primary" : "") + '"' + dis + ">chat</button>" +
+			'<button type="button" id="opsModeCode" class="' + (o.mode === "code" ? "active" : "") + '"' + dis + ">code</button>" +
+			'<button type="button" id="opsModeChat" class="' + (o.mode === "chat" ? "active" : "") + '"' + dis + ">chat</button>" +
 			"</div>" +
 			'<div class="ops-note">当前 <b>' + V.escapeHtml(o.mode || (o.loaded ? "未知" : "读取中…")) + "</b>（真源 <code>/api/limits.l1.mode</code>" +
 			(o.modeError ? "，读取失败：" + V.escapeHtml(o.modeError) : "") +
@@ -1177,11 +1179,10 @@
 			'<div id="rbLog">' + (o.rollbackPreviewHtml || "") + "</div>" +
 			"</div></div>";
 
-		$("l1ops").innerHTML =
-			(ro ? opsReadOnlyHint() : "") +
-			'<h3 class="sub">提取模式</h3>' + modeRow +
-			'<h3 class="sub">向量库</h3>' + embedRow +
-			danger;
+		// **不再给每行配一个小标题**：这两个分组各只有一行，而行的第一列本来就是它的名字
+		// （`提取模式` / `向量库`），再写一层 `h3.sub` 就是把同一句话连写两遍（用户报过）。
+		// 危险区保留标题 —— 它是个带边框的独立区块，标题也不与行标签重复。
+		$("l1ops").innerHTML = (ro ? opsReadOnlyHint() : "") + modeRow + embedRow + danger;
 		syncRollbackApply();
 		syncEmbedApply();
 	}

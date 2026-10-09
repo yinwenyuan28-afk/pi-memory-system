@@ -799,6 +799,35 @@ details.more[open] > summary { margin-bottom: 6px; }
 .ops h3.sub { margin: 14px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
 .ops h3.sub:first-child { margin-top: 0; }
 
+/* 操作区按钮的语言（2026-10-09，用户报"切换按钮与预演按钮和周围格格不入"）─────────────
+ *
+ * 这一节把上面契约里那句「破坏性动作 = 描边按钮，预演/只读 = 文字动作」真正落到 CSS 上 ——
+ * 此前每个按钮走的都是全局那条"实心块"基样式（`--panel2` 底 + 描边 + 13px/34px），
+ * 于是同一列侧栏里并存两套语言：类型菜单是 12px 透明行、选中靠墨色竖条，操作区却是实心砖块，
+ * 而「当前 code」还用 `.primary` 的整块浅色（`--ink`）—— 侧栏里最亮的元素居然是个只读状态。
+ *
+ * 四条规则，对应四种语义（都不给外壳上色相，底色只在 hover / 选中时浮出）：
+ *   · 默认（预演 / 只读 / 打开）＝ **文字动作**：透明底、无描边、静音色，hover 才浮出底色；
+ *   · `.active`（当前选中值，如提取模式）＝ 与页签同一套**墨色横条**（`.toolbar button.active` 的写法）；
+ *   · `.primary`（点了就落盘）＝ **墨色描边**，不填底色 —— 外壳不做底色块（契约 1）；
+ *   · `.danger`（不可逆）＝ `--danger` 描边 + 文字。
+ * 尺寸统一到侧栏行那档（12px / 5px·9px，实测高 29px），与上面的菜单行对齐。
+ * 注意范围只到 `.ops-ctl`：页头工具条与内容区表格里的按钮语境不同（不是"侧栏里的一列动作"），
+ * 保持原样以免把两处的层级一起压平。 */
+.ops-ctl button {
+	background: transparent;
+	border-color: transparent;
+	color: var(--muted);
+	font-size: var(--t-sm);
+	padding: 5px 9px;
+}
+.ops-ctl button:hover:not(:disabled) { background: var(--panel2); border-color: transparent; color: var(--text); }
+.ops-ctl button.active { background: var(--panel2); color: var(--text); box-shadow: inset 0 -2px 0 var(--ink); }
+.ops-ctl button.primary { border-color: var(--ink); color: var(--text); font-weight: 600; }
+.ops-ctl button.primary:hover:not(:disabled) { background: var(--panel2); border-color: var(--ink); color: var(--text); }
+.ops-ctl button.danger { border-color: var(--danger); color: var(--danger); }
+.ops-ctl button.danger:hover:not(:disabled) { background: var(--panel2); border-color: var(--danger); color: var(--danger); }
+
 /* 危险区里把标签折到控件上方：这块被 .danger-zone 的 12px 内边距再吃掉一圈，控件列只剩
    ~141px —— 备份下拉只能显示到「backfill-project-」（有 5 个同名前缀的目录，根本分不开），
    打字确认框也塞不下完整目录名。折成单列后控件拿满 ~269px。 */

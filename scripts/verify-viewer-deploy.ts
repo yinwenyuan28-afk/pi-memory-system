@@ -444,6 +444,21 @@ try {
 	// ⑤ 卡片正文只截断、不再自带滚动条
 	ok("⑯ 页面脚本不再使用 card-scroll（正文改截断预览）", !viewerJs.some(({ src }) => src.includes("card-scroll")));
 	ok("⑯ .card-body 正文声明了 -webkit-line-clamp", /\.card-body \.full-content\s*\{[^}]*-webkit-line-clamp/.test(css));
+
+	// ⑥ 侧栏操作区的按钮语言（2026-10-09：用户报"切换按钮与预演按钮和周围格格不入"）。
+	//    上面那段契约注释里早写着「破坏性动作 = 描边按钮，预演/只读 = 文字动作」，但此前**没有任何 CSS
+	//    落实它** —— 每个按钮都走全局那条"实心块"基样式，于是同一列侧栏里并存两套语言：菜单是 12px
+	//    透明行、选中靠墨色竖条，操作区却是 13px/34px 的实心砖块，而「当前 code」还是整块浅色。
+	//    注释不算契约，能拦住复发的只有断言 —— 这一节钉住那四条状态各自的形态。
+	ok(
+		"⑯ 操作区按钮默认是文字动作（透明底 + 无描边）",
+		/\.ops-ctl button\s*\{[^}]*background:\s*transparent[^}]*border-color:\s*transparent/.test(css),
+	);
+	ok("⑯ 操作区选中态用墨色横条（与页签同一套）", /\.ops-ctl button\.active\s*\{[^}]*background:\s*var\(--panel2\)[^}]*box-shadow:\s*inset 0 -2px 0 var\(--ink\)/.test(css));
+	ok(
+		"⑯ 操作区 .primary / .danger 只描边、不填底色",
+		/\.ops-ctl button\.primary\s*\{[^}]*border-color:\s*var\(--ink\)/.test(css) && /\.ops-ctl button\.danger\s*\{[^}]*border-color:\s*var\(--danger\)/.test(css),
+	);
 }
 
 // ── ⑰ 打开方式契约：`?port=` 不能被静默丢掉 ─────────────────────────────────

@@ -90,7 +90,8 @@
 					<div class="ops-ctl">
 						<span>输入 <span class="confirm-token" id="opsTokenHint">—</span> 启用「执行」</span>
 						<input type="text" class="confirm-input" id="opsConfirm" autocomplete="off" />
-						<button type="button" class="primary" id="opsPreview">预演</button>
+						<!-- 预演 = 只读动作（不落盘），按契约走文字动作那一档；`.primary` 留给"点了就写盘"的按钮 -->
+						<button type="button" id="opsPreview">预演</button>
 						<button type="button" class="danger" id="opsApply" disabled>执行</button>
 					</div>
 					<div class="ops-note" id="opsEditHint">先「预演」看用量与后果，再按提示输入确认词启用「执行」。</div>
@@ -100,7 +101,9 @@
 				<div class="danger-zone" id="opsMergeZone">
 					<h3>并入区 · 把提议稿并入 live USER.md</h3>
 					<div class="hint" id="opsMergeNote"></div>
-					<div class="toolbar">
+					<!-- 用 .ops-ctl 而不是 .toolbar：形态就是"一行操作控件"，而 .ops-ctl 自带侧栏那套
+					     按钮语言（文字动作 / 描边），.toolbar 是内容区工具条的样式，会在这里变成实心砖块。 -->
+					<div class="ops-ctl">
 						<button type="button" id="opsMergePreview">预演并入</button>
 						<span>输入 <span class="confirm-token">MERGE</span> 启用「执行并入」</span>
 						<input type="text" class="confirm-input" id="opsMergeConfirm" autocomplete="off" placeholder="MERGE" />
