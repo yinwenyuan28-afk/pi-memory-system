@@ -25,6 +25,13 @@
  * 4. 数字一律等宽 + tabular-nums。
  *    同一列要跨几百张卡片对齐；字号只走 --t-* 六级，不再出现 12.16px / 12.48px 这种噪声级差。
  *
+ * 5. 外壳只做「文字动作」，不做底色块。
+ *    按钮只有三个语义 + 一个状态（默认文字动作 / `.primary` 墨色描边 = 写入内容 / `.danger`
+ *    danger 描边 = 让既有内容消失或被替换 / `.active` 墨色横条 = 当前选中），尺寸只有一档
+ *    （31px；卡片脚与播种表行内两处紧凑档 25px）。**作用域只准覆盖尺寸与间距，不准决定按钮长相** ——
+ *    细则与理由见下面「动作语言」一节。2026-10-10 之前正是因为语言写在某一个作用域里，
+ *    同一页长出了 7 种按钮外观、4 档尺寸。
+ *
  * 主题基线：`:root { color-scheme: dark }` 是所有原生控件（滚动条 / select 弹层 / 复选框 /
  * search 的清除按钮）变暗的前提；删掉它这一页会退回浅色原生控件 + 浅灰滚动条。
  */
@@ -214,8 +221,13 @@ header.page .sub {
 .toolbar + .toolbar { margin-top: 8px; }
 .content > .toolbar { margin-bottom: 12px; }
 
-/* ── 表单控件 ─────────────────────────────────────────────────────────────── */
-button, select, input[type="search"], input[type="text"], textarea {
+/* ── 字段（输入框 / 下拉 / 文本域）────────────────────────────────────────────
+ * 字段需要**可见的边界**（它是个可写的地方），所以填底 + 描边。
+ * 选择器用 `input:not(...)` 而不是逐个点名 type：原先只写了 search/text，于是弹层里
+ * `type="number"` 的 priority 框一直是**浏览器原生样式** —— 与它旁边那个文本域并排量出来是
+ * 2px inset 灰边 / 0 圆角 / 22px 高 / 13.33px 字，而旁边是 1px 描边 / 8px 圆角 / 34px 高。
+ * 少数派 type（number / url / 时间…）漏一个就又是一处"不统一"，所以按"除了勾选类都算字段"来写。 */
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
 	font: inherit;
 	color: var(--text);
 	background: var(--panel2);
@@ -224,23 +236,54 @@ button, select, input[type="search"], input[type="text"], textarea {
 	padding: 6px 10px;
 	transition: background-color 120ms, border-color 120ms, color 120ms;
 }
-button { cursor: pointer; }
 select { cursor: pointer; }
-button:hover:not(:disabled) { background: var(--panel3); border-color: #3c4c60; }
-button:disabled { opacity: 0.45; cursor: default; }
-/* 主按钮用"墨色"而不是强调色：外壳不占色相（契约 1） */
-button.primary { background: var(--ink); border-color: var(--ink); color: #0d1219; font-weight: 600; }
-button.primary:hover:not(:disabled) { background: #e2eaf3; border-color: #e2eaf3; }
-button.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 
-/* 标签页 / 分段按钮的选中态：外壳里此前完全缺失（点"价值校验丢弃"看不出切换） */
-.toolbar button.active {
-	background: var(--panel3);
-	border-color: var(--border);
-	color: var(--text);
-	box-shadow: inset 0 -2px 0 var(--ink);
+/* ── 动作语言（按钮；唯一一套，2026-10-10 定版）──────────────────────────────
+ *
+ * 用户报"UI 风格很不统一"。量出来的事实：L1 一页 599 个按钮落在 **7 种外观**、**4 档尺寸**
+ * （卡片脚 11px/25px、侧栏 12px/31px、页头与页签 13px/34px，底色有墨色实心 / panel2 实心 /
+ * 透明三种），连"选中"都有三副样子。
+ *
+ * 根因不是缺组件，而是**基样式替所有按钮做了一个决定**：`button` 与输入框共用一个"实心块"
+ * 基样式（--panel2 底 + 描边 + 13px/34px），而真正的语义规则只写在 `.ops-ctl` 一个作用域里 ——
+ * 于是 `.ops-ctl` 之外的一切（页头 / 页签 / 表格行 / 卡片脚 / 弹层页脚）全退回那个实心块。
+ *
+ * 现在收回成一套，只有三个语义 + 一个状态：
+ *   · 默认 = **文字动作**：透明底、透明描边、静音色；hover 才浮一层底色。
+ *     适用：读 / 预演 / 导航 / 展开 / 选中某一项 / 清空 —— 凡是不写 memoryDB 的。
+ *   · `.primary` = **墨色描边**：向 memoryDB **写入新内容**（写前留备份，可回退）。
+ *   · `.danger` = **danger 描边**：让数据**消失或被覆盖**（删除墓碑 / 整库还原 / 归档 / 恢复覆盖）。
+ *   · `.active` = **墨色横条**（状态，不是动作）：当前选中项。横向行用下沿 2px，纵向列表用左沿
+ *     2px —— 只有朝向不同，颜色与粗细是同一套（此前页签用 panel3、类型菜单用左沿，是两副样子）。
+ * 尺寸只有一档：`--t-sm` / `5px 9px`（实测 31px，与侧栏菜单行齐平）。
+ *
+ * **唯一的例外**：紧凑档 `--t-xs`（25px 高），只有两处 —— 卡片脚（`.card-foot .expand-btn`，
+ * L1 有 566 处，与同行 21px 度量胶囊对齐）与播种表的行内按钮（`#seedTable button`，列宽只有
+ * 36px，12px 字号下 `移除` 会折成两行、高 48px）。其余一律 31px。
+ *
+ * **刻意不属于这套语言的一处**：`button.task-open/done/dropped`（弹层里的任务状态）。它编码的
+ * 是**数据状态**（实线/虚线/点线 = 已定/未落定/已搁置，契约 2），不是动作权重 —— 别顺手统一掉。
+ *
+ * 这一节放在基样式位置而不是某个作用域里：作用域以后只准覆盖**尺寸与间距**，不准再决定长相，
+ * 否则"再长出一种外观"这件事没有东西拦得住（踩坑 20 的同一条教训：注释不算契约）。 */
+button {
+	font: inherit;
+	background: transparent;
+	border: 1px solid transparent;
+	color: var(--muted);
+	font-size: var(--t-sm);
+	padding: 5px 9px;
+	border-radius: var(--r-md);
+	cursor: pointer;
+	transition: background-color 120ms, border-color 120ms, color 120ms;
 }
-
+button:hover:not(:disabled) { background: var(--panel2); border-color: transparent; color: var(--text); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.active { background: var(--panel2); color: var(--text); box-shadow: inset 0 -2px 0 var(--ink); }
+button.primary { border-color: var(--ink); color: var(--text); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--panel2); border-color: var(--ink); color: var(--text); }
+button.danger { border-color: var(--danger); color: var(--danger); }
+button.danger:hover:not(:disabled) { background: var(--panel2); border-color: var(--danger); color: var(--danger); }
 input[type="search"] { min-width: 240px; }
 /* 搜索框吃掉工具栏剩余宽度：占位符写的是可搜字段全清单，默认 240px 会把它裁到只剩
    「搜索 content / 场景 / 项目 / id / ƒ」，看不出还能搜什么。上限防止它在只剩一个控件的
@@ -345,25 +388,18 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); 
 .stats .hint { padding: 4px 0; }
 
 /* ── 侧栏：筛选按钮组 ───────────────────────────────────────────────────── */
+/* 只声明**这一列特有的布局**（整行铺满、计数靠右）；底色 / 字号 / 选中态一律走上面的
+   动作语言 —— 作用域不该再决定按钮长什么样（那正是"7 种外观"的来源）。 */
 .btn-list { display: flex; flex-direction: column; gap: 2px; }
 .btn-list button {
 	display: flex;
 	justify-content: space-between;
 	gap: 8px;
-	background: transparent;
-	border-color: transparent;
 	text-align: left;
-	padding: 5px 9px;
-	font-size: var(--t-sm);
-	color: var(--muted);
 }
-.btn-list button:hover { background: var(--panel2); color: var(--text); }
-/* 选中态：左侧墨色竖条（结构性标记，不用颜色） */
-.btn-list button.active {
-	background: var(--panel2);
-	color: var(--text);
-	box-shadow: inset 2px 0 0 var(--ink);
-}
+/* 选中态：纵向列表用**左沿**墨色条（横向行用下沿，见动作语言一节）—— 同一条状态，
+   只有朝向跟着列表方向走，避免在竖排里画一条"底部横线"看着像分割线。 */
+.btn-list button.active { box-shadow: inset 2px 0 0 var(--ink); }
 .btn-list .n { color: var(--muted); }
 .btn-list .n .alive { color: var(--ok); font-weight: 600; }
 
@@ -575,16 +611,24 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); 
 	padding: 8px 12px 9px;
 	border-top: 1px solid var(--border-soft);
 }
-/* padding 把点击区从 17px 抬到 25px（WCAG 目标尺寸 24px 的下限），视觉位置靠负 margin 抵消 */
-.expand-btn {
-	background: transparent;
-	border: 0;
-	color: var(--muted);
+/* 卡片脚的按钮走紧凑档（动作语言一节里那两处例外之一）：11px + 3px/7px padding 实测 25px 高，
+   与同行的 21px 度量胶囊对齐，也仍高于 WCAG 24px 的点击目标下限。
+   这里**只声明尺寸与位移**：底色/描边/静音色由上面的动作语言给（此前这一条自带一套
+   `background: transparent; border: 0; color: var(--muted)`，是第 7 种外观的来源）。
+   `margin` 与 `padding` 数值对称，用来把多出来的点击区在视觉位置上抵消掉。 */
+.card-foot .expand-btn {
 	font-size: var(--t-xs);
-	padding: 4px 6px;
-	margin: -4px -6px;
+	padding: 3px 7px;
+	margin: -3px -7px;
 }
-.expand-btn:hover { color: var(--text); background: transparent; border-color: transparent; }
+/* 播种表第 4 列的行内按钮（例外之二）：table-layout:fixed 把它压到 36px 内容宽，而 `移除`
+   在 12px 下要 24px 字宽 + 18px padding = 44px —— 于是折成两行、实测 48px 高，是那一页唯一的
+   尺寸离群值（改前它还是个同样高的**实心块**，最显眼）。走紧凑档 + 禁止折行后正好 36px / 25px。 */
+#seedTable button {
+	font-size: var(--t-xs);
+	padding: 3px 5px;
+	white-space: nowrap;
+}
 
 /* ── 表格 ─────────────────────────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
@@ -806,34 +850,14 @@ details.more[open] > summary { margin-bottom: 6px; }
 .ops h3.sub { margin: 14px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
 .ops h3.sub:first-child { margin-top: 0; }
 
-/* 操作区按钮的语言（2026-10-09，用户报"切换按钮与预演按钮和周围格格不入"）─────────────
+/* 操作区（.ops-ctl）的按钮：**没有自己的语言了** —— 2026-10-10 起全部走上面的「动作语言」一节。
  *
- * 这一节把上面契约里那句「破坏性动作 = 描边按钮，预演/只读 = 文字动作」真正落到 CSS 上 ——
- * 此前每个按钮走的都是全局那条"实心块"基样式（`--panel2` 底 + 描边 + 13px/34px），
- * 于是同一列侧栏里并存两套语言：类型菜单是 12px 透明行、选中靠墨色竖条，操作区却是实心砖块，
- * 而「当前 code」还用 `.primary` 的整块浅色（`--ink`）—— 侧栏里最亮的元素居然是个只读状态。
- *
- * 四条规则，对应四种语义（都不给外壳上色相，底色只在 hover / 选中时浮出）：
- *   · 默认（预演 / 只读 / 打开）＝ **文字动作**：透明底、无描边、静音色，hover 才浮出底色；
- *   · `.active`（当前选中值，如提取模式）＝ 与页签同一套**墨色横条**（`.toolbar button.active` 的写法）；
- *   · `.primary`（点了就落盘）＝ **墨色描边**，不填底色 —— 外壳不做底色块（契约 1）；
- *   · `.danger`（不可逆）＝ `--danger` 描边 + 文字。
- * 尺寸统一到侧栏行那档（12px / 5px·9px，实测高 29px），与上面的菜单行对齐。
- * 注意范围只到 `.ops-ctl`：页头工具条与内容区表格里的按钮语境不同（不是"侧栏里的一列动作"），
- * 保持原样以免把两处的层级一起压平。 */
-.ops-ctl button {
-	background: transparent;
-	border-color: transparent;
-	color: var(--muted);
-	font-size: var(--t-sm);
-	padding: 5px 9px;
-}
-.ops-ctl button:hover:not(:disabled) { background: var(--panel2); border-color: transparent; color: var(--text); }
-.ops-ctl button.active { background: var(--panel2); color: var(--text); box-shadow: inset 0 -2px 0 var(--ink); }
-.ops-ctl button.primary { border-color: var(--ink); color: var(--text); font-weight: 600; }
-.ops-ctl button.primary:hover:not(:disabled) { background: var(--panel2); border-color: var(--ink); color: var(--text); }
-.ops-ctl button.danger { border-color: var(--danger); color: var(--danger); }
-.ops-ctl button.danger:hover:not(:disabled) { background: var(--panel2); border-color: var(--danger); color: var(--danger); }
+ * 复盘（2026-10-09 → 10）：当时用户报"切换按钮与预演按钮和周围格格不入"，诊断是对的（按钮走的
+ * 是全局那条实心块基样式），但**修法只覆盖了 `.ops-ctl` 这一个作用域** —— 于是同一页里
+ * `.ops-ctl` 是 12px/31px 的透明行，而页头 / 页签 / 表格行 / 卡片脚 / 弹层页脚仍是 13px/34px 的
+ * 实心砖块，总数从"两套语言"变成"7 种外观、4 档尺寸"。这一轮把语言收到基样式位置，作用域只剩
+ * 尺寸与间距 —— 这也是踩坑 20 那条"定完契约要一次扫完所有页面"的最终形态：**别在作用域里定义长相**。
+ * 这里保留的只有本作用域特有的布局（`.ops-row > .ops-ctl` 的 flex/gap，见上），颜色一律不再声明。 */
 
 /* 危险区里把标签折到控件上方：这块被 .danger-zone 的 12px 内边距再吃掉一圈，控件列只剩
    ~141px —— 备份下拉只能显示到「backfill-project-」（有 5 个同名前缀的目录，根本分不开），

@@ -1426,7 +1426,9 @@
 			// 预演不带 .primary：契约里「预演/只读 = 文字动作」，只有真正写盘的「执行」才带 danger 描边
 			// （与 L3 `#opsPreview` 同一处理；.ops-ctl 里 .primary 是墨色描边，那是给写盘动作用的）。
 			'<button type="button" id="fixPreview"' + (hasPort ? "" : " disabled") + ">预演（只报闸门裁决）</button>" +
-			'<button type="button" class="danger" id="fixApply" hidden>执行（写盘）</button>' +
+			// `.primary`（墨色描边）而不是 `.danger`：改写是**写入新内容**（写前留备份、可回退），
+			// 真正"让数据消失"的是页脚的删除墓碑 —— 语义见 viewer.css 的「动作语言」一节。
+			'<button type="button" class="primary" id="fixApply" hidden>执行（写盘）</button>' +
 			"</div>" +
 			'<div id="fixVerdict"></div>' +
 			"</div></details>" +

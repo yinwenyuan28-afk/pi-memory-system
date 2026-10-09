@@ -642,9 +642,11 @@
 		if (!V.bridgePort()) return "<td data-opscell><span class=\"hint\">写回需 <code>?port=</code></span></td>";
 		var f = V.escapeHtml(filename);
 		var hint = archived ? "恢复原因（可选，写入账本）" : "归档原因（必填，写入账本）";
+		// 行上这颗是**预演**（点了只出裁决与账本预览，落盘要再点弹出来的「确认执行归档」），
+		// 所以两行都是默认的「文字动作」；`.danger` 留给那个真正改盘的确认按钮（见 blockPreview）。
 		var btn = archived
 			? '<button type="button" data-op="restore" data-file="' + f + '">恢复（预演）</button>'
-			: '<button type="button" class="danger" data-op="archive" data-file="' + f + '">归档（预演）</button>';
+			: '<button type="button" data-op="archive" data-file="' + f + '">归档（预演）</button>';
 		return (
 			"<td data-opscell>" +
 			'<div class="ops-ctl"><input type="text" class="reason" data-reason placeholder="' + hint + '" />' + btn + "</div>" +

@@ -445,19 +445,50 @@ try {
 	ok("⑯ 页面脚本不再使用 card-scroll（正文改截断预览）", !viewerJs.some(({ src }) => src.includes("card-scroll")));
 	ok("⑯ .card-body 正文声明了 -webkit-line-clamp", /\.card-body \.full-content\s*\{[^}]*-webkit-line-clamp/.test(css));
 
-	// ⑥ 侧栏操作区的按钮语言（2026-10-09：用户报"切换按钮与预演按钮和周围格格不入"）。
-	//    上面那段契约注释里早写着「破坏性动作 = 描边按钮，预演/只读 = 文字动作」，但此前**没有任何 CSS
-	//    落实它** —— 每个按钮都走全局那条"实心块"基样式，于是同一列侧栏里并存两套语言：菜单是 12px
-	//    透明行、选中靠墨色竖条，操作区却是 13px/34px 的实心砖块，而「当前 code」还是整块浅色。
-	//    注释不算契约，能拦住复发的只有断言 —— 这一节钉住那四条状态各自的形态。
+	// ⑥ 动作语言（2026-10-10：用户报"UI 风格很不统一"）。
+	//    复盘：2026-10-09 那次诊断没错（按钮走的确实是全局那条"实心块"基样式），但**修法只覆盖了
+	//    `.ops-ctl` 一个作用域** —— 于是同一页里 `.ops-ctl` 是 12px/31px 透明行，而页头 / 页签 /
+	//    表格行 / 卡片脚 / 弹层页脚仍是 13px/34px 的实心砖块；实测 599 个按钮落在 **7 种外观、
+	//    4 档尺寸**（11/12/13px × 25/31/34px），连"选中"都有三副样子。
+	//    现在语言收在基样式位置（不在任何作用域里），这一节钉住它，并且钉住"作用域不准再定义长相"。
 	ok(
-		"⑯ 操作区按钮默认是文字动作（透明底 + 无描边）",
-		/\.ops-ctl button\s*\{[^}]*background:\s*transparent[^}]*border-color:\s*transparent/.test(css),
+		"⑯ 按钮基样式 = 文字动作（透明底 + 透明描边 + 静音色 + 尺寸 5px 9px / --t-sm）",
+		/^button\s*\{[^}]*background:\s*transparent[^}]*border:\s*1px solid transparent[^}]*color:\s*var\(--muted\)[^}]*font-size:\s*var\(--t-sm\)[^}]*padding:\s*5px 9px/m.test(css),
 	);
-	ok("⑯ 操作区选中态用墨色横条（与页签同一套）", /\.ops-ctl button\.active\s*\{[^}]*background:\s*var\(--panel2\)[^}]*box-shadow:\s*inset 0 -2px 0 var\(--ink\)/.test(css));
 	ok(
-		"⑯ 操作区 .primary / .danger 只描边、不填底色",
-		/\.ops-ctl button\.primary\s*\{[^}]*border-color:\s*var\(--ink\)/.test(css) && /\.ops-ctl button\.danger\s*\{[^}]*border-color:\s*var\(--danger\)/.test(css),
+		"⑯ 三个语义 + 一个状态都在基样式一节（.active 墨色横条 / .primary 墨色描边 / .danger danger 描边）",
+		/^button\.active\s*\{[^}]*background:\s*var\(--panel2\)[^}]*box-shadow:\s*inset 0 -2px 0 var\(--ink\)/m.test(css) &&
+			/^button\.primary\s*\{[^}]*border-color:\s*var\(--ink\)/m.test(css) &&
+			/^button\.danger\s*\{[^}]*border-color:\s*var\(--danger\)/m.test(css),
+	);
+	ok(
+		"⑯ 纵向列表的 .active 用左沿墨色条（.btn-list，与横向行只有朝向不同）",
+		/\.btn-list button\.active\s*\{\s*box-shadow:\s*inset 2px 0 0 var\(--ink\)/.test(css),
+	);
+	ok(
+		"⑯ 紧凑档只有两处：卡片脚（与同行胶囊对齐）与播种表行内按钮（列宽 36px 会折行）",
+		/\.card-foot \.expand-btn\s*\{[^}]*font-size:\s*var\(--t-xs\)[^}]*padding:\s*3px 7px/.test(css) &&
+			/#seedTable button\s*\{[^}]*font-size:\s*var\(--t-xs\)[^}]*white-space:\s*nowrap/.test(css),
+	);
+	// 「外壳不做底色块」：按钮规则里不许出现墨色 / 色相底 —— 这一条才是防复发的关键。
+	// 允许的底色只有三种：透明、hover/选中时的 --panel2、任务状态按钮"当前值"的 --panel3。
+	{
+		const buttonBgRules: string[] = [];
+		for (const m of css.matchAll(/([^{}]*button[^{}]*)\{([^}]*)\}/g)) {
+			const sel = m[1].trim().split("\n").pop()!.trim();
+			// `::-webkit-search-cancel-button` 是**伪元素**（搜索框里那个清除叉），名字里带 "button"
+			// 但不是按钮控件 —— 它的底色是该画上去的叉，不在本节约束范围。
+			if (/::-webkit-/.test(sel)) continue;
+			const bg = /background(?:-color)?:\s*([^;]+)/.exec(m[2]);
+			if (bg) buttonBgRules.push(`${sel} → ${bg[1].trim()}`);
+		}
+		const badBg = buttonBgRules.filter((r) => !/→\s*(transparent|var\(--panel2\)|var\(--panel3\))$/.test(r));
+		ok("⑯ 没有任何按钮规则把底色填成墨色 / 色相（外壳不做底色块）", badBg.length === 0, badBg.slice(0, 3).join(" | "));
+	}
+	ok("⑯ 作用域不再定义按钮长相（.ops-ctl button 已无背景声明）", !/\.ops-ctl button[^{]*\{[^}]*background/.test(css));
+	ok(
+		"⑯ 字段（输入框 / 下拉 / 文本域）仍是可见边界，且不再逐个点名 type（number 曾漏在外面）",
+		/input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\),\s*select,\s*textarea\s*\{[^}]*background:\s*var\(--panel2\)[^}]*border:\s*1px solid var\(--border\)/.test(css),
 	);
 }
 

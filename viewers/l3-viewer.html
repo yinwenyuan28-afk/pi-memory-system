@@ -16,7 +16,7 @@
 				<p class="sub">游标与触发进度 · 三份「§ 分隔条目」文件的字符预算与自检 · 提议稿与 live 的差异 · 画像备份。</p>
 			<div id="modeBanner" class="notice" style="display: none"></div>
 			<div class="toolbar">
-				<button type="button" class="primary" id="reloadBtn">重新加载</button>
+				<button type="button" id="reloadBtn">重新加载</button>
 			</div>
 			<p class="hint" id="loadNote">加载中…</p>
 		</header>
@@ -90,9 +90,10 @@
 					<div class="ops-ctl">
 						<span>输入 <span class="confirm-token" id="opsTokenHint">—</span> 启用「执行」</span>
 						<input type="text" class="confirm-input" id="opsConfirm" autocomplete="off" />
-						<!-- 预演 = 只读动作（不落盘），按契约走文字动作那一档；`.primary` 留给"点了就写盘"的按钮 -->
+						<!-- 预演 = 只读动作（不落盘）走默认档；`.primary`（墨色描边）给"点了会写入内容"的执行。
+						     语义见 viewer.css 的「动作语言」一节：danger 只给"让既有内容消失或被替换"的动作。 -->
 						<button type="button" id="opsPreview">预演</button>
-						<button type="button" class="danger" id="opsApply" disabled>执行</button>
+						<button type="button" class="primary" id="opsApply" disabled>执行</button>
 					</div>
 					<div class="ops-note" id="opsEditHint">先「预演」看用量与后果，再按提示输入确认词启用「执行」。</div>
 				</div>
@@ -107,7 +108,7 @@
 						<button type="button" id="opsMergePreview">预演并入</button>
 						<span>输入 <span class="confirm-token">MERGE</span> 启用「执行并入」</span>
 						<input type="text" class="confirm-input" id="opsMergeConfirm" autocomplete="off" placeholder="MERGE" />
-						<button type="button" class="danger" id="opsMergeApply" disabled>执行并入</button>
+						<button type="button" class="primary" id="opsMergeApply" disabled>执行并入</button>
 					</div>
 					<div id="opsMergeGates"></div>
 					<div id="opsMergeOut"></div>
