@@ -60,18 +60,12 @@
 			<aside>
 				<h2>筛选</h2>
 
-				<h3 class="sub">类型</h3>
-				<div class="btn-list" id="typeList"></div>
-
-				<h3 class="sub">任务状态（仅 work_task）</h3>
-				<div class="btn-list" id="taskList">
-					<button type="button" class="active" data-taskfilter=""><span>全部</span></button>
-					<button type="button" data-taskfilter="open"><span>待办</span></button>
-					<button type="button" data-taskfilter="done"><span>已完成</span></button>
-					<button type="button" data-taskfilter="dropped"><span>已废弃</span></button>
-					<button type="button" data-taskfilter="none"><span>非任务记录</span></button>
-				</div>
-				<div id="taskCounts"></div>
+				<!-- 类型与任务状态是**同一棵菜单**的两级（2026-10-09 合并）：任务状态是 work_task 这个
+				     类型下的一个维度，平铺成两块按钮会让人以为它们是两个平行的轴。二级挂在 work_task 行下，
+				     点它或用右侧把手展开；「非任务记录」是类型轴上的补集（原先混在任务状态里）。
+				     行序固定为 schema 声明序，不按计数排 —— 菜单里同一项每次都该在同一个位置。 -->
+				<h3 class="sub">类型 · 任务状态</h3>
+				<div class="btn-list" id="typeMenu"></div>
 
 				<h3 class="sub">场景（按 scene_id 解析到池中 canonical 名）</h3>
 				<select id="sceneList" style="width: 100%"><option value="">全部场景</option></select>

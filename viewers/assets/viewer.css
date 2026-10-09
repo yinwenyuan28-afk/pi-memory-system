@@ -367,6 +367,27 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); 
 .btn-list .n { color: var(--muted); }
 .btn-list .n .alive { color: var(--ok); font-weight: 600; }
 
+/* ── 二级菜单（类型 → 任务状态，2026-10-09）──────────────────────────────────
+ * 形状编码层级，不引新色相：
+ *   · 有二级的那一行，右侧多一个展开把手（▸/▾，等宽字形）；计数靠右对齐到把手之前，
+ *     所以 `.n` 用 margin-left:auto 顶开，而不是让 space-between 把三项摊平。
+ *   · 二级列表缩进 + 一条竖线（--border），一眼看出"这些属于上面那一项"，且比一级小一号。
+ *   · 层级只影响排布；选中态仍是既有的左侧墨色竖条。 */
+/* 外层必须是 flex 列：**Blink 里 `<button>` 的宽度按内容收缩**，即使 `display: flex` 也一样 ——
+   放进普通块容器（`display: block` 的 wrapper）只会拿到内容宽，行右侧空出一大截（实测 140px vs 293px），
+   而 `.btn-list` 的直接子级是 flex 项、被 stretch 撑满，所以这个坑直到出现"包一层的分支容器"才暴露。 */
+.type-branch { display: flex; flex-direction: column; gap: 2px; }
+.btn-list button.type-row { justify-content: flex-start; }
+.btn-list button.type-row > .n { margin-left: auto; }
+.btn-list button.type-row > .chip { margin-left: 6px; }
+.caret { margin-left: 6px; color: var(--muted); font-family: var(--mono); user-select: none; }
+.btn-list .type-sub {
+	margin: 2px 0 4px 9px;
+	padding-left: 8px;
+	border-left: 1px solid var(--border);
+}
+.btn-list .type-sub button { font-size: var(--t-xs); padding: 4px 8px; }
+
 /* ── chip / metric：形状编码种类（契约 2） ───────────────────────────────── */
 .chips { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
 

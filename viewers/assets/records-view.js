@@ -21,6 +21,18 @@
 	var V = window.V;
 	var VQ = window.VQ;
 
+	/**
+	 * 类型轴上的**虚拟值**：work_task 之外的全部记录。
+	 *
+	 * 它不是记录里真有的 `type`（真 type 只有 work_fact / work_task / work_method / work_artifact
+	 * 加少数历史值），只是"补集"这个筛选条件 —— 所以不能落到 `data-type` 与真实类型混在同一空间里比较。
+	 * 选出来的值与真 type 不可能撞车（真 type 里没有带 `!` 前缀的），这也是它选这个字面量的原因。
+	 */
+	var NON_TASK = "!non-task";
+
+	/** 任务状态的**固定顺序**（= record-types.ts 的 L1_TASK_STATES）：菜单里不按计数排。 */
+	var TASK_STATES = ["open", "done", "dropped"];
+
 	// ── 状态 ────────────────────────────────────────────────────────────────
 	var state = {
 		/** 已加质量分与场景/项目解析的记录（加载时算一次，避免每次筛选重算） */
@@ -42,8 +54,12 @@
 		/** 加载过程中的错误/提示 */
 		errors: [],
 		filters: {
+			/** "" | 真类型 | NON_TASK（见 NON_TASK 注释） */
 			type: "",
+			/** "" | open | done | dropped —— 只在 type === "work_task" 时有意义 */
 			task: "",
+			/** 二级菜单（work_task 下的任务状态）是否摊开；默认收起，选到 work_task 时自动摊开 */
+			branchOpen: false,
 			scene: "",
 			project: "",
 			quality: "",
@@ -436,10 +452,13 @@
 		if (f.onlyDeleted) rows = rows.filter(function (r) { return !!r.deleted; });
 		else if (f.hideDeleted) rows = rows.filter(function (r) { return !r.deleted; });
 
-		if (f.type) rows = rows.filter(function (r) { return (r.type || "(无 type)") === f.type; });
+		// 类型 / 任务状态是同一棵菜单的两级：状态只在 work_task 下可选，所以 `task` 有值时类型必然是
+		// work_task（由菜单的点击处理保证，这里不重复校验）。「非任务记录」是**类型轴**上的补集 ——
+		// 它原先藏在任务状态的取值里（`task === "none"`），但语义上一直是类型，趁两级合并归位。
+		if (f.type === NON_TASK) rows = rows.filter(function (r) { return !r.isTask; });
+		else if (f.type) rows = rows.filter(function (r) { return (r.type || "(无 type)") === f.type; });
 
-		if (f.task === "none") rows = rows.filter(function (r) { return !r.isTask; });
-		else if (f.task) rows = rows.filter(function (r) { return r.isTask && r.taskState === f.task; });
+		if (f.task) rows = rows.filter(function (r) { return r.isTask && r.taskState === f.task; });
 
 		if (f.scene) rows = rows.filter(function (r) { return sceneBucket(r) === f.scene; });
 		if (f.project) {
@@ -492,12 +511,11 @@
 		if (all.length === 0) {
 			$("stats").innerHTML = '<div class="stat"><span>已加载</span><span>0</span></div>';
 			$("qualityStats").innerHTML = "";
-			$("typeList").innerHTML = "";
+			$("typeMenu").innerHTML = "";
 			$("sceneList").innerHTML = '<option value="">全部场景</option>';
 			$("sceneNote").textContent = "";
 			$("projectList").innerHTML = '<option value="">全部项目</option>';
 			$("fileList").textContent = "尚未加载";
-			$("taskCounts").innerHTML = "";
 			return;
 		}
 		var alive = all.filter(function (r) { return !r.deleted; });
@@ -562,35 +580,7 @@
 				: "无存活记录") +
 			'</div><div class="hint" style="margin-top:6px"><a href="#" id="filterPrune">只看淘汰候选</a></div>';
 
-		// 类型筛选（含非任务记录）
-		var counts = V.groupCount(all, function (r) { return r.type || "(无 type)"; });
-		var aliveCounts = new Map();
-		alive.forEach(function (r) {
-			var t = r.type || "(无 type)";
-			aliveCounts.set(t, (aliveCounts.get(t) || 0) + 1);
-		});
-		$("typeList").innerHTML =
-			'<button type="button" class="' + (state.filters.type === "" ? "active" : "") + '" data-type=""><span>全部</span><span class="n"><span class="alive">' +
-			alive.length + "</span>/" + all.length + "</span></button>" +
-			counts
-				.map(function (c) {
-					return (
-						'<button type="button" class="' + (state.filters.type === c.key ? "active" : "") + '" data-type="' + V.escapeHtml(c.key) + '">' +
-						"<span>" + V.escapeHtml(c.key) + '</span><span class="n"><span class="alive">' + (aliveCounts.get(c.key) || 0) + "</span>/" + c.count + "</span></button>"
-					);
-				})
-				.join("");
-
-		// 任务状态统计（独立于 deleted 轴）
-		var tasks = all.filter(function (r) { return r.isTask && !r.deleted; });
-		$("taskCounts").innerHTML =
-			'<div class="hint">work_task 存活 ' + tasks.length + " 条：" +
-			["open", "done", "dropped"]
-				.map(function (s) {
-					return V.TASK_STATE_LABELS[s] + " <b>" + tasks.filter(function (r) { return r.taskState === s; }).length + "</b>";
-				})
-				.join("，") +
-			"</div>";
+		renderTypeMenu(all, alive);
 
 		// 场景 / 项目下拉（取前 40 项，避免长列表把侧栏撑爆）
 		// 场景桶用 sceneBucket：池中 canonical 与"未归类的历史名字"分开列，不混成一层
@@ -629,6 +619,93 @@
 				.join("");
 
 		$("fileList").textContent = state.files.length ? state.files.slice(-12).join("、") + (state.files.length > 12 ? " …（共 " + state.files.length + " 个）" : "") : "尚未加载";
+	}
+
+	/**
+	 * 渲染「类型 · 任务状态」二级菜单。
+	 *
+	 * 一级 = 类型（含 `NON_TASK` 这个类型轴补集），二级 = work_task 下的任务状态。
+	 * 三条口径，都是"复现过一次才这么写"的：
+	 *   · **顺序固定**（schema 声明序 + 其余类型按字典序），不按计数降序 —— 菜单里同一项每次都该在
+	 *     同一个位置，按计数排会让行随数据增长互相换位（上一版正是按计数排的）。
+	 *   · **计数一律「存活/总数」**，与一级同一套写法（含已删除，因为 `taskState` 与 `deleted` 是两根
+	 *     独立的轴，只报存活会让人以为已删除的任务没有状态）。
+	 *   · work_task 行在有状态筛选时**必须显示那个状态**：二级可收起，收起后若行上什么都不显示，
+	 *     就会出现"列表被筛过、侧栏却看不出在筛什么"。
+	 *
+	 * @param all 全部记录（含已删除）
+	 * @param alive 存活记录（用于「存活/总数」里的前一个数）
+	 */
+	function renderTypeMenu(all, alive) {
+		var f = state.filters;
+		var isTask = function (r) { return r.isTask; };
+		var aliveOf = function (pred) { return alive.filter(pred).length; };
+
+		/**
+		 * 一行（一级/二级共用）：`label [mid] 存活/总数 [tail]`。
+		 *
+		 * 分成 mid / tail 两段是因为排布规则不同：mid（状态药丸）紧跟在名称后面，tail（展开把手）
+		 * 必须落在计数**之后**、最右侧 —— 而 `.n` 是靠 `margin-left:auto` 顶到右边的，
+		 * 把手若放在它前面就会被顶到左边去。
+		 */
+		function row(attrs, label, aliveN, totalN, mid, tail) {
+			return (
+				'<button type="button" ' + attrs + ">" +
+				"<span>" + V.escapeHtml(label) + "</span>" +
+				(mid || "") +
+				'<span class="n"><span class="alive">' + aliveN + "</span>/" + totalN + "</span>" +
+				(tail || "") +
+				"</button>"
+			);
+		}
+
+		// 一级：全部 → 四个 schema 类型（在数据里出现过才列）→ 其余类型（历史/手写值，如 architecture）→ 非任务记录
+		var present = new Set(all.map(function (r) { return r.type || "(无 type)"; }));
+		var ordered = V.RECORD_TYPES.filter(function (t) { return present.has(t); });
+		Array.from(present)
+			.filter(function (t) { return ordered.indexOf(t) < 0; })
+			.sort()
+			.forEach(function (t) { ordered.push(t); });
+
+		var html = row('class="' + (f.type === "" ? "active" : "") + '" data-type=""', "全部", alive.length, all.length);
+
+		ordered.forEach(function (t) {
+			var total = all.filter(function (r) { return (r.type || "(无 type)") === t; }).length;
+			var aliveN = aliveOf(function (r) { return (r.type || "(无 type)") === t; });
+			if (t !== "work_task") {
+				html += row('class="' + (f.type === t ? "active" : "") + '" data-type="' + V.escapeHtml(t) + '"', t, aliveN, total);
+				return;
+			}
+			// work_task：带二级（任务状态）。把手单独可点 —— "只想看一眼有哪些状态"不该顺带换掉筛选。
+			var marker = f.task ? chip(V.TASK_STATE_LABELS[f.task] || f.task, "task-" + f.task, "当前筛选：仅该状态") : "";
+			var caret = '<span class="caret" data-caret="1" title="' + (f.branchOpen ? "收起" : "展开") + '任务状态">' + (f.branchOpen ? "▾" : "▸") + "</span>";
+			html +=
+				'<div class="type-branch">' +
+				row(
+					'class="type-row' + (f.type === "work_task" ? " active" : "") + '" data-type="work_task" aria-expanded="' + (f.branchOpen ? "true" : "false") + '"',
+					t,
+					aliveN,
+					total,
+					marker,
+					caret,
+				) +
+				(f.branchOpen
+					? '<div class="btn-list type-sub">' +
+						TASK_STATES.map(function (s) {
+							var n = aliveOf(function (r) { return r.isTask && r.taskState === s; });
+							var m = all.filter(function (r) { return r.isTask && r.taskState === s; }).length;
+							return row('class="' + (f.task === s ? "active" : "") + '" data-task="' + s + '"', V.TASK_STATE_LABELS[s], n, m);
+						}).join("") +
+						"</div>"
+					: "") +
+				"</div>";
+		});
+
+		// 非任务记录：类型轴上的补集（work_task 之外的全部），原先混在任务状态里
+		var nonTotal = all.filter(function (r) { return !r.isTask; }).length;
+		html += row('class="' + (f.type === NON_TASK ? "active" : "") + '" data-type="' + NON_TASK + '"', "非任务记录", aliveOf(function (r) { return !r.isTask; }), nonTotal);
+
+		$("typeMenu").innerHTML = html;
 	}
 
 	// ── 渲染：记录卡片 ──────────────────────────────────────────────────────
@@ -1529,19 +1606,32 @@
 	}
 
 	function bind() {
-		$("typeList").addEventListener("click", function (e) {
-			var btn = e.target.closest("[data-type]");
-			if (!btn) return;
-			state.filters.type = btn.getAttribute("data-type") || "";
-			renderAll();
-		});
-		$("taskList").addEventListener("click", function (e) {
-			var btn = e.target.closest("[data-taskfilter]");
-			if (!btn) return;
-			state.filters.task = btn.getAttribute("data-taskfilter") || "";
-			$("taskList").querySelectorAll("button").forEach(function (b) {
-				b.classList.toggle("active", b === btn);
-			});
+		// 类型 / 任务状态菜单：三个目标各有各的语义，按"最具体优先"判定（把手 → 状态 → 类型）
+		$("typeMenu").addEventListener("click", function (e) {
+			// 展开把手：只切换二级的显隐，**不动筛选**（"只想看一眼有哪些状态"不该换掉当前视图）
+			if (e.target.closest("[data-caret]")) {
+				state.filters.branchOpen = !state.filters.branchOpen;
+				renderAll();
+				return;
+			}
+			var stateBtn = e.target.closest("[data-task]");
+			if (stateBtn) {
+				// 选状态 = 选 work_task 的那个状态：两级同属一个维度，不该要求先点一次类型
+				state.filters.type = "work_task";
+				state.filters.task = stateBtn.getAttribute("data-task") || "";
+				state.filters.branchOpen = true;
+				renderAll();
+				return;
+			}
+			var typeBtn = e.target.closest("[data-type]");
+			if (!typeBtn) return;
+			var t = typeBtn.getAttribute("data-type") || "";
+			state.filters.type = t;
+			// 离开 work_task 就清掉状态：留着会让行上显示"work_task · 待办"而列表按别的类型筛，
+			// 也无从判断当前到底在看什么（状态只在 work_task 下有意义）。
+			state.filters.task = t === "work_task" ? state.filters.task : "";
+			// 点 work_task 把二级摊开：让人当场看见它下面还有什么可选
+			if (t === "work_task") state.filters.branchOpen = true;
 			renderAll();
 		});
 		$("qualityFilter").addEventListener("change", function (e) {
