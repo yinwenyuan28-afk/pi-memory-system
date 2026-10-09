@@ -534,12 +534,14 @@
 		// 曾把「待观察」错映射到 warm（琥珀），于是侧栏图例说是灰、条形图却是琥珀 —— 图例与图必须同色。
 		var tagClass = { 热: "c-hot", 温: "c-warm", 冷: "c-cold", 新: "c-new", 噪: "c-noise", 待观察: "c-watch" };
 
-		$("qualityStats").innerHTML =
-			'<h2>质量标签</h2><div class="bars">' +
-			Object.keys(dist)
-				.map(function (k) { return barRow(k, dist[k], maxTag, tagClass[k]); })
-				.join("") +
-			'</div><h2>质量分直方图</h2><div class="hist">' +
+			// 这三个标题现在挂在「统计」组的 <details> 内，组标题是外层 h2 —— 组内一律降级为
+			// h3.sub，否则展开后会出现 4 个同级 h2，分组反而看不出来了。
+			$("qualityStats").innerHTML =
+				'<h3 class="sub">质量标签</h3><div class="bars">' +
+				Object.keys(dist)
+					.map(function (k) { return barRow(k, dist[k], maxTag, tagClass[k]); })
+					.join("") +
+				'</div><h3 class="sub">质量分直方图</h3><div class="hist">' +
 			Object.keys(hist)
 				.map(function (k) {
 					return (
@@ -550,7 +552,7 @@
 				})
 				.join("") +
 			"</div>" +
-			'<h2>淘汰候选（judgePrune 可判删）</h2><div class="hint">' +
+			'<h3 class="sub">淘汰候选（judgePrune 可判删）</h3><div class="hint">' +
 			(alive.length > 0
 				? "候选 <b>" + pruneCount + "</b> / 存活 " + alive.length +
 					"（保护带 priority ≥ " + state.protectedPriority + "，按分布 P" + VQ.PRUNE_RULES.protectedPercentile + " 取）<br>" +

@@ -50,16 +50,21 @@
 		</header>
 
 		<main>
+			<!--
+				侧栏按「性质」分四组，而不是把 14 个区块平铺：
+				  筛选（常开）—— 这一页最常用的动作，放最前
+				  操作（常开）—— 危险动作必须一眼可达，不该滚两屏统计才看见
+				  统计（默认收起）—— 概览/质量/淘汰候选都是「查」不是「用」
+				  说明（默认收起）—— 4 段教程，之前占着侧栏最后一屏
+				组标题用 h2（带分隔线），组内标签用 h3.sub（同字号、无分隔线）。
+			-->
 			<aside>
-				<h2>概览</h2>
-				<div class="stats" id="stats"><div class="stat"><span>已加载</span><span>0</span></div></div>
+				<h2>筛选</h2>
 
-				<div id="qualityStats"></div>
-
-				<h2>类型筛选</h2>
+				<h3 class="sub">类型</h3>
 				<div class="btn-list" id="typeList"></div>
 
-				<h2>任务状态（仅 work_task）</h2>
+				<h3 class="sub">任务状态（仅 work_task）</h3>
 				<div class="btn-list" id="taskList">
 					<button type="button" class="active" data-taskfilter=""><span>全部</span></button>
 					<button type="button" data-taskfilter="open"><span>待办</span></button>
@@ -69,37 +74,49 @@
 				</div>
 				<div id="taskCounts"></div>
 
-				<h2>场景（按 scene_id 解析到池中 canonical 名）</h2>
+				<h3 class="sub">场景（按 scene_id 解析到池中 canonical 名）</h3>
 				<select id="sceneList" style="width: 100%"><option value="">全部场景</option></select>
 				<div class="hint" id="sceneNote" style="margin-top: 6px"></div>
 
-				<h2>项目（metadata.project）</h2>
+				<h3 class="sub">项目（metadata.project）</h3>
 				<select id="projectList" style="width: 100%"><option value="">全部项目</option></select>
 
-				<h2>来源分片</h2>
-				<div class="hint" id="fileList">尚未加载</div>
-
+				<h2>操作</h2>
 				<!-- 管理操作区：内容由 renderOps 动态注入（值全部来自 /api/*，不在前端硬编码），
 				     所以事件一律委托到 #l1ops 上。危险区（整库还原）也在这一块内。 -->
-				<h2>L1 管理</h2>
 				<p class="hint" id="opsNote">管理操作区加载中…</p>
 				<div class="ops" id="l1ops"></div>
 
-				<h2>怎么读这页</h2>
-				<div class="hint">
-					<p><b>两根独立的轴</b>：<span class="chip del">deleted</span> 表示"这条记录不成立"（查重覆盖 / 纠错作废），
-					记录连同向量一起退出召回；<span class="chip task-done">已完成</span> 只表示任务关了，记录照旧存活、照旧被召回。
-					同一条记录可以两者兼有，所以页面上它们分别渲染、不合并成一个状态。</p>
-					<p><b>场景名以池为准</b>：记录里的 <code>scene_name</code> 只是落盘当时的历史快照，真源是
-					<code>l1/scenes.json</code>。带「⇢合并」的表示该 id 已被合并到另一个场景，按 canonical 名归组。</p>
-					<p><b>质量分 ≠ 能不能删</b>：质量分是"热度"，长期不被命中就会衰减到 0（符合遗忘曲线）；
-					能不能删由 <code>judgePrune</code> 单独判定 —— 高 priority 与 <code>work_method</code> 类永不自动淘汰。
-					「淘汰候选」就是这一半信息。</p>
-					<p><b>衰减时钟</b>：<code>days</code> 按<b>活跃会话日</b>算（停工期间不增长），
-					只有侧车缺 <code>activeDays</code> 时才退化为日历天 —— 卡片上会标明用的是哪种。</p>
-					<p class="hint">质量分公式与 <code>memory/l1/quality.ts</code> 的一致性由
-					<code>scripts/verify-viewer-quality-parity.ts</code> 断言数值全等（不是靠注释声明）。</p>
-				</div>
+				<h2>统计</h2>
+				<details class="more">
+					<summary>概览 · 质量标签 · 质量分直方图 · 淘汰候选 · 来源分片</summary>
+					<h3 class="sub">概览</h3>
+					<div class="stats" id="stats"><div class="stat"><span>已加载</span><span>0</span></div></div>
+
+					<div id="qualityStats"></div>
+
+					<h3 class="sub">来源分片</h3>
+					<div class="hint" id="fileList">尚未加载</div>
+				</details>
+
+				<h2>说明</h2>
+				<details class="more">
+					<summary>怎么读这页（两根独立的轴 / 场景名以池为准 / 质量分 ≠ 能不能删 / 衰减时钟）</summary>
+					<div class="hint">
+						<p><b>两根独立的轴</b>：<span class="chip del">deleted</span> 表示"这条记录不成立"（查重覆盖 / 纠错作废），
+						记录连同向量一起退出召回；<span class="chip task-done">已完成</span> 只表示任务关了，记录照旧存活、照旧被召回。
+						同一条记录可以两者兼有，所以页面上它们分别渲染、不合并成一个状态。</p>
+						<p><b>场景名以池为准</b>：记录里的 <code>scene_name</code> 只是落盘当时的历史快照，真源是
+						<code>l1/scenes.json</code>。带「⇢合并」的表示该 id 已被合并到另一个场景，按 canonical 名归组。</p>
+						<p><b>质量分 ≠ 能不能删</b>：质量分是"热度"，长期不被命中就会衰减到 0（符合遗忘曲线）；
+						能不能删由 <code>judgePrune</code> 单独判定 —— 高 priority 与 <code>work_method</code> 类永不自动淘汰。
+						「淘汰候选」就是这一半信息。</p>
+						<p><b>衰减时钟</b>：<code>days</code> 按<b>活跃会话日</b>算（停工期间不增长），
+						只有侧车缺 <code>activeDays</code> 时才退化为日历天 —— 卡片上会标明用的是哪种。</p>
+						<p class="hint">质量分公式与 <code>memory/l1/quality.ts</code> 的一致性由
+						<code>scripts/verify-viewer-quality-parity.ts</code> 断言数值全等（不是靠注释声明）。</p>
+					</div>
+				</details>
 			</aside>
 
 			<section class="content">

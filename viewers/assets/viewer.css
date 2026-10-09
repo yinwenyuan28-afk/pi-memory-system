@@ -324,6 +324,10 @@ aside h2, section h2 {
 	border-top: 1px solid var(--border-soft);
 }
 aside > h2:first-child, section > h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+/* 组内次级标签：与 h2 同字号同色，但**不带**分隔线 —— 分隔线只留给「筛选 / 操作 / 统计 / 说明」
+   这四个组标题，否则 14 个区块就是 14 条横线，分组等于没分。
+   不会波及管理区内部的小标题：`.ops h3.sub` 是 (0,2,1)、本条是 (0,1,2)，前者特异度更高。 */
+aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); font-weight: 600; }
 
 /* ── 侧栏：统计行（改成分隔线列表，不再每行一个圆角盒子） ─────────────────── */
 .stats { display: grid; gap: 0; }
