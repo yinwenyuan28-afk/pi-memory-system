@@ -699,20 +699,12 @@
 				if (r.project) chips.push(chip(V.projectShort(r.project), "", r.project));
 				else chips.push(chip("无项目", "", "metadata.project 为空"));
 
-				// ── 度量 token：安静、等宽、跨卡片可对齐
-				var metrics = [metric("eff " + q.effective), metric("hits " + q.hits + "/" + q.invalid, "命中/无效（无效即回收后判无价值被清除）")];
-				var st = state.hitMap.get(r.id);
-				if (st && (st.injectHits || st.toolHits)) metrics.push(metric("注入 " + st.injectHits + " / 工具 " + st.toolHits, "自动注入 / 工具召回"));
-				metrics.push(metric("decay " + fmtQ(q.decay)));
-				metrics.push(
-					metric((q.activeDayClock ? "活跃 " : "日历 ") + Number(q.days).toFixed(1) + " 天",
-						q.activeDayClock ? "衰减时钟按活跃会话日（停工不增长）" : "侧车无 activeDays，退化为日历天"),
-				);
-				metrics.push(metric(V.fmtDay(r.updatedAt || r.createdAt)));
-				metrics.push(metric(V.fromNow(r.updatedAt || r.createdAt)));
-				// 记录 id 必须显示：它是 l1_fix / l1_task_state 的操作句柄，也是注入行里的「编号」。
-				// 旧版有、重写时漏掉过一次 —— 没有它就没法从界面把一条记录对到命令上。
-				metrics.push(metric(r.id || "?", "记录 id：注入行里的「编号」，也是 l1_fix / l1_task_state 的入参", "id"));
+				// ── 度量 token：列表层只留一个「多久没动」。
+				// eff / hits / 注入 / decay / 活跃天 / 日期 / id 这些是**诊断值**，要排查衰减或
+				// 命中时才用得上；详情弹层里它们一个不少（其中 eff/hits/decay/天数/日期/id 本来
+				// 就各出现了两处）。列表层留 8 个胶囊而不是 15 个，是为了让 567 张卡里真正
+				// 该被扫到的东西（类型 / 状态 / 温度 / 场景）不被一排等宽数字淹没。
+				var metrics = [metric(V.fromNow(r.updatedAt || r.createdAt), "最后更新于 " + V.fmtTime(r.updatedAt || r.createdAt))];
 
 				return (
 					'<article class="card' + (r.deleted ? " deleted" : "") + '" data-idx="' + idx + '">' +
@@ -1350,20 +1342,27 @@
 			return "<dt>" + V.escapeHtml(title) + "</dt><dd>" + formatter(obj) + "</dd>";
 		};
 
-		$("modalBody").innerHTML =
-			"<h3>" + V.escapeHtml(r.type || "unknown") + "</h3>" +
-			// id 与状态一起放在标题下：id 是 l1_fix / l1_task_state 的操作句柄，放这里方便直接抄
-			'<div class="chips">' +
-			metric(r.id || "?", "记录 id：l1_fix / l1_task_state 的入参", "id") +
-			chip(q.tag + " " + fmtQ(q.quality), V.QUALITY_CLASS[q.tag] || "", "质量分 " + fmtQ(q.quality) + " —— 热度，按天数衰减") +
-			chip(r.prune.eligible ? "淘汰候选：" + (VQ.PRUNE_REASON_LABELS[r.prune.reason] || r.prune.reason) : "不淘汰：" + (VQ.PRUNE_REASON_LABELS[r.prune.reason] || r.prune.reason), r.prune.eligible ? "prune" : "") +
-			(r.isTask ? chip(V.TASK_STATE_LABELS[r.taskState], "task-" + r.taskState) : "") +
-			(r.deleted ? chip("deleted", "del") : "") +
-			"</div>" +
-			'<div class="chips" style="margin-top:4px">' +
-			metric("eff " + q.effective) +
-			metric("hits " + q.hits + " / 无效 " + q.invalid) +
-			"</div>" +
+			var hitSt = state.hitMap.get(r.id);
+			$("modalBody").innerHTML =
+				"<h3>" + V.escapeHtml(r.type || "unknown") + "</h3>" +
+				// id 与状态一起放在标题下：id 是 l1_fix / l1_task_state 的操作句柄，放这里方便直接抄
+				// （卡片列表层已经不再显示 id —— 它是操作句柄不是浏览信息，见 renderRecords 的度量注释）
+				'<div class="chips">' +
+				metric(r.id || "?", "记录 id：l1_fix / l1_task_state 的入参", "id") +
+				chip(q.tag + " " + fmtQ(q.quality), V.QUALITY_CLASS[q.tag] || "", "质量分 " + fmtQ(q.quality) + " —— 热度，按天数衰减") +
+				chip(r.prune.eligible ? "淘汰候选：" + (VQ.PRUNE_REASON_LABELS[r.prune.reason] || r.prune.reason) : "不淘汰：" + (VQ.PRUNE_REASON_LABELS[r.prune.reason] || r.prune.reason), r.prune.eligible ? "prune" : "") +
+				(r.isTask ? chip(V.TASK_STATE_LABELS[r.taskState], "task-" + r.taskState) : "") +
+				(r.deleted ? chip("deleted", "del") : "") +
+				"</div>" +
+				// 诊断值全在这里：卡片只留了「多久没动」，其余从列表层搬进来 ——
+				// 注入/工具此前**只**在卡片上出现过，搬走等于丢，所以必须同时补进弹层。
+				'<div class="chips" style="margin-top:4px">' +
+				metric("eff " + q.effective) +
+				metric("hits " + q.hits + " / 无效 " + q.invalid) +
+				(hitSt && (hitSt.injectHits || hitSt.toolHits)
+					? metric("注入 " + hitSt.injectHits + " / 工具 " + hitSt.toolHits, "自动注入 / 工具召回")
+					: "") +
+				"</div>" +
 			(r.isTask
 				? '<div style="margin:12px 0"><div class="hint" style="margin-bottom:5px">任务状态（就地改写，保留 id/正文/向量；写 <code>metadata.taskStateChange</code> 审计）' +
 					(hasPort ? "" : " —— <b>需带 ?port= 打开才能写盘</b>") + "：</div>" +
@@ -1378,16 +1377,17 @@
 				: "") +
 			'<div class="full-content" data-view="content">' + V.escapeHtml(r.content || "") + "</div>" +
 			'<textarea class="edit-area" data-edit-area="content" hidden>' + V.escapeHtml(r.content || "") + "</textarea>" +
-			'<details class="more"><summary>字段与审计（点开）</summary><dl class="kv">' +
-			"<dt>id</dt><dd>" + V.escapeHtml(r.id) + "</dd>" +
-			"<dt>priority</dt><dd>" + V.escapeHtml(r.priority === undefined ? "—" : r.priority) + "</dd>" +
+				'<details class="more"><summary>字段与审计（点开）</summary><dl class="kv">' +
+				// 这里不再重复 id：它已经在标题下那一行（弹层里此前 id 出现两处）
+				"<dt>priority</dt><dd>" + V.escapeHtml(r.priority === undefined ? "—" : r.priority) + "</dd>" +
 			"<dt>场景（解析后）</dt><dd>" + V.escapeHtml(r.scene.canonical || "—") + '<br><span class="hint">' + V.escapeHtml(r.scene.note || "") + "</span></dd>" +
 			"<dt>scene_id / scene_name</dt><dd>" + V.escapeHtml(r.scene.id || "—") + " / " + V.escapeHtml(r.scene.rawName || "—") + "</dd>" +
 			"<dt>项目 / scope</dt><dd>" + V.escapeHtml(r.project || "—") + " / " + V.escapeHtml(r.scope || "—") + "</dd>" +
 			"<dt>cwd</dt><dd>" + V.escapeHtml(r.cwd || "—") + "</dd>" +
 			"<dt>sessionKey</dt><dd>" + V.escapeHtml(r.sessionKey || "—") + "</dd>" +
 			"<dt>version / deleted</dt><dd>" + V.escapeHtml(r.version === undefined ? "—" : r.version) + " / " + (r.deleted ? "true" : "false") + "</dd>" +
-			"<dt>createdAt / updatedAt</dt><dd>" + V.escapeHtml(V.fmtTime(r.createdAt)) + " / " + V.escapeHtml(V.fmtTime(r.updatedAt)) + "</dd>" +
+				"<dt>createdAt / updatedAt</dt><dd>" + V.escapeHtml(V.fmtTime(r.createdAt)) + " / " + V.escapeHtml(V.fmtTime(r.updatedAt)) +
+				'<br><span class="hint">最后更新 ' + V.escapeHtml(V.fromNow(r.updatedAt || r.createdAt)) + "</span></dd>" +
 			"<dt>质量明细</dt><dd>q=" + fmtQ(q.quality) + " decay=" + fmtQ(q.decay) + " days=" + Number(q.days).toFixed(2) + "（" + (q.activeDayClock ? "活跃会话日" : "日历天") + "） tag=" + V.escapeHtml(q.tag) + "</dd>" +
 			"<dt>淘汰判定</dt><dd>" + V.escapeHtml(VQ.PRUNE_REASON_LABELS[r.prune.reason] || r.prune.reason) + "（保护带 priority ≥ " + state.protectedPriority + "）</dd>" +
 			auditBlock("taskStateChange", a.taskStateChange, function (o) {
