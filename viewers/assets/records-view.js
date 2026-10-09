@@ -762,7 +762,9 @@
 						"<td>" + V.escapeHtml(rec.type || "—") + '</td><td class="num">' + (rec.priority === undefined ? "—" : V.escapeHtml(rec.priority)) + "</td>" +
 						"<td>" + V.escapeHtml(scene) + "</td>" +
 						'<td style="max-width:300px">' + V.escapeHtml(reason) + "</td>" +
-						'<td style="max-width:460px;white-space:pre-wrap">' + V.escapeHtml(body) + "</td></tr>"
+							// overflow-wrap:anywhere —— pre-wrap 只在允许的断点换行，一个长 token
+							// （如 `/my-memory:l2-trigger`）会整段顶出格子 31px 压到右侧空白
+							'<td style="max-width:460px;white-space:pre-wrap;overflow-wrap:anywhere">' + V.escapeHtml(body) + "</td></tr>"
 					);
 				})
 				.join("") +

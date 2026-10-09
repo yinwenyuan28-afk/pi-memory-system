@@ -88,7 +88,7 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
 重建要 `REBUILD`、并入要 `MERGE`）—— 桥里那道是**副验**，CLI 自己也会验一次，两道都在。
 这条安全默认由 `verify-viewer-deploy.ts` 的 ⑱ 节逐端点断言。
 
-十六个**实测踩过**的点，改动时别踩回去：
+十七个**实测踩过**的点，改动时别踩回去：
 1. **`req.url` 必须 `decodeURIComponent`**。浏览器的 fetch 会把非 ASCII 文件名百分号编码，
    不解码就会去找字面名为 `%E4%B8%AA…` 的文件 → **L2 的块（全是中文名）整批 404**，而页面不报错、
    只是默默显示索引兜底值。
@@ -159,6 +159,12 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
    **213 个被截**，而卡片头其实还有 ~130px 空位没用。改成 `max-width: 100%` 后只剩 12 个真放不下的
    （省略号 + `title` 悬停看全名是既有设计，保留）。同一类问题：`input[type=search]` 只有 `min-width`
    没有 `flex-grow`，占位符写的是可搜字段全清单，结果被裁成「搜索 content / 场景 / 项目 / id / ƒ」。
+17. **断不开的长 token 会顶大表格列的 min-content，逼出整张表的横向滚动**。丢弃留痕表的正文列是
+   `white-space: pre-wrap`，一个 `/my-memory:l2-trigger` 这种断不开的 token 把整表撑到 **1195px >
+   容器 1014px** —— 于是右边被切，而滚动条远在 118 行之下的 `.wrap-scroll` 底部，等于"看不见能滚"。
+   给正文列补 `overflow-wrap: anywhere` 后 min-content 回落，整表正好 1014px 放下，
+   顺带那 8 处"文字比格子宽"也一起消失。判"有没有压到隔壁列"要用**边框盒**比，不是内容盒
+   （内容盒到边框盒之间还有 9px padding，差几像素只是行尾空格的舍入）。
 
 安全边界：桥只绑 `127.0.0.1`、只在手动运行时存在；但 CORS 全开（为了支持 `file://` 页面带 `?port=` 回连），
 所以**运行期间本机任何页面都能读 `l1/records/*.jsonl` 等内容**。`config/` 已被挡在静态托管之外

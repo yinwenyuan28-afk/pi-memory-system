@@ -91,6 +91,9 @@
 
 **自己引入又自己抓到的一处回归**：为了修 ⑥ 给 `th` 加了全局 `white-space: nowrap`，而播种表是 `table-layout: fixed` + 三等分列（80px），「别名（逗号分隔）」立刻**溢出 18px 压到隔壁列**。改成 `#blockTable th` 点名，并给体检脚本补了一条"单元格文字比格子宽"的断言把这类问题收进来。
 
-量化基线：index 0 → 0、records **2234 → 12**（剩下全是刻意的省略号，`title` 悬停可看全名）、l2 **32 → 0**、l3 **41 → 0**，弹层子树 52 个元素 0 项。门禁：`verify-viewer-deploy` **193/0**、`verify-viewer-write-paths` **137/0**、`verify-viewer-quality-parity` **278/0**、`check-types` 0 新增。踩到的 5 条已固化进 `scripts/l1-admin/README.md`（清单 11 → 16 条，原「七个」标题本身已过期，一并更正）。
+量化基线：index 0 → 0、records **2234 → 12**（剩下全是刻意的省略号，`title` 悬停可看全名）、l2 **32 → 0**、l3 **41 → 0**，「价值校验丢弃」页签 **251 → 0**，弹层子树 52 个元素 0 项。门禁：`verify-viewer-deploy` **193/0**、`verify-viewer-write-paths` **137/0**、`verify-viewer-quality-parity` **278/0**、`check-types` 0 新增。踩到的 6 条已固化进 `scripts/l1-admin/README.md`（清单 11 → 17 条，原「七个」标题本身已过期，一并更正）。
+
+**第 ⑨ 条是收尾时才浮出来的**：丢弃留痕表的正文列是 `white-space: pre-wrap`，一个 `/my-memory:l2-trigger` 这种断不开的 token 把该列的 min-content 顶大，整表 **1195px > 容器 1014px** → 触发 `.wrap-scroll` 横向滚动，而滚动条远在 118 行之下的容器底部，等于"右边被切了却看不见能滚"。给正文列补 `overflow-wrap: anywhere` 后整表正好 1014px 放下，顺带 8 处"文字比格子宽"一起消失。同一处还校准了判据本身：量"有没有压到隔壁列"要用**边框盒**而不是内容盒 —— 内容盒到边框盒之间还有 9px padding，差 2~4px 只是行尾空格的舍入，拿内容盒比会把 28 个正常单元格误报成缺陷。
+
 
 方法论上也记两条：体检脚本的嵌套循环里反复 `getBoundingClientRect` 会强制回流，上万元素的页面直接把 MCP 调用拖到超时（改成循环外取一次矩形后 8.4s 跑完四页）；`-webkit-line-clamp` 生效时 `scrollHeight` 报的是截断前整篇，拿它判"被裁"是假阳性，要和 `行数 × 行高` 比。
