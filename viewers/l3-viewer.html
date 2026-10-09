@@ -27,8 +27,8 @@
 				<h2>怎么读这页</h2>
 				<div class="hint">
 					<p><b>三份文件的分工</b>：<code>MEMORY.md</code> 由 <code>core/store</code> 维护（不是 L3 产物）；
-					<code>USER.md</code> 是 live 画像，**L3 自 2026-09-28 起只读它**；
-					<code>USER-temp.md</code> 是 L3 的提议稿，合并进 live 是**人工动作** ——
+					<code>USER.md</code> 是 live 画像，<b>L3 自 2026-09-28 起只读它</b>；
+					<code>USER-temp.md</code> 是 L3 的提议稿，合并进 live 是<b>人工动作</b> ——
 					所以「temp 独有」那一段就是待你决定要不要合入的条目。</p>
 					<p><b>预算是字符不是字节</b>：<code>entryBudget = 条目正文 + 分隔符（\n§\n 记 3 字符）</code>。
 					中文一个字 3 字节，用 <code>ls</code> 的字节数看会误判成严重超限（实测 USER.md 磁盘 4745 字节 vs 预算 1921/2200）。</p>

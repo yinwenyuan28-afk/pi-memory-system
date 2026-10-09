@@ -1111,9 +1111,13 @@
 					.slice()
 					.reverse()
 					.map(function (b) {
+						// 时间与分片数放最前：闭合状态下拉框很窄，而 5 个 backfill-* 目录只有末尾
+						// 时间戳不同 —— 目录名打头的话它们在框里显示成一模一样的「backfill-project-」，
+						// 根本分不开。完整目录名仍在后面的「打字确认」token 里逐字显示。
 						return (
 							'<option value="' + V.escapeHtml(b.dir) + '"' + (b.dir === chosen ? " selected" : "") + ">" +
-							V.escapeHtml(b.dir) + "（" + b.shards + " 分片 / " + fmtBytes(b.bytes) + " / " + V.escapeHtml(V.fmtTime(b.mtime)) + "）</option>"
+							V.escapeHtml(V.fmtTime(b.mtime)) + " · " + b.shards + " 分片 / " + fmtBytes(b.bytes) +
+							" · " + V.escapeHtml(b.dir) + "</option>"
 						);
 					})
 					.join("")

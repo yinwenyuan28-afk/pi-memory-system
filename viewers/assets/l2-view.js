@@ -310,8 +310,8 @@
 			(state.config
 				? '<div class="hint">归档配置：' + (state.config.archive && state.config.archive.enabled ? "启用" : "关闭") +
 					"（最低年龄 " + (state.config.archive && state.config.archive.minAgeCalendarDays) + " 日历天，每批最多 " +
-					(state.config.archive && state.config.archive.maxPerBatch) + " 个）。归档块与 scene-blocks/ 平级，**不占 maxScenes 名额**。</div>"
-				: '<div class="hint">无写盘桥：读不到 <code>l2.maxScenes</code>（配置节由 /api/l2/config 提供，避免把含密钥的 config/ 交给页面）。</div>');
+					(state.config.archive && state.config.archive.maxPerBatch) + " 个）。归档块与 scene-blocks/ 平级，<b>不占 maxScenes 名额</b>。</div>"
+				: '<div class="hint">无写盘桥：读不到 <code>l2.maxScenes</code>（配置节由 /api/limits 提供，避免把含密钥的 config/ 交给页面）。</div>');
 
 		$("cursorNote").innerHTML = state.cursor
 			? "<code>lastProcessedAt</code> = " + V.escapeHtml(V.fmtTime(new Date(state.cursor.lastProcessedAt).toISOString())) +
@@ -356,8 +356,8 @@
 				"<td>" + V.escapeHtml(filename) + (blk && !blk.hasMeta ? ' <span class="chip">无 META</span>' : "") + (archived ? ' <span class="chip">已归档</span>' : "") + "</td>" +
 				'<td class="num">' + heat + "</td>" +
 				'<td class="num">' + members.length + "</td>" +
-				"<td>" + V.escapeHtml(V.fmtDay(meta.updated || (idx && idx.updated))) + "</td>" +
-				'<td style="max-width:520px">' + V.escapeHtml(summary) + "</td>" +
+				'<td class="day">' + V.escapeHtml(V.fmtDay(meta.updated || (idx && idx.updated))) + "</td>" +
+				'<td class="sum" style="max-width:520px">' + V.escapeHtml(summary) + "</td>" +
 				opsCellHtml(filename, archived) +
 				"</tr>"
 			);

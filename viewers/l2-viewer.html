@@ -91,7 +91,7 @@
 				<div class="hint">
 					<p><b>权威</b>：块文件正文与 META、两份 <code>scene_members.json</code> 侧车、
 					<code>archive/ledger.jsonl</code>（append-only，不可重建）。</p>
-					<p><b>派生</b>：<code>index/scene_index.json</code> —— 每次提交都从块文件**全量重建**，
+					<p><b>派生</b>：<code>index/scene_index.json</code> —— 每次提交都从块文件<b>全量重建</b>，
 					所以只存在于索引里的字段下次重建就没了；它的 <code>members</code> 也是从侧车并进去的。</p>
 					<p>因此「数成员」一律以侧车为准；索引与侧车不一致时会显示为告警。</p>
 					<p><b>归档 ≠ 删除</b>：归档把块搬到与 <code>scene-blocks/</code> 平级的 <code>archive/</code>

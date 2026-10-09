@@ -242,9 +242,13 @@ button.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--d
 }
 
 input[type="search"] { min-width: 240px; }
+/* 搜索框吃掉工具栏剩余宽度：占位符写的是可搜字段全清单，默认 240px 会把它裁到只剩
+   「搜索 content / 场景 / 项目 / id / ƒ」，看不出还能搜什么。上限防止它在只剩一个控件的
+   工具栏里被拉成整行。 */
+.toolbar input[type="search"] { flex: 1 1 300px; max-width: 460px; }
 /* 占位符也走 --muted：--faint 在深底上只有 3.1:1，达不到小字号文字的下限 */
 input::placeholder, textarea::placeholder { color: var(--muted); }
-input[type="checkbox"] { accent-color: #9fb0c2; width: 14px; height: 14px; margin: 0; }
+input[type="checkbox"] { accent-color: #9fb0c2; width: 16px; height: 16px; margin: 0; }
 /* 深色主题下原生清除按钮几乎是黑的 —— 换成继承文字色的小叉 */
 input[type="search"]::-webkit-search-cancel-button {
 	-webkit-appearance: none;
@@ -263,6 +267,10 @@ label.check {
 	display: inline-flex;
 	gap: 6px;
 	align-items: center;
+	/* label 本身就是点击区：复选框只有 16px，包一层 3px padding 把命中区抬到 22px，
+	   再用负 margin 把布局占位抵回去 —— 视觉零变化，可点区域变大。 */
+	padding: 3px;
+	margin: -3px;
 	color: var(--muted);
 	font-size: var(--t-sm);
 	cursor: pointer;
@@ -376,7 +384,10 @@ aside > h2:first-child, section > h2:first-child { margin-top: 0; padding-top: 0
 .chip.mono { font-family: var(--mono); }
 .chip.type { color: var(--text); }
 .chip.prio { color: var(--text); }
-.chip.scene { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+/* 场景名可以很长（历史快照原样保留）：上限交给所在容器，而不是写死 340px ——
+   实测 253 个未归类 chip 里 213 个被截，而卡片头其实还有 ~130px 空位没用。
+   截断本身保留（配合 title 悬停可看全名），但只在真的放不下时才截。 */
+.chip.scene { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 
 /*
  * 已确定的状态：药丸 + 同色描边，底仍用 --panel2。
@@ -500,13 +511,16 @@ aside > h2:first-child, section > h2:first-child { margin-top: 0; padding-top: 0
 .qbar { height: 3px; background: var(--panel2); }
 .qbar > i { display: block; height: 100%; }
 .card-body { padding: 9px 12px 10px; }
-/* 截断预览：不再自带滚动条（契约 3）。完整正文在弹层里 */
+/* 截断预览：不再自带滚动条（契约 3）。完整正文在弹层里。
+   max-height 必须与 line-clamp 对齐：clamp 要给 6 行，而行高 1.55 × 6 = 9.3em；
+   之前写的 8.8em 比 6 行矮，于是**每一行卡片的第 6 行都被切掉下半截**（含省略号），
+   实测 scrollHeight 121 vs clientHeight 114。 */
 .card-body .full-content {
 	display: -webkit-box;
 	-webkit-box-orient: vertical;
 	-webkit-line-clamp: 6;
 	overflow: hidden;
-	max-height: 8.8em;
+	max-height: 9.3em;
 	font-size: var(--t-md);
 	line-height: 1.55;
 	white-space: pre-wrap;
@@ -520,18 +534,25 @@ aside > h2:first-child, section > h2:first-child { margin-top: 0; padding-top: 0
 	padding: 8px 12px 9px;
 	border-top: 1px solid var(--border-soft);
 }
+/* padding 把点击区从 17px 抬到 25px（WCAG 目标尺寸 24px 的下限），视觉位置靠负 margin 抵消 */
 .expand-btn {
 	background: transparent;
 	border: 0;
 	color: var(--muted);
 	font-size: var(--t-xs);
-	padding: 0;
+	padding: 4px 6px;
+	margin: -4px -6px;
 }
 .expand-btn:hover { color: var(--text); background: transparent; border-color: transparent; }
 
 /* ── 表格 ─────────────────────────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
 th, td { text-align: left; padding: 7px 9px; vertical-align: top; }
+/* 表头不换行**只给场景块表**：窄列里「成员」被拆成「成/员」两行、「updated」与
+   「summary」被挤到同一行，读起来像错位。
+   别把它放到全局 th —— 播种表是 table-layout:fixed + 三等分列，80px 的列塞不下
+   「别名（逗号分隔）」，nowrap 会让表头文字直接溢出到隔壁列（实测溢出 18px）。 */
+#blockTable th { white-space: nowrap; }
 th {
 	position: sticky;
 	top: 0;
@@ -546,6 +567,14 @@ td { border-bottom: 1px solid var(--border-soft); line-height: 1.5; }
 tbody tr:hover { background: var(--panel); }
 tr.clickable { cursor: pointer; }
 td.num { text-align: right; font-family: var(--mono); }
+/* 日期不换行：「2026-09-12」被拆成「2026-09-」+「12」看着像两个值 */
+td.day { white-space: nowrap; }
+/* 摘要列保底宽度：auto 布局会优先满足文件名/操作列，摘要被压到 230px 时一段折成 7 行 */
+td.sum { min-width: 300px; }
+/* 归档/恢复操作列：给它一个明确宽度，否则 auto 布局会按内容把 summary 挤到 230px、
+   一段摘要折成 7 行；同时让列内输入框跟着列宽收缩（配合上面 .ops-ctl 的 min-width:0）。 */
+td[data-opscell] { width: 250px; }
+td[data-opscell] input.reason { flex: 1 1 150px; }
 /* 表格 / JSON 的横向与纵向滚动一律交给这一层，但**不写** overscroll-behavior: contain
    —— 见 aside 处的实测说明：contain 会让"内容其实不溢出"的包装层变成滚轮死区。 */
 .wrap-scroll { overflow: auto; }
@@ -710,9 +739,29 @@ details.more[open] > summary { margin-bottom: 6px; }
 .ops-row { display: grid; grid-template-columns: minmax(84px, 116px) 1fr; gap: 4px 10px; align-items: start; }
 .ops-row > .ops-label { color: var(--muted); font-size: var(--t-sm); padding-top: 7px; }
 .ops-row > .ops-ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
-.ops-note { grid-column: 2; color: var(--faint); font-size: var(--t-xs); line-height: 1.55; }
+/* 控件不许撑破控件列。两个写死的固有宽度会越界：select 的固有宽度取「最长选项」（实测
+   备份下拉 660px）、confirm-input 的 min-width 是 220px —— 而 336px 侧栏里控件列只有约
+   178px，实测分别溢出 441px / 79px；aside 是 overflow:auto，溢出表现为侧栏横向滚动条 +
+   控件被裁。按钮不在此列（不允许把按钮压扁换行）。 */
+.ops-ctl select, .ops-ctl input, .ops-ctl textarea,
+.ops-ctl input.confirm-input, .ops-ctl input.reason { min-width: 0; max-width: 100%; }
+/* 说明文字的 grid-column 只在 .ops-row 内成立：.ops 是单列网格，若它的**直接子级**也写
+   grid-column:2，隐式网格会被迫多出第 2 列，之后所有自动放置的子级交替落进两列 —— 实测
+   L2 侧栏整块右移 106px，被 aside 裁掉、并被主区表格压住点不到。直接子级保持 auto 即占满整列。
+   颜色用 --muted：--faint 在 11px 上只有 3.41:1，达不到小字号 4.5:1 的下限（同 input::placeholder
+   那条注释的结论）。 */
+.ops-note { color: var(--muted); font-size: var(--t-xs); line-height: 1.55; }
+/* 说明跨满整行，而不是只占右侧控件列：336px 侧栏里控件列只有 ~153px，
+   一句「写信号只是入队请求…」要折 6 行才读得完。跨列后它读作这一行的脚注，宽度翻倍。 */
+.ops-row > .ops-note { grid-column: 1 / -1; }
 .ops h3.sub { margin: 14px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
 .ops h3.sub:first-child { margin-top: 0; }
+
+/* 危险区里把标签折到控件上方：这块被 .danger-zone 的 12px 内边距再吃掉一圈，控件列只剩
+   ~141px —— 备份下拉只能显示到「backfill-project-」（有 5 个同名前缀的目录，根本分不开），
+   打字确认框也塞不下完整目录名。折成单列后控件拿满 ~269px。 */
+.danger-zone .ops-row { grid-template-columns: 1fr; }
+.danger-zone .ops-row > .ops-label { padding-top: 0; }
 
 /* 危险区：只换描边与标题色，不加底色（契约 1） */
 .danger-zone { border: 1px dashed var(--border); border-radius: var(--r-lg); padding: 10px 12px; }
@@ -770,7 +819,7 @@ details.log > summary:hover { color: var(--text); }
 @media (max-width: 620px) {
 	.ops-row { grid-template-columns: 1fr; }
 	.ops-row > .ops-label { padding-top: 0; }
-	.ops-note { grid-column: 1; }
+	.ops-row > .ops-note { grid-column: 1; }
 }
 
 /* ── 响应式 ───────────────────────────────────────────────────────────────── */
