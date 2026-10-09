@@ -44,17 +44,30 @@
 //      这不是可以靠并发解决的问题，除非把执行改成子进程 + 轮询（本轮不做）。
 //
 // 用法：
-//   node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>]
+//   node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>] [--lan] [--host <addr>]
 // 然后打开终端打印的 http://localhost:5174/viewers/index.html?port=5174
 //
-// 安全：仅绑定 127.0.0.1 本地回环；CORS 全放（本地工具）；勿暴露公网；用完关掉。
+// 安全：**默认只绑 127.0.0.1 本地回环**；CORS 全放（本地工具）；勿暴露公网；用完关掉。
 // 注意：本轮把写盘面从 2 个端点扩到 12 个（含写 live 画像与整库还原），CORS 全开的代价因此变大了
 // —— 运行期间本机任何页面都能调这些端点。README 的"已知观察项"里记着这条。
+//
+// ── 局域网调试（2026-10-09 按用户要求加）─────────────────────────────────
+//
+// `--lan` = **额外**监听本机的那张局域网网卡（环回保留），好让别的设备打开同一个查看器调试；
+// `--host <addr>` 指定确切地址（`0.0.0.0` = 所有网卡，此时它本来就覆盖环回，不再重复监听）。
+// "哪块网卡算局域网"的规则只在 `lan-addresses.mjs` 一份（启动器与桥共用，避免打印的地址与实际监听的不一致）。
+//
+// 为什么必须显式开关、而不是顺手默认开：桥的写端点能改 live 画像、能整库还原，而它**没有任何鉴权**、
+// CORS 又是全开的（这套设计本来就是给"只在本机跑的本地工具"配的）。放到局域网上，等于同网段任何设备
+// 都能读走全部记忆（含对话内容）并调用这些写端点 —— 所以它必须是"我自己知道我在干什么"的一个动作，
+// 并且启动时把代价原样打印出来，而不是一个安静的便利开关。
+// `config/` 仍在静态托管之外（那份 JSONC 含 embedding API key），局域网访问也取不到它。
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lanAddresses } from "./lan-addresses.mjs";
 
 const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -62,6 +75,14 @@ const portArg = argv.indexOf("--port");
 const PORT = portArg >= 0 ? Number(argv[portArg + 1]) || 5174 : 5174;
 const profileIdx = argv.indexOf("--profile");
 const PROFILE = profileIdx >= 0 ? argv[profileIdx + 1] : "C:/Users/leaf/.pi/agent/profiles/default";
+/** 局域网开关与显式地址（见文件头「局域网调试」一节：默认不开）。 */
+const LAN = argv.includes("--lan");
+const hostIdx = argv.indexOf("--host");
+const HOST_ARG = hostIdx >= 0 ? argv[hostIdx + 1] : "";
+/** 环回地址（默认唯一的监听目标）；单独提出来是因为下面"要不要额外听局域网"要拿它比对。 */
+const DEFAULT_HOST = "127.0.0.1";
+/** 通配地址：它们本来就覆盖环回，指定它们时不再重复监听 127.0.0.1。 */
+const WILDCARD_HOSTS = new Set(["0.0.0.0", "::"]);
 const MEMORY_DB = join(PROFILE, "memoryDB");
 if (!existsSync(MEMORY_DB)) {
   console.error(`NG profile memoryDB 不存在：${MEMORY_DB}`);
@@ -264,7 +285,14 @@ async function l2Move(req, res, op) {
   return passthrough(res, cliArgs);
 }
 
-const server = createServer(async (req, res) => {  const cors = () => {
+/**
+ * 桥的请求处理函数。
+ *
+ * 单独提出来当变量、而不是内联进 `createServer(...)`，是因为 `--lan` 要**同一份逻辑听两个地址**
+ * （环回 + 局域网网卡）—— 两个 `createServer` 各起一个 socket，但它们必须是同一个 handler，
+ * 否则两份拷贝迟早分叉（而分叉的表现是"从局域网访问少了一半能力"，最难查那一类）。
+ */
+const handler = async (req, res) => {  const cors = () => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -658,13 +686,59 @@ const server = createServer(async (req, res) => {  const cors = () => {
 
   res.writeHead(405);
   res.end("method not allowed");
+};
+const server = createServer(handler);
+
+// ── 监听哪些地址 ──────────────────────────────────────────────────────────
+// 默认只有环回（与 2026-10-08 之前完全一致）；`--lan` 才额外听局域网那张网卡。
+// 顺序有意义：第 0 个是"主监听"，它的失败直接退出（环回都起不来就没戏了）。
+const LISTEN_HOSTS = (() => {
+  if (HOST_ARG) {
+    // 指定具体地址时**同时保留环回** —— 这就是"也监听"的字面语义；通配地址本来就覆盖环回，别重复听。
+    return WILDCARD_HOSTS.has(HOST_ARG) ? [HOST_ARG] : [DEFAULT_HOST, HOST_ARG];
+  }
+  if (!LAN) return [DEFAULT_HOST];
+  const candidates = lanAddresses();
+  if (!candidates.length) {
+    console.error("  [warn] --lan：没找到可用的局域网 IPv4（非环回的非 IPv6 地址），仍然只监听环回。");
+    return [DEFAULT_HOST];
+  }
+  if (candidates.length > 1) {
+    console.log(`  [info] 本机有多个候选地址：${candidates.join("、")} —— 选的是 ${candidates[0]}`);
+    console.log(`         要改用别的网卡（比如走 VPN 或无线）请用 --host <addr> 指定。`);
+  }
+  // 候选都打印出来（不止选中的那个）：多网卡机器上"该用哪个"只有人知道，页面报错时要能自查。
+  return [DEFAULT_HOST, candidates[0]];
+})();
+
+let listening = 0;
+LISTEN_HOSTS.forEach((host, i) => {
+  const srv = i === 0 ? server : createServer(handler);
+  srv.on("error", (e) => {
+    console.error(`[NG] 监听 ${host}:${PORT} 失败：${e.message}`);
+    // 主监听起不来就没什么可做的；附加监听（局域网）失败则保留环回继续跑，但要说清楚
+    if (i === 0) process.exit(2);
+    console.error(`     局域网调试因此不可用；环回仍正常。若提示地址已被占用，可用 --port 换一个端口。`);
+  });
+  srv.listen(PORT, host, () => {
+    listening++;
+    if (i === 0) {
+      const shown = WILDCARD_HOSTS.has(host) ? "localhost" : host;
+      console.log(`[l1-admin viewer-bridge] 监听 ${host}:${PORT}  profile=${PROFILE}`);
+      console.log(`  打开：http://${shown}:${PORT}/${VIEWER_DIR}/${VIEWER_INDEX}?port=${PORT}`);
+      console.log(`  （根路径 http://${shown}:${PORT}/ 会自动跳到上面这个地址 —— 别手改地址栏把 ?port= 删掉，`);
+      console.log(`    删了页面不会报错，只会静默变只读、到处显示"无写盘桥"）`);
+    } else {
+      console.log(`  局域网也可访问：http://${host}:${PORT}/${VIEWER_DIR}/${VIEWER_INDEX}?port=${PORT}`);
+      console.log(`  ⚠ 这个地址上**没有鉴权**：同网段任何设备都能读走全部记忆（含对话内容），也能调用写端点`);
+      console.log(`    （改任务状态 / 删除记录 / 并入 live 画像 / 整库还原）。只在可信网络里开，用完即关；`);
+      console.log(`    别的设备连不上时，先看 Windows 防火墙是否放行了 node 的入站（专用网络 / 该网段）。`);
+    }
+    if (listening === LISTEN_HOSTS.length) printEndpoints();
+  });
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`[l1-admin viewer-bridge] 监听 127.0.0.1:${PORT}  profile=${PROFILE}`);
-  console.log(`  打开：http://localhost:${PORT}/${VIEWER_DIR}/${VIEWER_INDEX}?port=${PORT}`);
-  console.log(`  （根路径 http://localhost:${PORT}/ 会自动跳到上面这个地址 —— 别手改地址栏把 ?port= 删掉，`);
-  console.log(`    删了页面不会报错，只会静默变只读、到处显示"无写盘桥"）`);
+function printEndpoints() {
   console.log(`  写盘 L1：POST /api/tombstone · /api/task-state · /api/l1/fix · /api/l1/rollback · /api/l1/embedding · /api/l1/mode`);
   console.log(`  写盘 L2/L3：POST /api/l2/archive · /api/l2/restore · /api/l2/scene-pool/seed · /api/l3/edit · /api/l3/restore · /api/l3/merge`);
   console.log(`  运维：POST /api/trigger（请求入队，需 pi 会话消费）· POST /api/subagent/stop（停子代理）`);
@@ -672,4 +746,4 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`      /api/l3/backups · /api/profile-files · /api/limits · /api/pending-triggers · /api/subagent-runs · /api/viewer-status`);
   console.log(`  注意：向量回填/重建期间本进程会阻塞（execFileSync），页面显示"运行中"是正常的`);
   console.log(`  关停：Ctrl+C`);
-});
+}

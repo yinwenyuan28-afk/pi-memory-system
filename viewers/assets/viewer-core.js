@@ -116,6 +116,24 @@
 	}
 
 	/**
+	 * 桥的**主机名** —— 跟着页面自身走，不写死 `127.0.0.1`。
+	 *
+	 * 为什么（2026-10-09 桥加 `--lan` 时暴露）：桥也能听在局域网上，页面于是会从
+	 * `http://172.16.10.4:5174/…` 被打开。此时若仍去 fetch `127.0.0.1:5174`，在**别的设备**上指的是
+	 * 它自己的回环 —— 所有 `/api/*` 都不会返回，页面只剩"桥连接失败"，而本机打开同一个地址却完全正常
+	 * （最难查的一类：换台机器就坏）。主机名跟着页面走，本机与远端就是同一条代码路径。
+	 * `file://` 下 `location.hostname` 是空串，那时退回 `127.0.0.1`（唯一合理的猜测）。
+	 */
+	function bridgeHost() {
+		return location.hostname || "127.0.0.1";
+	}
+
+	/** 桥的 origin：协议同样跟页面走（`file://` 下页面没有 http 协议，退回 http）。 */
+	function bridgeOrigin() {
+		return (isHttp() ? location.protocol : "http:") + "//" + bridgeHost() + ":" + bridgePort();
+	}
+
+	/**
 	 * 调写盘桥的 JSON 接口。
 	 *
 	 * @returns Promise<{ok:boolean, status:number, data:any}>；无桥或网络失败时 ok=false 且 data.error 有原因
@@ -127,7 +145,7 @@
 		}
 		var init = Object.assign({ cache: "no-store" }, opts || {});
 		if (init.body && !init.headers) init.headers = { "Content-Type": "application/json" };
-		return fetch("http://127.0.0.1:" + port + path, init)
+		return fetch(bridgeOrigin() + path, init)
 			.then(function (r) {
 				return r.json().catch(function () {
 					return { error: "响应不是 JSON（HTTP " + r.status + "）" };

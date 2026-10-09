@@ -57,7 +57,10 @@ npm run viewer                       # 或 node --experimental-strip-types scrip
 # Windows 双击：scripts\l1-admin\启动查看器.cmd
 
 # 只起桥（自己控制端口、不自动开浏览器）
-node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>]
+node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>] [--lan] [--host <addr>]
+
+# 局域网调试：别的设备也能打开（环回保留，额外听本机那张局域网网卡）
+npm run viewer -- --lan                    # 或 启动查看器.cmd --lan
 ```
 
 `viewer.mts` 的三件事，都是"每次都要做、忘了就出问题"的机械步骤：
@@ -65,6 +68,14 @@ node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>]
 不再直接退出**——实测被占过一次，之后每次都要手动 `taskkill`）；③ 打开浏览器到 `viewers/index.html`。
 profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `memorySystem.activeProfile`），
 避免"查看器看 A profile、扩展写 B profile"这种无声错配。停止：关掉控制台窗口，或 Ctrl+C。
+
+**`--lan` / `--host <addr>`（局域网调试，2026-10-09 按用户要求加）**：在环回之外**额外**监听本机那张
+局域网网卡（`--host 0.0.0.0` = 所有网卡，那时它本就覆盖环回、不再重复听），并把给别的设备用的地址打印出来。
+"哪块网卡算局域网"的规则只在 `lan-addresses.mjs` 一份（优先 `172.16.10.0/24`，其次其它私有段），
+启动器与桥共用 —— 各写一份迟早出现"启动器打印 A 地址、桥实际听 B 地址"这类最难查的错配。
+**它是显式开关而不是默认行为**：那个地址上**没有鉴权**、CORS 全开，写端点（改任务状态 / 删除 /
+并入 live 画像 / 整库还原）同网段任何设备都能调 —— 启动时会把这段代价原样打印，⑰ 节也钉住
+"默认只有环回"。`config/`（含 embedding API key）在静态托管之外，局域网也取不到。
 
 | 端点 | 作用 |
 |---|---|
@@ -179,9 +190,16 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
    它决定页面上"下一个跑谁"，改了那边要同步改这边；`recent` 按 **id 倒序**而不是时间字符串排序
    （id 自增，等于"最近的在前"，不依赖 time 文本可比）。
 
-安全边界：桥只绑 `127.0.0.1`、只在手动运行时存在；但 CORS 全开（为了支持 `file://` 页面带 `?port=` 回连），
+安全边界：桥**默认只绑 `127.0.0.1`**、只在手动运行时存在；但 CORS 全开（为了支持 `file://` 页面带 `?port=` 回连），
 所以**运行期间本机任何页面都能读 `l1/records/*.jsonl` 等内容**。`config/` 已被挡在静态托管之外
 （那份 JSONC 含 `model.embedding.apiKey`），需要配置节走 `/api/limits`。用完关掉。
+
+加 `--lan` / `--host <addr>` 时这条边界会扩大到**同网段的任何设备**（且仍然无鉴权）——所以它是显式开关、
+默认不开，启动时也会把代价打印出来。局域网调试的实测结论有两条值得记：① 页面里的 `/api/*` 必须
+**跟着页面自身的主机名**走（原先写死 `127.0.0.1`，从别的设备打开时全部打到那台设备自己的回环上，
+表现为"本机好好的、换台机器全空"——而本机用局域网地址打开时**照样正常**，所以这个 bug 在本机永远测不出来）；
+② 改完 `viewer-core.js` 必须重新部署才生效，而"部署"发生在会话激活 / `--reload` / 启动器启动时，
+忘了就会拿着旧 JS 得出错误结论（本轮实测：旧 JS 下请求仍打到 127.0.0.1，回环恰好也是本机，于是全绿）。
 
 > **相邻工具**：`scripts/migrate-task-state.mts`（在仓库 `scripts/` 下，不在本目录）——把历史 `metadata.status="done"` 升格为顶层 `taskState="done"`。它复用本目录 `lib.mjs` 的 `autoBackup`，并走 `memory/l1/task-state.ts` 的写锁 + 就地改写；默认 dry-run，`--apply` 实写前自动备份，只映射明确的 `done`（其余取值语义不明，不猜）。
 
