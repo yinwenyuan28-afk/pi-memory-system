@@ -560,6 +560,13 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); 
 	white-space: pre-wrap;
 	word-break: break-word;
 }
+/* 弹层正文：与卡片是同一份内容，但卡片那份是 6 行截断的预览、这里要看全文 —— 保留换行、不截断。
+   此前弹层没有这条规则（white-space 默认 normal，多行正文的换行被折成空格）；正文编辑框移走后这里
+   是整页唯一的全文视图，必须修（实测一条 3 行正文在弹层里渲染成 1 行）。 */
+.modal .full-content {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
 /* 卡片脚：度量读数行 + 打开详情。读数在脚里（正文预览与读数各自成行） */
 .card-foot {
 	display: flex;

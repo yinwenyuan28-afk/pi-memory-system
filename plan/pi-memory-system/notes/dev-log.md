@@ -219,3 +219,21 @@
 实测（真实库，L1 566 卡）：`#l1ops` 里只剩一个 `h3`（危险区），首行就是「提取模式 code chat 当前 …」；按钮实测 12px / 31px / 透明底，与菜单行完全同档；`.active` 的 `chat`（当时的值）为 panel2 底 + 墨色横条；`执行还原` = 透明底 + `--danger` 描边 + danger 文字。L2 页「场景池报告」= 文字动作、「执行（写盘）」= 墨色描边；L3 页「预演 / 执行 / 改回」「预演并入 / 执行并入」全部同档（此前并入区那两个还是 13px/34px 实心砖）。侧栏 **1,660 → 1,520px**。三页 UI 体检 **12 / 0 / 0**（12 仍是那批刻意的场景名省略号）。门禁：`verify-viewer-deploy` **211/0**（含 ⑯ 新增三条）、`verify-viewer-write-paths` 145/0、`verify-viewer-quality-parity` 278/0、`check-types` 0 新增。
 
 **没做的一件事，如实记**：模式切换的"点击后写盘"这一轮**故意没点**（那是真写用户的 `config/application-propertis.json` 的 `l1.mode`；上一轮已端到端验过"写入并回读确认"）。不过这次意外拿到了旁证：探针前后 `l1.mode` 从 `chat` 变成 `code`，配置文件 mtime 23:13、页面上的 `.active` 跟着挪到了 `code` —— 说明切换链路是通的，而那次点击**不是我**（两个体检脚本里没有任何 `click()`，我这一轮也没有点过操作区按钮）。
+
+## 2026-10-09 详情弹层：把重复的「改写 / 作废」各收敛成一条路
+
+用户问了一个判断题：「L1 详情弹层里，l1_fix 的 rewrite 与下面的『编辑正文』、l1_fix 的 tombstone 与下面的『删除（墓碑）』，是不是重复？」答案是**两对的重复性质不一样**。
+
+- **作废那对是真重复**。页脚「删除（墓碑）」走 `/api/tombstone` → `tombstone.mjs --apply`；面板里的 `tombstone` 走 `/api/l1/fix` → `runFix` → **同一句** `tombstone.mjs --apply`（`fix-tool.ts:159`）。两者写的是同一个 `deleted:true`、同一份自动备份、同一条 `metadata.l1Cleanup = {action:'tombstone', tool:'l1-admin', appliedAt}`。唯一差别是面板那条要先过 `checkFixGates` 四道闸（证据 ≥20 字符、已删除就拒、24h 防抖、高价值保护），页脚那条只有一次 confirm。
+- **改写那对不是同一件事**，但**表单重了两份**。页脚「编辑正文 / 保存（仅本页预览）」根本不写盘 —— 它只改内存里的 `rec.content`（刷新即丢）；面板的 `rewrite` 才是真写盘（追加审计标注 + 写 `l1Cleanup` + 四道闸）。真正的重复是：同一个弹层里有两个都以 `r.content` 预填的文本框，初始内容相同、**互不同步**。
+- 于是有个会丢东西的坑：先用页脚编辑正文并「保存」，再走面板预演→执行，`readFixForm` 读的是面板那个框（还是**原文**，因为 `renderAll` 不重画弹层），写回盘的是原文 + 审计标注 —— 用户刚编辑的内容无声消失。而「保存（仅本页预览）」这个措辞本身也误导：保存完卡片上正文真的变了，看着像已落盘。
+
+**改法（用户「同意」后执行）**：作废只留页脚那条 —— `l1_fix` 那四道闸（尤其 24h 防抖）是**为 agent 自纠**设计的，人已经点了确认再被防抖挡住反而莫名其妙；改写只留面板那一个编辑框 —— 面板删掉动作 `<select>`（`readFixForm` 恒 `action:"rewrite"`；`l1_fix` 侧没变、仍支持 tombstone，只是页面不给第二个入口），页脚「编辑正文」从「内存预览」改成**把光标送进 `#fixContent`** 的入口（`scrollIntoView` + `focus`，只读模式下 disabled），连同 `data-edit-area` / `data-view` / 取消 / 保存（仅本页预览）三个处理器一起删掉。顺手把面板「预演」的 `.primary` 也去掉 —— 上一轮统一按钮语言时改了 L3 的 `#opsPreview` 却漏了这里，两个「预演」一个墨色描边一个文字动作（已写进踩坑 20 的补充）。
+
+**删掉那个编辑框暴露了一个旧缺陷**：弹层正文一直没有自己的 `white-space` 规则（只有卡片那条写了 `pre-wrap`），多行正文的换行被折成空格 —— 实测一条 3 行正文在弹层里 `textContent` 3 行、`innerText` **只有 1 行**。此前看不出来，是因为那个 `textarea` 天然保留换行、随时能看到真身；它一走，弹层成了唯一的全文视图，缺陷立刻可见。补 `.modal .full-content { white-space: pre-wrap; word-break: break-word }`（不动卡片那条，它还要 6 行截断）。记进踩坑 21。
+
+**实测（真实库 566 卡）**：弹层页脚只剩 `[编辑正文][删除（墓碑）][关闭]`；遗留引用归零（`data-edit-area` / `data-view` / 面板 `select` / 「仅本页预览」各 0）；3 行正文 `renderedLines` 1 → **3**、`ws=pre-wrap`，面板「新正文」与只读正文逐字一致；点「编辑正文」→ `document.activeElement === fixContent`、光标落在末尾。写盘路径端到端跑通且**只跑 dry-run**：不勾 force → 预演被高价值闸拒绝（「hits>=5 或 L2 场景块引用」），勾 force → 预演通过、`#fixApply`（执行（写盘））才出现；两次都没点「执行」。事后核对磁盘：目标记录 `deleted=false`、无新 `l1Cleanup`、`backups/l1-admin` 无新目录 —— 预演确实没写盘。
+
+**一次自动化事故，如实记**：点「删除（墓碑）」时，自动化把弹出的 `window.confirm` 误接受/中断，页面留下 `delBtn.disabled=true` 的卡死状态（与上一轮「confirm 打开时中止单元格会让页面后续 JS 死掉」是同一个坑）。磁盘核对证明**什么都没写**（记录仍 `deleted=false`、无新备份目录），刷新即恢复。删除路径本提交一行未动，它的覆盖来自 `verify-viewer-write-paths.ts`（fixture profile，145/0）。
+
+门禁：`verify-viewer-deploy` **211/0**、`verify-viewer-write-paths` 145/0、`verify-viewer-quality-parity` 278/0、`check-types` 0 新增；UI 体检：页面 **12**（仍是那批刻意的场景名省略号，与改动前一致）、弹层 **0**；部署 `0.1.0+fb0cd834`、`drifted: false`。

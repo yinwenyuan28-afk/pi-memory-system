@@ -1369,8 +1369,10 @@
 					'<input type="text" class="reason" id="taskReason" placeholder="可选：关闭原因（写入审计）" />' +
 					"</div></div>"
 				: "") +
-			'<div class="full-content" data-view="content">' + V.escapeHtml(r.content || "") + "</div>" +
-			'<textarea class="edit-area" data-edit-area="content" hidden>' + V.escapeHtml(r.content || "") + "</textarea>" +
+			// 弹层里的正文**只读**：卡片正文是 6 行截断的，这里才是看全文的地方。全页唯一的正文编辑
+			// 入口是下面纠错面板的「新正文」框（写盘要过四道闸）。此前这里另有一个「保存（仅本页预览）」
+			// 的文本框，改的是内存、刷新即丢，还会让纠错面板读到用户看不见的旧值 —— 已删（用户报过重复）。
+			'<div class="full-content">' + V.escapeHtml(r.content || "") + "</div>" +
 				'<details class="more"><summary>字段与审计（点开）</summary><dl class="kv">' +
 				// 这里不再重复 id：它已经在标题下那一行（弹层里此前 id 出现两处）
 				"<dt>priority</dt><dd>" + V.escapeHtml(r.priority === undefined ? "—" : r.priority) + "</dd>" +
@@ -1395,20 +1397,19 @@
 			}) +
 			"<dt>sourceFile</dt><dd>" + V.escapeHtml(r.sourceFile || "—") + "</dd>" +
 			"</dl><pre class=\"json\">" + V.escapeHtml(JSON.stringify(r, null, 2)) + "</pre></details>" +
-			// 纠错面板（l1_fix）：预演（checkFixGates 裁决）→ 执行。审计标注会**追加进正文本身**，
-			// 与页面上那条「编辑正文（仅本页预览）」是两件事 —— 后者不写盘，这里写盘。
+			// 纠错面板（l1_fix）：预演（checkFixGates 裁决）→ 执行。审计标注会**追加进正文本身**。
+			// 它是整页**唯一**写正文的入口 —— 页脚的「编辑正文」只是把光标送进下面的「新正文」框。
+			// 动作选择器已删：`l1_fix` 的另一个动作 `tombstone` 与页脚「删除（墓碑）」走的是同一句
+			// `tombstone.mjs --apply`（同一个 `deleted:true`、同一份自动备份、同一条 `l1Cleanup` 审计），
+			// 摆两个入口只会让人犹豫点哪个；而 `l1_fix` 那四道闸（尤其 24h 防抖）是为 agent 自纠设计的，
+			// 人已经点了确认再被防抖挡住反而莫名其妙。分工：改写走这里（有闸），作废走页脚（人的授权）。
 			'<div class="ops" style="margin-top:12px">' +
-			'<h3 class="sub">纠错（l1_fix）</h3>' +
+			'<h3 class="sub">改写正文（l1_fix）</h3>' +
 			(hasPort ? "" : '<div class="hint">写盘需要写盘桥：请以带 <code>?port=</code> 的地址打开本页。以下控件在只读模式下不可用。</div>') +
-			'<div class="ops-row"><div class="ops-label">动作</div><div class="ops-ctl">' +
-			'<select id="fixAction"' + (hasPort ? "" : " disabled") + ">" +
-			'<option value="rewrite">rewrite（改写正文）</option>' +
-			'<option value="tombstone">tombstone（作废该条）</option>' +
-			"</select></div>" +
-			'<div class="ops-note">rewrite 会把审计标注【YYYY-MM-DD L1 修正：…】<b>追加进正文本身</b>（不是独立审计键），同时记 <code>metadata.l1Cleanup</code> —— 正文会真的变长。四道闸：证据 ≥20 字符、rewrite 正文 ≥10 字符、24h 防抖、高价值保护。</div></div>' +
+			'<div class="hint">作废某条请用右下<b>删除（墓碑）</b> —— 与 l1_fix 的 tombstone 是同一个写盘动作，这里不再重复入口。改写会把审计标注【YYYY-MM-DD L1 修正：…】<b>追加进正文本身</b>（不是独立审计键），同时记 <code>metadata.l1Cleanup</code> —— 正文会真的变长。四道闸：证据 ≥20 字符、新正文 ≥10 字符、24h 防抖、高价值保护。</div>' +
 			'<div class="ops-row"><div class="ops-label">新正文</div><div class="ops-ctl">' +
 			'<textarea id="fixContent" class="edit-area" style="min-height:110px"' + (hasPort ? "" : " disabled") + ">" + V.escapeHtml(r.content || "") + "</textarea>" +
-			'</div><div class="ops-note">仅 rewrite 使用（≥10 字符）；tombstone 忽略此框。</div></div>' +
+			'</div><div class="ops-note">≥10 字符；短于此预演就会被拒。</div></div>' +
 			'<div class="ops-row"><div class="ops-label">证据 *</div><div class="ops-ctl">' +
 			'<input type="text" id="fixEvidence" class="reason" placeholder="grep 输出 / file:line / 命令输出（≥20 字符，必填）"' + (hasPort ? "" : " disabled") + " />" +
 			'</div><div class="ops-note">必填且 ≥20 字符：修正必须附可复核证据，否则预演就会被拒。</div></div>' +
@@ -1418,15 +1419,17 @@
 			'<label class="check"><input type="checkbox" id="fixForce"' + (hasPort ? "" : " disabled") + " /> force（只解高价值保护那道闸）</label>" +
 			"</div></div>" +
 			'<div class="ops-ctl" style="margin-top:6px">' +
-			'<button type="button" class="primary" id="fixPreview"' + (hasPort ? "" : " disabled") + ">预演（只报闸门裁决）</button>" +
+			// 预演不带 .primary：契约里「预演/只读 = 文字动作」，只有真正写盘的「执行」才带 danger 描边
+			// （与 L3 `#opsPreview` 同一处理；.ops-ctl 里 .primary 是墨色描边，那是给写盘动作用的）。
+			'<button type="button" id="fixPreview"' + (hasPort ? "" : " disabled") + ">预演（只报闸门裁决）</button>" +
 			'<button type="button" class="danger" id="fixApply" hidden>执行（写盘）</button>' +
 			"</div>" +
 			'<div id="fixVerdict"></div>' +
 			"</div>" +
 			'<div class="foot">' +
-			'<button type="button" class="primary" data-edit="content">编辑正文</button>' +
-			'<button type="button" data-cancel="content" hidden>取消</button>' +
-			'<button type="button" class="primary" data-save="content" hidden>保存（仅本页预览）</button>' +
+			// 「编辑正文」不再是本页内存预览（那个半成品已删）：它把光标送进纠错面板的「新正文」框 ——
+			// 那里是整页唯一的正文编辑入口，且写盘要过 l1_fix 的四道闸。只读模式下没有可编辑的东西。
+			'<button type="button" id="editContentBtn"' + (hasPort ? "" : ' disabled title="写盘需要写盘桥，请以带 ?port= 的地址打开本页"') + ">编辑正文</button>" +
 			'<button type="button" class="danger" id="delBtn">删除（墓碑）</button>' +
 			'<button type="button" data-close>关闭</button>' +
 			"</div>";
@@ -1493,7 +1496,9 @@
 		var contentEl = $("fixContent");
 		return {
 			id: state.modalRow ? state.modalRow.id : "",
-			action: val("fixAction") || "rewrite",
+			// 动作恒为 rewrite：面板只做改写（tombstone 收归页脚「删除（墓碑）」那条无闸路径，
+			// 见 openModal 里纠错面板上方的注释）。`l1_fix` 侧没变，仍支持 tombstone，只是页面不给第二次入口。
+			action: "rewrite",
 			content: contentEl ? contentEl.value : "",
 			evidence: val("fixEvidence"),
 			reason: val("fixReason"),
@@ -1822,43 +1827,14 @@
 				});
 				return;
 			}
-			if (t.dataset && t.dataset.edit === "content") {
-				var area = $("modalBody").querySelector('[data-edit-area="content"]');
-				var view = $("modalBody").querySelector('[data-view="content"]');
-				area.hidden = false;
-				view.hidden = true;
-				t.hidden = true;
-				$("modalBody").querySelector('[data-save="content"]').hidden = false;
-				$("modalBody").querySelector('[data-cancel="content"]').hidden = false;
-				return;
-			}
-			if (t.dataset && t.dataset.cancel === "content") {
-				var area2 = $("modalBody").querySelector('[data-edit-area="content"]');
-				var view2 = $("modalBody").querySelector('[data-view="content"]');
-				area2.value = view2.textContent;
-				area2.hidden = true;
-				view2.hidden = false;
-				t.hidden = true;
-				$("modalBody").querySelector('[data-save="content"]').hidden = true;
-				$("modalBody").querySelector('[data-edit="content"]').hidden = false;
-				return;
-			}
-			if (t.dataset && t.dataset.save === "content") {
-				var area3 = $("modalBody").querySelector('[data-edit-area="content"]');
-				var view3 = $("modalBody").querySelector('[data-view="content"]');
-				var rec = state.rows.find(function (x) { return x.id === row.id; });
-				if (rec) {
-					rec.content = area3.value;
-					rec.updatedAt = new Date().toISOString();
-					row.content = area3.value;
-				}
-				view3.textContent = area3.value;
-				area3.hidden = true;
-				view3.hidden = false;
-				t.hidden = true;
-				$("modalBody").querySelector('[data-cancel="content"]').hidden = true;
-				$("modalBody").querySelector('[data-edit="content"]').hidden = false;
-				renderAll();
+			// 「编辑正文」＝把光标送进纠错面板的「新正文」框（整页唯一的正文编辑入口）。只读模式下
+			// 该按钮已 disabled（disabled 的按钮不派发 click），所以这里不必再判断能不能写。
+			if (t.id === "editContentBtn") {
+				var box = $("fixContent");
+				if (!box) return;
+				box.scrollIntoView({ block: "center" });
+				box.focus();
+				box.setSelectionRange(box.value.length, box.value.length); // 光标落到末尾，接着往下写
 				return;
 			}
 			// 纠错面板：预演 → 执行（两步；执行才写盘）
