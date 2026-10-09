@@ -435,6 +435,15 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); 
 .chip.q-noise { color: var(--noise); }
 .chip.q-watch { color: var(--watch); }
 
+/* 流水线作业状态（pipeline 页）：五个状态与 jobs.sqlite 的 status 闭集一一对应。
+   色相仍属数据：跑 = warn、成 = ok、败 = danger；排队 / 跳过是"未落定 / 已搁置"，
+   沿用 .chip.task-open / .chip.task-dropped 的虚线与点线形状，不引新色。 */
+.chip.st-queued { color: var(--muted); border-style: dashed; border-color: var(--faint); border-radius: var(--r-pill); }
+.chip.st-running { color: var(--warn); border-color: currentColor; border-radius: var(--r-pill); }
+.chip.st-done { color: var(--ok); border-color: currentColor; border-radius: var(--r-pill); }
+.chip.st-skipped { color: var(--muted); border-style: dotted; border-color: var(--faint); border-radius: var(--r-pill); }
+.chip.st-failed { color: var(--danger); border-color: currentColor; border-radius: var(--r-pill); }
+
 /* 严重度文字（只用在句子里强调一个词，不整段染色） */
 .text-warn { color: var(--warn); }
 .text-err { color: var(--danger); }
@@ -582,6 +591,14 @@ td[data-opscell] input.reason { flex: 1 1 150px; }
 /* 表格 / JSON 的横向与纵向滚动一律交给这一层，但**不写** overscroll-behavior: contain
    —— 见 aside 处的实测说明：contain 会让"内容其实不溢出"的包装层变成滚轮死区。 */
 .wrap-scroll { overflow: auto; }
+
+/* ── 流水线页：三层子代理表 / 作业队列表 ─────────────────────────────────────
+ * 这一页只有两种行：**每层一行**（管子代理）与**每个作业一行**（看队列）。
+ * 动作列给固定宽度，否则 auto 布局会把它压到换行（两个按钮 = 最宽的内容）；
+ * 行内动作组沿用按钮基样式，不引新色相。 */
+td.acts { width: 200px; }
+.cell-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pipeline-layer { color: var(--text); font-weight: 600; white-space: nowrap; }
 
 /* ── 时间线（归档账本） ──────────────────────────────────────────────────── */
 .timeline { border-left: 1px solid var(--border); margin-left: 5px; }

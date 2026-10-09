@@ -26,6 +26,7 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 | `viewer.mts` | **一键启动查看器**：同步最新页面 → 起桥 → 开浏览器（自动避让占用端口） | 只绑 `127.0.0.1`；`--no-open` / `--no-sync` 可关掉两件事 |
 | `启动查看器.cmd` | 上面的 Windows 双击入口（内容纯 ASCII，中文由 node 打印） | 同上 |
 | `viewer-bridge.mjs` | **查看器写盘桥**：静态托管 `memoryDB` + 写盘端点 + 目录列举 + 诊断 | 只绑 `127.0.0.1`；写端点默认 dry-run，破坏性动作另有 `confirm` 副验 |
+| `pipeline-jobs.mts` | **只读转储 `pipeline/jobs.sqlite`**（排队 / 在跑 / 最近结束；「流水线」页的取数口） | 只读（`node:sqlite` 的 `readOnly` 打开）；库不存在时报 `exists:false`，**不顺手建库** |
 | `viewer-status.mts` | 查看器版本与漂移诊断（源码内容版本 vs 已部署版本） | 只读 |
 | `viewer-limits.mts` | 查看器要展示的阈值（`l1.mode` / `l2.maxScenes` / L3 各限额），从源码常量透出 | 只读；**不暴露含密钥的 `config/` 整份文件** |
 | `active-days.mts` | 活跃会话日清单（权威源 `l0/conversations`） | 只读 |
@@ -82,13 +83,14 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
 | `GET /api/l3/backups` · `/api/profile-files` | 画像备份清单 / profile 根的 `MEMORY.md`+`USER.md`+`USER-temp.md` |
 | `GET /api/limits` | 阈值与配置节（含 `l1.mode`） |
 | `GET /api/pending-triggers` · `/api/subagent-runs` | 三层待消费信号（**只读探查，不消费**）/ 在跑的子代理 |
+| `GET /api/pipeline/jobs` | 作业队列只读转储（`pipeline-jobs.mts`；「流水线」页用） |
 | `GET /api/health` · `/api/viewer-status` | 存活 / 版本与漂移 |
 
 **写端点一律默认 dry-run**（必须显式 `apply:true`），破坏性动作另有 `confirm` 副验（还原要备份名、
 重建要 `REBUILD`、并入要 `MERGE`）—— 桥里那道是**副验**，CLI 自己也会验一次，两道都在。
 这条安全默认由 `verify-viewer-deploy.ts` 的 ⑱ 节逐端点断言。
 
-十七个**实测踩过**的点，改动时别踩回去：
+十八个**实测踩过**的点，改动时别踩回去：
 1. **`req.url` 必须 `decodeURIComponent`**。浏览器的 fetch 会把非 ASCII 文件名百分号编码，
    不解码就会去找字面名为 `%E4%B8%AA…` 的文件 → **L2 的块（全是中文名）整批 404**，而页面不报错、
    只是默默显示索引兜底值。
@@ -165,6 +167,17 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
    给正文列补 `overflow-wrap: anywhere` 后 min-content 回落，整表正好 1014px 放下，
    顺带那 8 处"文字比格子宽"也一起消失。判"有没有压到隔壁列"要用**边框盒**比，不是内容盒
    （内容盒到边框盒之间还有 9px padding，差几像素只是行尾空格的舍入）。
+18. **"只读打开"一个 WAL 库也会留下痕迹，而"看一眼队列"不该顺手建库**（2026-10-09，`pipeline-jobs.mts`）。
+   实测（Node 24.17）：`new DatabaseSync(p, { readOnly: true })` 打开一个 WAL 模式的 sqlite 后，
+   目录里会多出 **0 字节的 `-wal` 与 `-shm`** —— 那是 WAL 机制的正常产物，不是写数据，
+   所以门禁**不要**断言"调用后没有这两个文件"（会假红）；该断言的是库内容不变（字节数 + 行数）。
+   真正要守的是另一件：**库不存在时不能建**。用 `PipelineJobsDB`（扩展里那个类）就会踩这一条 ——
+   它的构造函数 `mkdir` + `PRAGMA journal_mode=WAL` + 建表，于是"从未跑过流水线"会被工具洗成
+   "有一个空队列"，两种事实混成一种。`pipeline-jobs.mts` 因此先 `existsSync` 再以 `readOnly` 打开，
+   不存在就回 `exists:false`（实测主进程持写锁时只读依然能读，WAL 下读者不阻塞写者）。
+   同一条上还有两个小口径：`queued` 的排序是**认领顺序**（复刻 `jobs-db.ts:listQueued`：L3 永远最后），
+   它决定页面上"下一个跑谁"，改了那边要同步改这边；`recent` 按 **id 倒序**而不是时间字符串排序
+   （id 自增，等于"最近的在前"，不依赖 time 文本可比）。
 
 安全边界：桥只绑 `127.0.0.1`、只在手动运行时存在；但 CORS 全开（为了支持 `file://` 页面带 `?port=` 回连），
 所以**运行期间本机任何页面都能读 `l1/records/*.jsonl` 等内容**。`config/` 已被挡在静态托管之外

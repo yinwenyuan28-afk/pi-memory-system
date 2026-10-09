@@ -17,13 +17,15 @@
 //   ⑦ CLI 包装可执行：l2-archive 归档→恢复往返、l1-mode 读写、trigger 写信号、subagent-stop
 //      空态、l3-edit/l3-restore/l3-merge 的 dry-run 与 apply、l1-fix 预演、embedding status
 //   ⑧ 桥端点：13 个新端点存在且形状正确；写端点**默认 dry-run**（不传 apply 不改盘）；
-//      confirm 副验（rollback / 重建 / 还原 / 并入）在缺 confirm 时 400
+//      confirm 副验（rollback / 重建 / 还原 / 并入）在缺 confirm 时 400；
+//      GET /api/pipeline/jobs 的队列顺序（L3 最后）与只读性（不改库、不建库）
 //
 // 跑法：node --conditions=import --experimental-strip-types scripts/verify-viewer-write-paths.ts
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { applyL3Edit } from "../memory/l3/edit-core.ts";
@@ -107,12 +109,35 @@ function buildFixture(): void {
 	// 提议稿比 live 旧（陈旧闸的夹具；两个时间点都写死，不靠写盘先后）
 	setMtime(join(root, "USER-temp.md"), 1_700_000_000_000);
 	setMtime(join(root, "USER.md"), 1_700_000_100_000);
+
+	// 流水线队列夹具（{memoryDB}/pipeline/jobs.sqlite）：一条已完成、一条已失败、两条在排队，
+	// 其中一条是 **L3** —— "L3 排在最后"这条认领顺序是展示口径，只能靠夹具证明它没被写反。
+	{
+		mkdirSync(join(db, "pipeline"), { recursive: true });
+		const sql = new DatabaseSync(join(db, "pipeline", "jobs.sqlite"));
+		sql.exec("PRAGMA journal_mode = WAL;");
+		sql.exec(
+			"CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, source TEXT NOT NULL, " +
+				"status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, error TEXT);",
+		);
+		const ins = sql.prepare(
+			"INSERT INTO jobs (type, source, status, created_at, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		);
+		ins.run("l1", "interval", "done", iso("2026-10-01"), iso("2026-10-01"), iso("2026-10-01"), null);
+		ins.run("l3", "trigger", "queued", iso("2026-10-02"), null, null, null); // id 2：先入队，但 L3 要排最后
+		ins.run("l2", "l1_commit", "queued", iso("2026-10-02"), null, null, null); // id 3
+		ins.run("l1", "manual", "failed", iso("2026-10-03"), iso("2026-10-03"), iso("2026-10-03"), "夹具失败原因");
+		sql.close();
+	}
 }
 buildFixture();
 
-/** 跑一个 l1-admin CLI（与桥同款：`node --experimental-strip-types <script> … --profile <root>`）。 */
-function cli(script: string, args: string[]): { code: number; json: any; out: string } {
-	const r = spawnSync(process.execPath, ["--experimental-strip-types", join(TOOL_DIR, script), ...args, "--profile", root], {
+/**
+ * 跑一个 l1-admin CLI（与桥同款：`node --experimental-strip-types <script> … --profile <root>`）。
+ * `profileRoot` 只在测"另一个 profile"时才传（如"没有 jobs.sqlite 会怎样"），默认就是夹具 profile。
+ */
+function cli(script: string, args: string[], profileRoot = root): { code: number; json: any; out: string } {
+	const r = spawnSync(process.execPath, ["--experimental-strip-types", join(TOOL_DIR, script), ...args, "--profile", profileRoot], {
 		encoding: "utf8",
 		timeout: 120000,
 	});
@@ -334,6 +359,49 @@ const stopList = cli("subagent-stop.mts", ["--list"]);
 check("subagent-stop --list 空态是 success:true", stopList.json?.success === true && Array.isArray(stopList.json?.runs));
 check("subagent-stop 拒绝非法层", cli("subagent-stop.mts", ["--layer", "l9"]).json?.success === false);
 
+// pipeline-jobs.mts：只读转储队列（「流水线」页的取数口）。
+// 两个要点：① 只读打开不能写坏/新建库；② queued 的**认领顺序**（L3 永远最后）必须与 jobs-db.ts 一致。
+const jobsCli = cli("pipeline-jobs.mts", []);
+check(
+	"pipeline-jobs 回四类字段 + 计数",
+	jobsCli.json?.success === true && jobsCli.json?.exists === true && Array.isArray(jobsCli.json?.queued) && Array.isArray(jobsCli.json?.recent) &&
+		jobsCli.json?.counts?.queued === 2 && jobsCli.json?.counts?.done === 1 && jobsCli.json?.counts?.failed === 1,
+	jobsCli.json?.error ?? JSON.stringify(jobsCli.json?.counts),
+);
+check(
+	"pipeline-jobs 的 queued 按认领顺序（L3 排最后，即使它先入队）",
+	JSON.stringify((jobsCli.json?.queued ?? []).map((x: any) => x.type)) === JSON.stringify(["l2", "l3"]),
+	JSON.stringify((jobsCli.json?.queued ?? []).map((x: any) => `${x.id}:${x.type}`)),
+);
+check(
+	"pipeline-jobs 的 recent 新→旧且不带 queued",
+	jobsCli.json?.recent?.[0]?.id === 4 && jobsCli.json?.recent?.[0]?.status === "failed" && (jobsCli.json?.recent ?? []).every((x: any) => x.status !== "queued"),
+	JSON.stringify((jobsCli.json?.recent ?? []).map((x: any) => x.id)),
+);
+const jobsLimit = cli("pipeline-jobs.mts", ["--limit", "1"]);
+check("pipeline-jobs --limit 生效", jobsLimit.json?.recent?.length === 1);
+// 只读打开不得改动库内容（字节数 + 行数都不变）。
+// 注意**不要**断言"没有 -wal/-shm"：实测（Node 24.17）只要以 READONLY 打开一个 WAL 库，
+// SQLite 就会建出这两个 0 字节的旁挂文件 —— 那是 WAL 机制的正常行为，不是本脚本写的。
+const jobsDbPath = join(db, "pipeline", "jobs.sqlite");
+const jobsDbSizeBefore = statSync(jobsDbPath).size;
+const jobsRowsBefore = jobsCli.json?.counts?.total ?? -1;
+cli("pipeline-jobs.mts", []);
+check(
+	"pipeline-jobs 不改动 jobs.sqlite（只读打开）",
+	statSync(jobsDbPath).size === jobsDbSizeBefore && cli("pipeline-jobs.mts", []).json?.counts?.total === jobsRowsBefore,
+);
+// 库不存在时：报 exists:false 而**不是**顺手建一个空库（"从未跑过流水线"与"有一个空队列"是两种事实）；
+// 用另一个空 profile 测，免得毁掉上面那份夹具库（后面桥端点还要读它）。
+const emptyProfile = mkdtempSync(join(tmpdir(), "viewer-nojobs-"));
+const jobsMissing = cli("pipeline-jobs.mts", [], emptyProfile);
+check(
+	"没有 jobs.sqlite 时报 exists:false 且不建库",
+	jobsMissing.json?.success === true && jobsMissing.json?.exists === false && !existsSync(join(emptyProfile, "memoryDB", "pipeline", "jobs.sqlite")),
+	JSON.stringify(jobsMissing.json),
+);
+rmSync(emptyProfile, { recursive: true, force: true });
+
 const embed = cli("embedding.mts", ["status"]);
 check("embedding status 可跑（夹具无向量库也不崩）", typeof embed.json?.success === "boolean", `success=${embed.json?.success}`);
 const embedRebuildNoConfirm = cli("embedding.mts", ["rebuild", "--apply"]);
@@ -441,6 +509,14 @@ try {
 	check("GET /api/pending-triggers 回三层字段", pend.json?.pending && "l1" in pend.json.pending && "l2" in pend.json.pending && "l3" in pend.json.pending);
 	const runs = await get("/api/subagent-runs");
 	check("GET /api/subagent-runs 回 runs 数组", Array.isArray(runs.json?.runs));
+	// 「流水线」页的取数口：队列顺序（L3 最后）是**展示口径**，与认领逻辑不一致就会指错"下一个跑谁"
+	const jobsEp = await get("/api/pipeline/jobs");
+	check(
+		"GET /api/pipeline/jobs 回队列且 L3 排最后",
+		jobsEp.json?.success === true && JSON.stringify((jobsEp.json?.queued ?? []).map((x: any) => x.type)) === JSON.stringify(["l2", "l3"]),
+		JSON.stringify(jobsEp.json?.queued?.map((x: any) => `${x.id}:${x.type}`) ?? jobsEp.json?.error),
+	);
+	check("GET /api/pipeline/jobs 带状态计数", jobsEp.json?.counts?.queued === 2 && jobsEp.json?.counts?.done === 1 && jobsEp.json?.counts?.failed === 1, JSON.stringify(jobsEp.json?.counts));
 	const pool = await get("/api/l2/scene-pool/report");
 	check("GET /api/l2/scene-pool/report 回文本报告", pool.json?.success === true && typeof pool.json?.text === "string", `text ${String(pool.json?.text ?? "").length} 字符`);
 	const mergeReport = await get("/api/l2/scene-pool/merge-report");

@@ -32,20 +32,11 @@
 				<h2>L2 管理</h2>
 				<div id="opsBanner"></div>
 				<div class="ops" id="l2ops">
-					<h3 class="sub">触发与子代理</h3>
-					<div class="ops-row">
-						<span class="ops-label">触发组织</span>
-						<span class="ops-ctl">
-							<button type="button" class="primary" id="triggerBtn">请求 L2 组织（入队）</button>
-							<span class="busy-flag" id="pendingFlag" hidden>L2 有信号待消费</span>
-						</span>
-						<span class="ops-note" id="triggerNote">—</span>
-					</div>
-					<div class="ops-row">
-						<span class="ops-label">停止子代理</span>
-						<span class="ops-ctl"><button type="button" class="danger" id="stopBtn" disabled>停止 L2 子代理</button></span>
-						<span class="ops-note" id="stopNote">—</span>
-					</div>
+					<!-- 触发组织与停止 L2 子代理**不在这里**：三层同名动作已在「流水线」页
+					     （pipeline-viewer.html）合成一张表；这一块只剩会改 L2 盘面的块操作。
+					     按钮搬走了要留一句指引 —— 凭空消失而不说去哪了是最糟的失效方式。 -->
+					<p class="hint">「请求 L2 组织」与「停止子代理」在顶部
+						<a href="pipeline-viewer.html" onclick="location.href='pipeline-viewer.html' + location.search; return false;">流水线页</a>。</p>
 
 					<h3 class="sub">场景池报告（按需生成，不随页面加载）</h3>
 					<div class="ops-row">

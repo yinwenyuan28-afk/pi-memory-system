@@ -229,6 +229,7 @@ try {
 			["records-viewer.html", "assets/records-view.js"],
 			["l2-viewer.html", "assets/l2-view.js"],
 			["l3-viewer.html", "assets/l3-view.js"],
+			["pipeline-viewer.html", "assets/pipeline-view.js"],
 		];
 		for (const [htmlFile, jsFile] of pairs) {
 			const htmlPath = join(REPO_VIEWERS, htmlFile);
@@ -299,7 +300,7 @@ try {
 	// /api/profile-files 白名单端点。
 	{
 		const offenders: string[] = [];
-		for (const rel of ["index.html", "records-viewer.html", "l2-viewer.html", "l3-viewer.html", "assets/viewer-core.js", "assets/records-view.js", "assets/l2-view.js", "assets/l3-view.js", "assets/index-view.js"]) {
+		for (const rel of ["index.html", "records-viewer.html", "l2-viewer.html", "l3-viewer.html", "pipeline-viewer.html", "assets/viewer-core.js", "assets/records-view.js", "assets/l2-view.js", "assets/l3-view.js", "assets/index-view.js", "assets/pipeline-view.js"]) {
 			const p = join(REPO_VIEWERS, rel.split("/").join("/"));
 			if (!existsSync(p)) continue;
 			const src = readFileSync(p, "utf-8");
@@ -393,7 +394,7 @@ try {
 //   · 兜底色特异度过高压过 .c-* 工具类 → 所有条形图变灰
 //   · 卡片正文自带内部滚动 → 几百张卡片各画一条原生滚动条
 {
-	const jsNames = ["index-view.js", "l2-view.js", "l3-view.js", "quality-core.js", "records-view.js", "viewer-core.js"];
+	const jsNames = ["index-view.js", "l2-view.js", "l3-view.js", "pipeline-view.js", "quality-core.js", "records-view.js", "viewer-core.js"];
 	const viewerJs = jsNames.map((f) => ({ f, src: readFileSync(join(REPO_VIEWERS, "assets", f), "utf-8") }));
 	const css = readFileSync(join(REPO_VIEWERS, "assets", "viewer.css"), "utf-8");
 

@@ -22,6 +22,9 @@
 		{ file: "records-viewer.html", label: "L1 原子记忆" },
 		{ file: "l2-viewer.html", label: "L2 场景" },
 		{ file: "l3-viewer.html", label: "L3 画像" },
+		// 流水线页放在四页之后：它是**跨层**的运维视图（队列 + 三层子代理），
+		// 不属于某一层的数据，所以既不插在层与层之间，也不挤在最前面抢注意力。
+		{ file: "pipeline-viewer.html", label: "流水线" },
 	];
 
 	/** L1 记录类型（与 memory/l1/record-types.ts 的 L1_RECORD_TYPES 一致）。 */

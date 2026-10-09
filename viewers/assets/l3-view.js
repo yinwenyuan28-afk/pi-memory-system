@@ -34,8 +34,8 @@
 
 	var state = {
 		cursor: null,
+		/** l3/pending-trigger.json 的**文件内容**（不是待消费信号列表；见 loadAll 里的注释） */
 		pending: null,
-		pendingTriggers: null,
 		limits: null,
 		backups: [],
 		files: {},
@@ -74,7 +74,7 @@
 		return entries.reduce(function (sum, e) { return sum + e.length; }, 0) + 3 * (entries.length - 1);
 	}
 
-	/** 加载与游标、画像三件套、阈值、备份，以及三层的待消费触发信号。 */
+	/** 加载与游标、画像三件套、阈值、备份。 */
 	function loadAll() {
 		return Promise.all([
 			V.loadJson("../l3/cursor.json"),
@@ -85,14 +85,13 @@
 			// 相对路径 `../../USER.md` 在浏览器里会解析回 `/USER.md` = {memoryDB}/USER.md → 404。
 			// 所以必须走白名单端点，不能靠相对路径。
 			V.bridge("/api/profile-files"),
-			// 三层的待消费触发信号（只读探查，不消费）—— 触发区据此显示"是否已有信号在等 pi 消费"。
-			V.bridge("/api/pending-triggers"),
 		]).then(function (r) {
 			state.cursor = r[0] || null;
+			// 下面这个 pending **不是**"待消费信号"（那是流水线页的事，走 /api/pending-triggers）：
+			// 它是 l3/pending-trigger.json 这个文件本身 —— 只用来在这一页提示"盘上有一份没被消费的 L3 请求"。
 			state.pending = r[1] || null;
 			state.limits = r[2] && r[2].ok ? r[2].data.l3 : null;
 			state.backups = r[3] && r[3].ok && r[3].data.backups ? r[3].data.backups : [];
-			state.pendingTriggers = r[5] && r[5].ok && r[5].data ? r[5].data : null;
 			var pf = r[4] && r[4].ok && r[4].data && r[4].data.files ? r[4].data.files : null;
 			state.profileFilesAvailable = !!pf;
 			state.files = {
@@ -392,11 +391,6 @@
 		});
 	}
 
-	function renderTriggerState() {
-		var p = state.pendingTriggers && state.pendingTriggers.pending ? state.pendingTriggers.pending.l3 : null;
-		$("opsTriggerState").textContent = p ? "已有信号待消费" + (p.at ? "（" + p.at + "）" : "") : "当前无待消费信号";
-	}
-
 	function renderMergeGates() {
 		var labels = {
 			stale: "仍要并入：允许用比 live 旧的提议稿覆盖（live 之后被改过，会丢掉那些改动）",
@@ -458,8 +452,6 @@
 			"因此可回退。三道安全闸（提议稿比 live 旧 / 会删掉 live 过半条目 / 提议稿为空）默认拒绝，" +
 			"拒绝理由原文会显示在下面，要放行必须逐条显式勾选。";
 		renderMergeGates();
-
-		renderTriggerState();
 
 		if (noBridge) disableOpsControls();
 	}
@@ -777,32 +769,8 @@
 		});
 	}
 
-	// ── 触发区：请求入队（不是立即执行）─────────────────────────────────────
-
-	function refreshPendingTriggers() {
-		return V.bridge("/api/pending-triggers").then(function (r) {
-			if (r.ok && r.data) state.pendingTriggers = r.data;
-			renderTriggerState();
-		});
-	}
-
-	function triggerL3() {
-		V.note("opsTriggerOut", "请求入队中…", "");
-		V.bridge("/api/trigger", { method: "POST", body: JSON.stringify({ layer: "l3", reason: "viewer 手动触发" }) }).then(function (r) {
-			var d = r.data || {};
-			if (r.ok && d.success) {
-				V.note(
-					"opsTriggerOut",
-					V.escapeHtml(d.note || "已写入请求。") +
-						" 它<b>只负责入队，不是立即执行</b>：需要 pi 会话活着，并在下一轮结束（<code>agent_settled</code>）时由主进程消费。",
-					"",
-				);
-			} else {
-				V.note("opsTriggerOut", "触发失败：" + V.escapeHtml(d.error || "HTTP " + r.status), "err");
-			}
-			return refreshPendingTriggers();
-		});
-	}
+	// 触发区（请求 L3 入队）已搬到「流水线」页（pipeline-viewer.html）：
+	// 三层的同名动作 + 队列上下文（前面还排着谁）只能在那一页看全。
 
 	/** 写盘成功后重取数据并重绘（不改动各区自己刚写好的结果提示）。 */
 	function reloadAfterWrite() {
@@ -860,8 +828,6 @@
 			mergeOp.gates[gate] = !!ev.target.checked;
 			previewMerge();
 		});
-
-		$("opsTrigger").addEventListener("click", triggerL3);
 	}
 
 	function autoLoad() {

@@ -17,7 +17,9 @@
  *
  * ── 「L2 管理」区（2026-10-08 补）──
  *
- * 左栏把所有会改盘的动作收在一处：块归档/恢复、请求组织、停子代理、场景池报告、场景池播种。
+ * 左栏把所有会改盘的动作收在一处：块归档/恢复、场景池报告、场景池播种。
+ * （**请求组织与停止子代理已搬走** —— 它们是三层同名动作，2026-10-08 收拢到「流水线」页
+ * pipeline-viewer.html，与队列放在一起看才有上下文。）
  * 三条铁律（每一条都有踩过坑的理由，见下文各处的注释）：
  *   · 每个写动作都**两拍**：预演（不带 apply）→ 确认执行（apply:true）；预演与实写都是后端裁决；
  *   · 视图层不做业务判断，端点原样返回的 JSON / 文本一律摆出来（口径只准在 CLI 一份）；
@@ -43,10 +45,6 @@
 		archiveBlocks: new Map(),
 		selected: "",
 		errors: [],
-		/** /api/subagent-runs 里 layer==="l2" 的那条（停止按钮的依据）；无跑动时为 null */
-		l2Run: null,
-		/** /api/pending-triggers 里 l2 的待消费信号（只读探查，不消费） */
-		pendingL2: null,
 	};
 
 	function $(id) {
@@ -469,15 +467,7 @@
 		seed: "/api/l2/scene-pool/seed",
 		report: "/api/l2/scene-pool/report",
 		mergeReport: "/api/l2/scene-pool/merge-report",
-		pending: "/api/pending-triggers",
-		trigger: "/api/trigger",
-		runs: "/api/subagent-runs",
-		stop: "/api/subagent/stop",
 	};
-
-	/** 触发通道的说明（两处共用，避免同一句话写两遍后分叉）。 */
-	var TRIGGER_CAVEAT =
-		"写信号只是<b>入队请求</b>，由 pi 主进程在下一个 <code>agent_settled</code> 消费 —— <b>需要活着的 pi 会话</b>；查看器自己不会执行任何组织。";
 
 	/** CLI 文本裁剪（报告可达数万字符，整段塞进 DOM 会把页面撑爆）。 */
 	function clipText(t) {
@@ -518,97 +508,8 @@
 		if (row) row.classList.toggle("busy", !!busy);
 	}
 
-	/** 只读探查三层待消费信号（**不消费** —— 展示不该有副作用）。 */
-	function refreshPending() {
-		if (!V.bridgePort()) return Promise.resolve();
-		return V.bridge(EP.pending).then(function (r) {
-			var p = r && r.ok && r.data && r.data.pending ? r.data.pending.l2 : null;
-			state.pendingL2 = p || null;
-			var flag = $("pendingFlag");
-			if (flag) {
-				flag.hidden = !p;
-				flag.textContent = "L2 有信号待消费";
-			}
-			var note = $("triggerNote");
-			if (note) {
-				note.innerHTML = p
-					? "待消费信号：<code>" + V.escapeHtml(JSON.stringify(p)) + "</code>。" + TRIGGER_CAVEAT
-					: "当前没有 L2 待消费信号。" + TRIGGER_CAVEAT;
-			}
-		});
-	}
-
-	/** 查正在跑的子代理：只有存在 l2 运行记录时，停止按钮才有意义（否则=装饰）。 */
-	function refreshRuns() {
-		if (!V.bridgePort()) return Promise.resolve();
-		return V.bridge(EP.runs).then(function (r) {
-			var runs = r && r.ok && r.data && Array.isArray(r.data.runs) ? r.data.runs : [];
-			var mine = runs.filter(function (x) {
-				return x && x.layer === "l2";
-			});
-			state.l2Run = mine.length ? mine[0] : null;
-			var btn = $("stopBtn");
-			if (btn) btn.disabled = !state.l2Run;
-			var note = $("stopNote");
-			if (note) {
-				note.innerHTML = state.l2Run
-					? mine
-							.map(function (x) {
-								return "运行中：job <b>" + V.escapeHtml(x.jobId) + "</b> · pid " + V.escapeHtml(x.pid) + " · " +
-									V.escapeHtml(x.agent || "?") + " · 起于 " + V.escapeHtml(V.fmtTime(x.startedAt));
-							})
-							.join("<br>") +
-						'<br><span class="hint">停止<b>立即且不可逆</b>：先在信号层拦住、再杀进程树；本批未提交则游标不推进，下一轮整批重做。</span>'
-					: "没有在跑的 L2 子代理（按钮因此禁用）。这是 <code>/api/subagent-runs</code> 的实时结果。";
-			}
-		});
-	}
-
-	/** 请求 L2 组织：只写一个入队信号，**不是立即执行**（执行者是 pi 主进程）。 */
-	function triggerOrganize() {
-		if (!V.bridgePort()) return;
-		setRowBusy($("triggerBtn"), true);
-		V.bridge(EP.trigger, { method: "POST", body: JSON.stringify({ layer: "l2", reason: "查看器手动请求" }) })
-			.then(function (r) {
-				var ok = r && r.ok && r.data && r.data.success !== false;
-				opsStatus(
-					ok
-						? "已把 L2 组织请求写入入队信号。" + TRIGGER_CAVEAT + jsonDetails("返回", r.data)
-						: "入队失败：" + V.escapeHtml(bridgeError(r)) + jsonDetails("返回", (r && r.data) || {}),
-					ok ? "" : "err",
-				);
-				return refreshPending();
-			})
-			.then(function () {
-				setRowBusy($("triggerBtn"), false);
-			});
-	}
-
-	/** 停止 L2 子代理：立即且不可逆，所以先确认（后端 CLI 没有 dry-run，要么停要么报"没在跑"）。 */
-	function stopSubagent() {
-		var run = state.l2Run;
-		if (!V.bridgePort() || !run) return;
-		if (
-			!window.confirm(
-				"停止 L2 子代理？\n\njob " + run.jobId + " · pid " + run.pid + "\n\n" +
-					"这是立即且不可逆的动作：先拦信号，再杀进程树；本批未提交则游标不推进，下一轮整批重做。",
-			)
-		)
-			return;
-		setRowBusy($("stopBtn"), true);
-		V.bridge(EP.stop, { method: "POST", body: JSON.stringify({ layer: "l2", job: run.jobId, reason: "查看器手动停止" }) })
-			.then(function (r) {
-				var ok = r && r.ok && r.data && r.data.success !== false;
-				opsStatus(
-					ok ? "停止指令已发出。" + jsonDetails("返回", r.data) : "停止失败：" + V.escapeHtml(bridgeError(r)) + jsonDetails("返回", (r && r.data) || {}),
-					ok ? "" : "err",
-				);
-				return refreshRuns();
-			})
-			.then(function () {
-				setRowBusy($("stopBtn"), false);
-			});
-	}
+	// 「请求组织」与「停止 L2 子代理」已搬到「流水线」页（pipeline-viewer.html）：
+	// 这两种动作三层同名，而且都需要队列上下文（谁在跑、后面排着什么）—— 那正是流水线页提供的。
 
 	/** 场景池只读报告：**按需**取（可能调 embedding，绝不在页面加载时打这一炮）。 */
 	function runReport(which) {
@@ -836,7 +737,7 @@
 		if (banner) {
 			banner.innerHTML = hasBridge
 				? ""
-				: '<div class="hint"><b>只读模式</b>：归档/恢复、触发、停止子代理与播种都需要写盘桥，下面的按钮已禁用。' +
+				: '<div class="hint"><b>只读模式</b>：归档/恢复与播种都需要写盘桥，下面的按钮已禁用。' +
 					"请运行 <code>node scripts/l1-admin/viewer-bridge.mjs</code>，再用它打印的<b>带 <code>?port=</code> 的地址</b>打开本页。</div>";
 		}
 		if (!hasBridge) {
@@ -896,8 +797,6 @@
 			else if (op === "restore-apply") blockApply("restore", filename, cell);
 		});
 		// ── 管理区（L2 管理）────────────────────────────────────────────────
-		$("triggerBtn").addEventListener("click", triggerOrganize);
-		$("stopBtn").addEventListener("click", stopSubagent);
 		$("reportBtn").addEventListener("click", function () {
 			runReport("report");
 		});
@@ -948,10 +847,8 @@
 			.then(loadBlocks)
 			.then(function () {
 				renderAll();
-				// 两个便宜且必须"当下为真"的只读探查：待消费信号、在跑的子代理。
-				// 场景池报告**不在**这里 —— 它可能调 embedding，必须按需取（见 runReport）。
-				refreshPending();
-				refreshRuns();
+				// 场景池报告**不在**加载时取 —— 它可能调 embedding，必须按需（见 runReport）。
+				// 待消费信号与在跑的子代理也不在这里了：它们已归「流水线」页。
 				V.note(
 					"loadNote",
 					"已加载 " + state.index.length + " 个 live 索引条目、" + Object.keys(state.members).length +

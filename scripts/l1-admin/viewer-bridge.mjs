@@ -31,6 +31,7 @@
 //        GET /api/l1/embeddings     → 向量库状态（只读、便宜）
 //        GET /api/pending-triggers  → 三个层待消费的触发信号（只读探查）
 //        GET /api/subagent-runs     → 正在跑的子代理（停止按钮的依据）
+//        GET /api/pipeline/jobs     → pipeline/jobs.sqlite 的只读转储（排队 / 在跑 / 最近若干条）
 //        GET /api/l2/scene-pool/report · /merge-report → 场景池只读报告
 //   ⑤ GET / → 302 到 viewers/index.html?port=（缺失回退 records-viewer.html）
 //
@@ -549,6 +550,13 @@ const server = createServer(async (req, res) => {  const cors = () => {
   // ── 正在跑的子代理（停止按钮的依据：没有运行记录就不该显示"停止"） ──
   if (req.method === "GET" && url === "/api/subagent-runs") {
     return passthrough(res, ["subagent-stop.mts", "--list"], 30000);
+  }
+
+  // ── 流水线作业队列（pipeline/jobs.sqlite 的只读转储；排队/在跑/最近若干条） ──
+  // 只读且便宜（sqlite 本地读，不碰 embedding、不加锁），因此页面可以随加载取一次。
+  // 队列顺序（claim 顺序）由 CLI 按 jobs-db.ts:listQueued 的口径给出，桥不重新排序。
+  if (req.method === "GET" && url === "/api/pipeline/jobs") {
+    return passthrough(res, ["pipeline-jobs.mts"], 30000);
   }
 
   // ── 列目录：L2 场景块（live 与 archive） ──

@@ -110,17 +110,13 @@
 					<div id="opsMergeOut"></div>
 				</div>
 
-				<h3 class="sub">触发区 · 请求 L3 重算（只入队）</h3>
-				<div class="ops-row">
-					<div class="ops-label">请求入队</div>
-					<div class="ops-ctl">
-						<button type="button" id="opsTrigger">触发 L3</button>
-						<span class="chip" id="opsTriggerState">—</span>
-					</div>
-					<div class="ops-note">只把请求写进 pending-trigger 信号文件；由 pi 主进程在下一轮结束（agent_settled）时消费。pi 没开会一直等着。</div>
-				</div>
-				<div id="opsTriggerOut"></div>
+				<!-- 触发区（请求 L3 重算）已搬到「流水线」页（pipeline-viewer.html）：
+				     三层的同名动作 + 队列上下文合成了一张表，这一页只剩会改画像文件的写动作。
+				     按钮搬走了要留一句指引 —— 凭空消失而不说去哪了是最糟的失效方式。 -->
 			</div>
+			<p class="hint">「请求 L3 重算」在顶部
+				<a href="pipeline-viewer.html" onclick="location.href='pipeline-viewer.html' + location.search; return false;">流水线页</a>
+				（那里还有队列与三层子代理的在跑 / 停止）。</p>
 		</section>
 		</main>
 

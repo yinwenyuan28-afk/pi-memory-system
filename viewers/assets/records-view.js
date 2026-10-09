@@ -73,10 +73,8 @@
 			modeError: "",
 			embedding: null,
 			embeddingError: "",
-			pending: null,
-			runs: [],
 			backups: [],
-			/** 正在跑的写动作名："" | "mode" | "trigger" | "embedding" | "stop" | "rollback" */
+			/** 正在跑的写动作名："" | "mode" | "embedding" | "rollback" */
 			busy: "",
 			/** 已预演、等待执行的向量操作（"" = 无待执行） */
 			embedOp: "",
@@ -927,11 +925,12 @@
 			renderOps();
 			return Promise.resolve();
 		}
+		// 触发 / 待消费信号 / 停止子代理已搬到「流水线」页（pipeline-viewer.html），
+		// 所以这里不再取 /api/pending-triggers 与 /api/subagent-runs —— 两个端点各少一次往返，
+		// 也少一份会在两处显示同一事实的读数。
 		return Promise.all([
 			V.bridge("/api/limits"),
 			V.bridge("/api/l1/embeddings"),
-			V.bridge("/api/pending-triggers"),
-			V.bridge("/api/subagent-runs"),
 			V.bridge("/api/l1/backups"),
 		]).then(function (r) {
 			state.ops.mode = r[0].ok && r[0].data && r[0].data.l1 && r[0].data.l1.mode ? r[0].data.l1.mode : null;
@@ -939,13 +938,11 @@
 			var emb = r[1];
 			state.ops.embedding = emb.ok && emb.data && emb.data.status ? emb.data.status : null;
 			state.ops.embeddingError = state.ops.embedding ? "" : (emb.data && emb.data.error) || "读取失败";
-			state.ops.pending = r[2].ok && r[2].data && r[2].data.pending ? r[2].data.pending : null;
-			state.ops.runs = r[3].ok && r[3].data && Array.isArray(r[3].data.runs) ? r[3].data.runs : [];
-			state.ops.backups = r[4].ok && r[4].data && Array.isArray(r[4].data.backups) ? r[4].data.backups : [];
+			state.ops.backups = r[2].ok && r[2].data && Array.isArray(r[2].data.backups) ? r[2].data.backups : [];
 			state.ops.loaded = true;
 			// 同上：加载完成必须把"加载中…"换掉。顺带报出有几项没读到 —— 单项失败在面板里已有说明，
 			// 这里给的是"整体是否可信"的一句话。
-			var failed = [r[0], r[1], r[2], r[3], r[4]].filter(function (x) { return !x.ok; }).length;
+			var failed = [r[0], r[1], r[2]].filter(function (x) { return !x.ok; }).length;
 			V.note(
 				"opsNote",
 				failed === 0
@@ -957,27 +954,11 @@
 		});
 	}
 
-	/** 只重取待消费信号（"请求触发"只影响这一格；整块重取会顺带读一遍向量库，没必要）。 */
-	function refreshOpsPending() {
-		return V.bridge("/api/pending-triggers").then(function (r) {
-			state.ops.pending = r.ok && r.data && r.data.pending ? r.data.pending : null;
-			renderOps();
-		});
-	}
-
 	/** 只重取向量库状态（回填/重建后条数会变）。 */
 	function refreshOpsEmbedding() {
 		return V.bridge("/api/l1/embeddings").then(function (r) {
 			state.ops.embedding = r.ok && r.data && r.data.status ? r.data.status : null;
 			if (!state.ops.embedding) state.ops.embeddingError = (r.data && r.data.error) || "读取失败";
-			renderOps();
-		});
-	}
-
-	/** 只重取子代理运行记录（停止后那一格要立刻反映真实状态）。 */
-	function refreshOpsRuns() {
-		return V.bridge("/api/subagent-runs").then(function (r) {
-			state.ops.runs = r.ok && r.data && Array.isArray(r.data.runs) ? r.data.runs : [];
 			renderOps();
 		});
 	}
@@ -1039,18 +1020,8 @@
 			"）。立即写盘、可逆、幂等（改 <code>application-propertis.json</code> 的 l1.mode），影响下一轮提取取向。</div>" +
 			"</div>";
 
-		// ── 触发提取（只入队，不立即执行） ──
-		var pend = o.pending && o.pending.l1 ? o.pending.l1 : null;
-		var pendChip = pend
-			? '<span class="chip" title="' + V.escapeHtml("由 " + (pend.by || "?") + " 写入") + '">待消费信号已存在 · ' + V.escapeHtml(V.fmtTime(pend.at)) + "</span>"
-			: '<span class="hint">当前无待消费信号</span>';
-		var triggerRow =
-			'<div class="ops-row" id="opsTriggerRow">' +
-			'<div class="ops-label">触发提取</div>' +
-			'<div class="ops-ctl"><button type="button" id="opsTrigger"' + dis + ">请求触发 L1</button>" + pendChip + "</div>" +
-			'<div class="ops-note">只写入一份<b>待消费信号</b>（请求入队），<b>不是立即执行</b>：需要 pi 会话活着，并在下一轮结束（<code>agent_settled</code>）时由主进程消费；pi 关着时信号就躺在盘上等。' +
-			(pend ? "已有待消费信号，队列去重会让这次请求不新增任务。" : "") +
-			"</div></div>";
+		// 触发提取与停止子代理**不在这里**：它们已搬到「流水线」页（pipeline-viewer.html），
+		// 与 L2/L3 的同名动作合成一张三层表 —— 同一件事在三页各写一份是分叉的温床。
 
 		// ── 向量库（长任务：桥单线程同步执行，期间整座桥不响应） ──
 		var st = o.embedding;
@@ -1082,22 +1053,6 @@
 			"</div>" +
 			'<div class="ops-note">回填只补缺失向量；<b>重建会先清空向量库再全量重算</b>（中途失败 = 库空，需打字确认）。两者都是长任务：桥单线程同步执行，跑起来后整座桥都不响应。</div>' +
 			'<div id="opsEmbedSteps" style="grid-column: 1 / -1">' + steps + "</div>" +
-			"</div>";
-
-		// ── 停止子代理（只在确实有 l1 运行记录时可用） ──
-		var l1run = null;
-		for (var i = 0; i < o.runs.length; i++) {
-			if (o.runs[i] && o.runs[i].layer === "l1") l1run = o.runs[i];
-		}
-		var stopRow =
-			'<div class="ops-row' + (o.busy === "stop" ? " busy" : "") + '" id="opsStopRow">' +
-			'<div class="ops-label">子代理</div>' +
-			'<div class="ops-ctl"><button type="button" class="danger" id="opsStop"' + (ro || !l1run ? " disabled" : "") + ">停止 L1 子代理</button>" +
-			(l1run
-				? '<span class="chip" title="来自 /api/subagent-runs">运行中 job ' + V.escapeHtml(l1run.jobId) + " · pid " + V.escapeHtml(l1run.pid) + "</span>"
-				: '<span class="hint">没有 l1 子代理在跑</span>') +
-			"</div>" +
-			'<div class="ops-note">只在 <code>/api/subagent-runs</code> 里确实有 l1 运行记录时可用。停止<b>不可逆</b>：子代理被杀、本批未提交 ⇒ 游标不推进，下一轮会重做，所以点之前先确认。</div>' +
 			"</div>";
 
 		// ── 危险区：整库还原（不是单条撤销） ──
@@ -1147,8 +1102,8 @@
 
 		$("l1ops").innerHTML =
 			(ro ? opsReadOnlyHint() : "") +
-			'<h3 class="sub">提取与触发</h3>' + modeRow + triggerRow +
-			'<h3 class="sub">向量库与子代理</h3>' + embedRow + stopRow +
+			'<h3 class="sub">提取模式</h3>' + modeRow +
+			'<h3 class="sub">向量库</h3>' + embedRow +
 			danger;
 		syncRollbackApply();
 		syncEmbedApply();
@@ -1174,28 +1129,9 @@
 		});
 	}
 
-	/** 请求触发 L1 提取：脚本只写信号，真要跑得等 pi 会话消费。 */
-	function triggerL1() {
-		if (!V.bridgePort()) return;
-		state.ops.busy = "trigger";
-		renderOps();
-		// reason 写成人看得懂的一句话，而不是重复 by（`by` 已经说明"谁来请求的"，
-		// 两者都塞 "viewer" 会让日志里出现「外部触发（viewer / viewer）」这种零信息的记录）。
-		V.bridge("/api/trigger", { method: "POST", body: JSON.stringify({ layer: "l1", reason: "查看器 L1 页的「请求触发 L1」按钮" }) }).then(function (r) {
-			state.ops.busy = "";
-			var d = r.data || {};
-			if (!r.ok || d.success === false) {
-				V.note("opsNote", "写入触发信号失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
-			} else {
-				V.note(
-					"opsNote",
-					"已写入待消费信号。它只负责入队：需要 pi 会话活着，并在下一轮结束（<code>agent_settled</code>）时由主进程消费；pi 关着时信号就躺在盘上等。",
-				);
-			}
-			// 成败都重新探一次：让"是否已有待消费信号"这一格反映真实盘面
-			return refreshOpsPending();
-		});
-	}
+	// 请求触发 L1 / 停止 L1 子代理这两个动作已搬到「流水线」页（pipeline-viewer.html）。
+	// 之所以搬：它们是**跨三层的同一件事**，而且都需要"队列里现在有什么、哪条在跑"的上下文 ——
+	// 那种上下文只在流水线页上才有（这里只能看到 L1 自己的一格）。
 
 	/** 向量回填/重建的**预演**：只报"现在缺多少条"与后续代价，不写盘。 */
 	function previewEmbedding(op) {
@@ -1255,31 +1191,6 @@
 				"向量" + (op === "rebuild" ? "重建" : "回填") + "完成（耗时 " + (d.elapsedMs ? Math.round(d.elapsedMs / 1000) + " 秒" : "未知") + "）。",
 			);
 			refreshOpsEmbedding();
-		});
-	}
-
-	/** 停止 L1 子代理（不可逆，先 confirm 再写）。 */
-	function stopL1Subagent() {
-		if (!V.bridgePort()) return;
-		var l1run = null;
-		for (var i = 0; i < state.ops.runs.length; i++) {
-			if (state.ops.runs[i] && state.ops.runs[i].layer === "l1") l1run = state.ops.runs[i];
-		}
-		if (!l1run) return;
-		if (!confirm("停止 L1 子代理（job " + l1run.jobId + " / pid " + l1run.pid + "）？\n\n不可逆：本批未提交，游标不推进，下一轮会重做。")) return;
-		state.ops.busy = "stop";
-		renderOps();
-		V.bridge("/api/subagent/stop", { method: "POST", body: JSON.stringify({ layer: "l1", job: l1run.jobId }) }).then(function (r) {
-			state.ops.busy = "";
-			var d = r.data || {};
-			if (!r.ok || d.success === false) {
-				V.note("opsNote", "停止失败：" + V.escapeHtml(String(d.error || "未知错误")), "err");
-			} else if (d.stopped === false) {
-				V.note("opsNote", "没有停到东西：" + V.escapeHtml(String(d.note || "该层没有在跑的子代理")), "warn");
-			} else {
-				V.note("opsNote", V.escapeHtml(String(d.note || "已停掉 L1 子代理。")) + (d.killConfirmed === false ? "<br>未能确认进程已死，该层已被持有（确认停止前不接受新任务）。" : ""));
-			}
-			refreshOpsRuns();
 		});
 	}
 
@@ -1581,7 +1492,6 @@
 		switch (btn.id) {
 			case "opsModeCode": return setL1Mode("code");
 			case "opsModeChat": return setL1Mode("chat");
-			case "opsTrigger": return triggerL1();
 			case "opsBackfill": return previewEmbedding("backfill");
 			case "opsRebuild": return previewEmbedding("rebuild");
 			case "opsEmbedApply": return applyEmbedding();
@@ -1591,7 +1501,6 @@
 				state.ops.embedLog = "";
 				renderOps();
 				return;
-			case "opsStop": return stopL1Subagent();
 			case "rbPreview": return previewRollback();
 			case "rbApply": return applyRollback();
 			default: return;
@@ -1884,7 +1793,7 @@
 		V.mountChrome({ active: "records-viewer.html" });
 		bind();
 		autoLoad();
-		// 管理操作区独立于记录加载：即便分片读失败，模式/触发/停止这些信息仍应可见
+		// 管理操作区独立于记录加载：即便分片读失败，提取模式 / 向量库 / 还原这些信息仍应可见
 		loadOps();
 	}
 

@@ -82,9 +82,15 @@
 
 				<h2>操作</h2>
 				<!-- 管理操作区：内容由 renderOps 动态注入（值全部来自 /api/*，不在前端硬编码），
-				     所以事件一律委托到 #l1ops 上。危险区（整库还原）也在这一块内。 -->
+				     所以事件一律委托到 #l1ops 上。危险区（整库还原）也在这一块内。
+				     这里只剩「L1 自己的」写动作：提取模式 / 向量库 / 整库还原 ——
+				     请求触发与停止子代理是三层同名动作，2026-10-08 已归「流水线」页。 -->
 				<p class="hint" id="opsNote">管理操作区加载中…</p>
 				<div class="ops" id="l1ops"></div>
+				<!-- 搬走的两个动作留一句指引：按钮凭空消失而不说去哪了，是这一版最不想要的失效方式 -->
+				<p class="hint">「请求触发 L1」与「停止子代理」在顶部
+					<a href="pipeline-viewer.html" onclick="location.href='pipeline-viewer.html' + location.search; return false;">流水线页</a>
+					（队列与三层子代理合成一张表）。</p>
 
 				<h2>统计</h2>
 				<details class="more">
