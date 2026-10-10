@@ -188,13 +188,44 @@ try {
 		const jsFiles = existsSync(assets) ? readdirSync(assets).filter((f) => f.endsWith(".js")) : [];
 		ok("⑨ 仓库里存在查看器 JS 资源", jsFiles.length > 0, `找到 ${jsFiles.length} 个`);
 		for (const f of jsFiles) {
+			const src = readFileSync(join(assets, f), "utf-8");
 			let err = "";
 			try {
-				new Function(readFileSync(join(assets, f), "utf-8"));
+				new Function(src);
 			} catch (e) {
 				err = e instanceof Error ? e.message : String(e);
 			}
 			ok(`⑨ ${f} 语法可解析`, err === "", err);
+			// ⑨b：模板字面量**内部**不许再出现反引号。
+			// 页面脚本把 Vue 模板写成 `template: /* html */ \`…\`` —— 模板里（**注释里也算**）多一个
+			// 反引号就会提前闭合字符串，后半截模板变成 JS 代码。此时 `new Function` 可能照样通过
+			// （漏出来那截恰好是合法语句时），故障只在浏览器里现形：整页空白 + `row is not defined`。
+			// 2026-10-10 连踩两次（L1 分页注释、L2 管理注释），所以钉住"模板内部零反引号"。
+			//
+			// 只在 `template: /* html */ \`` 这个**固定标记**之后找配对的闭引号 —— 不要用
+			// `indexOf("template:")`（会命中注释里的同名字符串）也不要 `lastIndexOf("`")`
+			// （会把文件末尾注释里的反引号当成"模板内部"，实测一次报出 10 处假阳性）。
+			// 一个文件里可能有多个模板字面量（L3 的页面 + 子组件 BudgetBar），所以逐个扫。
+			if (f.endsWith("-app.js")) {
+				const MARK = "template: /* html */ `";
+				let from = 0;
+				let found = 0;
+				let bad = 0;
+				for (;;) {
+					const a = src.indexOf(MARK, from);
+					if (a < 0) break;
+					found++;
+					const start = a + MARK.length;
+					const end = src.indexOf("`", start);
+					if (end < 0) {
+						bad++;
+						break;
+					}
+					if (src.slice(start, end).includes("`")) bad++;
+					from = end + 1;
+				}
+				ok(`⑨b ${f} 模板内部没有多余的反引号（${found} 个模板）`, found > 0 && bad === 0, bad ? `${bad} 个模板被反引号截断` : "找不到 template 字面量");
+			}
 		}
 	}
 
