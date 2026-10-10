@@ -452,8 +452,20 @@ try {
 	//    4 档尺寸**（11/12/13px × 25/31/34px），连"选中"都有三副样子。
 	//    现在语言收在基样式位置（不在任何作用域里），这一节钉住它，并且钉住"作用域不准再定义长相"。
 	ok(
-		"⑯ 按钮基样式 = 文字动作（透明底 + 透明描边 + 静音色 + 尺寸 5px 9px / --t-sm）",
-		/^button\s*\{[^}]*background:\s*transparent[^}]*border:\s*1px solid transparent[^}]*color:\s*var\(--muted\)[^}]*font-size:\s*var\(--t-sm\)[^}]*padding:\s*5px 9px/m.test(css),
+		"⑯ 按钮基样式 = 描边动作（透明底 + --border 描边 + --text 文字 + 尺寸 5px 9px / --t-sm）",
+		/^button\s*\{[^}]*background:\s*transparent[^}]*border:\s*1px solid var\(--border\)[^}]*color:\s*var\(--text\)[^}]*font-size:\s*var\(--t-sm\)[^}]*padding:\s*5px 9px/m.test(css),
+	);
+	// 「描边给的是**可点性**，底色才决定轻重」：2026-10-10 第一版把默认做成无描边 + 静音色，当天就
+	// 被用户否掉（"重新加载、清空、导出当前视图…看起来就像是没有样式，和背景融为一体了"）。
+	// 文字动作现在只留给三个"读起来不是按钮"的地方，且必须成组出现 —— 少一个就会变成半套。
+	ok(
+		"⑯ 文字动作只留给列表行 / 行内链接三处（.btn-list、卡片脚、播种表），且都无描边",
+		/\.btn-list button,\s*\n\.card-foot \.expand-btn,\s*\n#seedTable button\s*\{\s*border-color:\s*transparent;\s*color:\s*var\(--muted\)/.test(css),
+	);
+	ok(
+		"⑯ 分段切换（.seg）= 凹槽 + 无描边段，比默认按钮更扁",
+		/\.ops-ctl\.seg\s*\{[^}]*background:\s*var\(--panel2\)[^}]*border:\s*1px solid var\(--border\)/.test(css) &&
+			/\.seg button\s*\{[^}]*border-color:\s*transparent[^}]*padding:\s*2px 8px/.test(css),
 	);
 	ok(
 		"⑯ 三个语义 + 一个状态都在基样式一节（.active 底色块 / .primary 墨色描边 / .danger danger 描边）",

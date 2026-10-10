@@ -1085,18 +1085,24 @@
 		var dis = ro ? " disabled" : "";
 
 		// ── 提取模式 ──
-		// 当前值用 `.active`（与页签同一套"墨色横条"，见 viewer.css 的 .ops-ctl 一节）而不是 `.primary`：
-		// 这是**显示当前选中**，不是"要动手的按钮"，用实心块会把侧栏里最亮的东西给一个只读状态。
+		// 形态：**分段切换**（`.ops-ctl.seg`，见 viewer.css 的「动作语言」例外二）—— 凹槽里两段，
+		// 当前值那段浮一层 `--panel3`。用户 2026-10-10 要求"扁平一点"，所以它比默认的描边按钮更矮、
+		// 段本身不带描边；同时它仍然是"控件"而不是两个描边块（踩坑 25 的反面：枚举值可以用分段，
+		// 但一排**动作**按钮不行）。
+		// 说明文本**默认隐藏、悬停整行才显示**（用户要求）：这类"什么时候会写盘、真源在哪"的注解
+		// 平时占了侧栏一大块，而它们只在真的要去点的时候才需要 —— 所以放进 `title`（原生 tooltip，
+		// 悬停即出、不推挤布局、不改变侧栏高度）。
+		var modeTitle =
+			"切换 l1.mode（code / chat）。当前：" + (o.mode || (o.loaded ? "未知" : "读取中…")) +
+			"。真源 /api/limits.l1.mode；改的是 application-propertis.json 的 l1.mode，立即写盘、可逆、幂等，影响下一轮提取取向。" +
+			(o.modeError ? "（读取失败：" + o.modeError + "）" : "");
 		var modeRow =
-			'<div class="ops-row" id="opsModeRow">' +
+			'<div class="ops-row" id="opsModeRow" title="' + V.escapeHtml(modeTitle) + '">' +
 			'<div class="ops-label">提取模式</div>' +
-			'<div class="ops-ctl">' +
+			'<div class="ops-ctl seg">' +
 			'<button type="button" id="opsModeCode" class="' + (o.mode === "code" ? "active" : "") + '"' + dis + ">code</button>" +
 			'<button type="button" id="opsModeChat" class="' + (o.mode === "chat" ? "active" : "") + '"' + dis + ">chat</button>" +
 			"</div>" +
-			'<div class="ops-note">当前 <b>' + V.escapeHtml(o.mode || (o.loaded ? "未知" : "读取中…")) + "</b>（真源 <code>/api/limits.l1.mode</code>" +
-			(o.modeError ? "，读取失败：" + V.escapeHtml(o.modeError) : "") +
-			"）。立即写盘、可逆、幂等（改 <code>application-propertis.json</code> 的 l1.mode），影响下一轮提取取向。</div>" +
 			"</div>";
 
 		// 触发提取与停止子代理**不在这里**：它们已搬到「流水线」页（pipeline-viewer.html），
@@ -1122,15 +1128,19 @@
 				'<button type="button" id="opsEmbedCancel">取消</button>' +
 				"</div>";
 		}
+		// 说明同样**默认隐藏、悬停整行显示**（`title`）：这段"回填 vs 重建"的差别是**破坏性**信息，
+		// 但它只在真的要点那两个按钮时才需要，平时挂在侧栏里只是占地方。
+		var embedTitle =
+			"回填只补缺失向量；重建会先清空向量库再全量重算（中途失败 = 库空，需打字确认）。" +
+			"两者都是长任务：桥单线程同步执行，跑起来后整座桥都不响应。";
 		var embedRow =
-			'<div class="ops-row' + (busyEmbed ? " busy" : "") + '" id="opsEmbedRow">' +
+			'<div class="ops-row' + (busyEmbed ? " busy" : "") + '" id="opsEmbedRow" title="' + V.escapeHtml(embedTitle) + '">' +
 			'<div class="ops-label">向量库</div>' +
 			'<div class="ops-ctl">' + embedStat +
 			'<button type="button" id="opsBackfill"' + dis + ">回填：预演</button>" +
 			'<button type="button" id="opsRebuild"' + dis + ">重建：预演</button>" +
 			(busyEmbed ? '<span class="busy-flag">运行中（桥被占满，勿重复点）</span>' : "") +
 			"</div>" +
-			'<div class="ops-note">回填只补缺失向量；<b>重建会先清空向量库再全量重算</b>（中途失败 = 库空，需打字确认）。两者都是长任务：桥单线程同步执行，跑起来后整座桥都不响应。</div>' +
 			'<div id="opsEmbedSteps" style="grid-column: 1 / -1">' + steps + "</div>" +
 			"</div>";
 

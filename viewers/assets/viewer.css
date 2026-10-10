@@ -25,12 +25,13 @@
  * 4. 数字一律等宽 + tabular-nums。
  *    同一列要跨几百张卡片对齐；字号只走 --t-* 六级，不再出现 12.16px / 12.48px 这种噪声级差。
  *
- * 5. 外壳只做「文字动作」，不做底色块。
- *    按钮只有三个语义 + 一个状态（默认文字动作 / `.primary` 墨色描边 = 写入内容 / `.danger`
- *    danger 描边 = 让既有内容消失或被替换 / `.active` = 当前选中，给一层 `--panel3` 底色、
- *    **不画线**），尺寸只有一档（31px；卡片脚与播种表行内两处紧凑档 25px）。**作用域只准覆盖
- *    尺寸与间距，不准决定按钮长相** —— 细则与理由见下面「动作语言」一节。2026-10-10 之前正是
- *    因为语言写在某一个作用域里，同一页长出了 7 种按钮外观、4 档尺寸。
+ * 5. 外壳不做底色块，但**必须留下描边**。
+ *    按钮默认是「描边动作」（幽灵按钮）：透明底 + `--border` 描边 + 正文色；`.primary` = 墨色描边
+ *    （写入内容）；`.danger` = danger 描边（让既有内容消失或被替换）；`.active` = 一层 `--panel3`
+ *    底色（当前选中，不画线）。尺寸只有一档 31px（卡片脚与播种表行内两处紧凑档 25px）。
+ *    **描边给的是"这能点"，底色才决定轻重** —— 2026-10-10 当天先做成"无描边 + 静音色"的文字动作，
+ *    随即被用户否掉（"看起来就像是没有样式，和背景融为一体了"）。文字动作只留给三处列表行/行内链接，
+ *    分段切换（`.seg`）用凹槽代替描边。**作用域只准覆盖尺寸与间距，不准决定按钮长相** —— 细则见「动作语言」一节。
  *
  * 主题基线：`:root { color-scheme: dark }` 是所有原生控件（滚动条 / select 弹层 / 复选框 /
  * search 的清除按钮）变暗的前提；删掉它这一页会退回浅色原生控件 + 浅灰滚动条。
@@ -250,9 +251,11 @@ select { cursor: pointer; }
  * 基样式（--panel2 底 + 描边 + 13px/34px），而真正的语义规则只写在 `.ops-ctl` 一个作用域里 ——
  * 于是 `.ops-ctl` 之外的一切（页头 / 页签 / 表格行 / 卡片脚 / 弹层页脚）全退回那个实心块。
  *
- * 现在收回成一套，只有三个语义 + 一个状态：
- *   · 默认 = **文字动作**：透明底、透明描边、静音色；hover 才浮一层底色。
- *     适用：读 / 预演 / 导航 / 展开 / 选中某一项 / 清空 —— 凡是不写 memoryDB 的。
+ * 现在收回成一套，只有三个语义 + 一个状态 + 两类例外：
+ *   · 默认 = **描边动作**（幽灵按钮）：透明底 + `--border` 描边 + `--text` 文字；hover 浮 `--panel2`。
+ *     **2026-10-10 第二轮修正**：第一版把它做成"文字动作"（无描边 + 静音色），当天就被用户否掉 ——
+ *     「重新加载、清空、导出当前视图…看起来就像是没有样式，和背景融为一体了」。一列纯文字在深底上
+ *     读不出"这是个能点的按钮"：**描边给的是可点性，底色才决定轻重**。要轻，轻底色，别把边界一起轻掉。
  *   · `.primary` = **墨色描边**：向 memoryDB **写入新内容**（写前留备份，可回退）。
  *   · `.danger` = **danger 描边**：让数据**消失或被覆盖**（删除墓碑 / 整库还原 / 归档 / 恢复覆盖）。
  *   · `.active` = **底色块**（状态，不是动作）：当前选中项 —— panel3 底 + 文字提亮，**不画任何线**。
@@ -263,9 +266,13 @@ select { cursor: pointer; }
  *     < 选中 = `--panel3`(#24313f)，选中比 hover 更亮，方向一致。
  * 尺寸只有一档：`--t-sm` / `5px 9px`（实测 31px，与侧栏菜单行齐平）。
  *
- * **唯一的例外**：紧凑档 `--t-xs`（25px 高），只有两处 —— 卡片脚（`.card-foot .expand-btn`，
- * L1 有 566 处，与同行 21px 度量胶囊对齐）与播种表的行内按钮（`#seedTable button`，列宽只有
- * 36px，12px 字号下 `移除` 会折成两行、高 48px）。其余一律 31px。
+ * **例外一：文字动作**（无描边 + 静音色）—— 只给"读起来不是按钮"的那几个：侧栏筛选列表的行
+ * （`.btn-list button`）、卡片脚的「查看完整记录」（`.card-foot .expand-btn`）、播种表行内的「移除」
+ * （`#seedTable button`）。它们是列表项 / 行内链接，加上描边反而会变成一排砖。
+ *
+ * **例外二：分段切换**（`.seg`）—— 「提取模式 code/chat」这类"就地选一个值"的地方。用户要"扁平一点"，
+ * 做法是给它一条**凹槽**（`--panel2` 底 + 描边 + 2px 内边距的分组），段本身无描边、更矮，
+ * 选中那段在凹槽里浮 `--panel3`：整体比两个描边按钮更扁，又仍然一眼是"可以切"的控件。
  *
  * **曾经的一处例外已经消失**：`button.task-open/done/dropped`（弹层里三颗带虚线/实线/点线编码的
  * 状态按钮）在 2026-10-10 被用户判为"看起来就像是展示状态"，已替成 `#taskState` 下拉 —— 于是这一页
@@ -276,15 +283,15 @@ select { cursor: pointer; }
 button {
 	font: inherit;
 	background: transparent;
-	border: 1px solid transparent;
-	color: var(--muted);
+	border: 1px solid var(--border);
+	color: var(--text);
 	font-size: var(--t-sm);
 	padding: 5px 9px;
 	border-radius: var(--r-md);
 	cursor: pointer;
 	transition: background-color 120ms, border-color 120ms, color 120ms;
 }
-button:hover:not(:disabled) { background: var(--panel2); border-color: transparent; color: var(--text); }
+button:hover:not(:disabled) { background: var(--panel2); color: var(--text); }
 button:disabled { opacity: 0.45; cursor: default; }
 button.active { background: var(--panel3); color: var(--text); }
 /* 选中项划过去时**不许掉色**：`button:hover:not(:disabled)` 的特异度是 (0,2,1)、比
@@ -295,6 +302,24 @@ button.primary { border-color: var(--ink); color: var(--text); font-weight: 600;
 button.primary:hover:not(:disabled) { background: var(--panel2); border-color: var(--ink); color: var(--text); }
 button.danger { border-color: var(--danger); color: var(--danger); }
 button.danger:hover:not(:disabled) { background: var(--panel2); border-color: var(--danger); color: var(--danger); }
+
+/* 例外一：文字动作（列表行 / 行内链接，不是动作控件） */
+.btn-list button,
+.card-foot .expand-btn,
+#seedTable button { border-color: transparent; color: var(--muted); }
+
+/* 例外二：分段切换。凹槽用 `--panel2` + 描边；段无描边、比默认更矮；选中段在凹槽里浮 `--panel3`。 */
+.ops-ctl.seg {
+	padding: 2px;
+	background: var(--panel2);
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+}
+/* gap 要压过 `.ops-row > .ops-ctl { gap: 6px }`：两者同为 (0,2,0)，而那条在文件**后面**，
+   所以这条必须多一层元素限定写成 (0,3,0) —— 实测过：只写 `.ops-ctl.seg` 时 gap 仍是 6px。 */
+.ops-row > .ops-ctl.seg { gap: 2px; }
+.seg button { border-color: transparent; padding: 2px 8px; }
+.seg button:not(.active):hover:not(:disabled) { background: var(--panel3); color: var(--text); }
 input[type="search"] { min-width: 240px; }
 /* 搜索框吃掉工具栏剩余宽度：占位符写的是可搜字段全清单，默认 240px 会把它裁到只剩
    「搜索 content / 场景 / 项目 / id / ƒ」，看不出还能搜什么。上限防止它在只剩一个控件的
