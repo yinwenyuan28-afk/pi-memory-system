@@ -746,6 +746,12 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); 
 /* 勾选框行的包装（卡片 chips 行首）：只声明布局与点击区，不碰 el-checkbox 自身长相 */
 label.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
+/* ── 编辑区（记录详情弹层：正文之后的写动作集中地）──────────────────────────
+ * 顶部只展示状态、正文之后才出现控件 —— 一条分隔线把"读"与"改"分开。
+ * 放在这里而不是页面行内样式，是因为它是**弹层的结构约定**（L2/L3 的弹层同样按这个形状排）。 */
+.edit-zone { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
+.edit-zone > h3.sub { margin-top: 0; }
+
 /* ── 提示条 / 日志折叠块 ─────────────────────────────────────────────────── */
 .notice {
 	border: 1px solid var(--border);

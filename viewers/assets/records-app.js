@@ -270,6 +270,8 @@
 				/** 当前打开的详情记录（null = 未打开）；直接持有对象，不用下标 */
 				modalRow: null,
 				modalOpen: false,
+				/** 整库还原的弹层（危险区默认不占侧栏，点入口按钮才打开） */
+				dangerOpen: false,
 
 				// —— 批量选择 ——
 				/**
@@ -604,6 +606,21 @@
 							? "活跃会话日 " + (this.activeDays ? this.activeDays.length : 0) + " 个（源：hit-stats.json 侧车，可能滞后于 l0）"
 							: "日历天（拿不到活跃日数据，已退化）";
 				return "时钟：" + clock + "<br>保护带阈值 P" + VQ.PRUNE_RULES.protectedPercentile + " = " + this.protectedPriority;
+			},
+			/**
+			 * 场景分组的「对上池 / 未归类」口径。
+			 *
+			 * 单独做成 computed 是为了让它走 `<notice>` 的提示框样式（与「操作」那一组的状态说明同一套）：
+			 * 这段话说的是"这个下拉里的名字可不可信"，属于口径注解，不是一行随手写下的备注。
+			 * 值都是数字，但仍按既有纪律转义后再拼串。
+			 */
+			sceneNote: function () {
+				var s = this.sceneOptions;
+				return (
+					"池中 <b>" + this.esc(String(s.known)) + "</b> 个分组已对上 <code>scenes.json</code>；<b>" +
+					this.esc(String(s.unclassified)) +
+					"</b> 条记录的场景名不在池中（历史快照，标着「未归类」）—— 这类只在记录里存在，别当成有效分组看。"
+				);
 			},
 			/** 场景下拉（取前 40 项避免侧栏被撑爆；池中 canonical 与"未归类"分开列） */
 			sceneOptions: function () {
@@ -1646,9 +1663,9 @@
 					<el-option value="" :label="sceneOptions.label"></el-option>
 					<el-option v-for="c in sceneOptions.items" :key="c.key" :value="c.key" :label="c.key + '（' + c.count + '）'"></el-option>
 				</el-select>
-				<div class="hint" v-if="rows.length" style="margin-top:6px">
-					池中 <b>{{ sceneOptions.known }}</b> 个分组已对上 <code>scenes.json</code>；<b>{{ sceneOptions.unclassified }}</b> 条记录的场景名不在池中（历史快照，标着「未归类」）—— 这类只在记录里存在，别当成有效分组看。
-				</div>
+				<!-- 口径说明用提示框（与「操作」那一组的状态说明同一套样式）：它是"这个下拉里的名字可不可信"
+				     的注解，不是一行随手写下的备注。 -->
+				<notice v-if="rows.length" :msg="{ html: sceneNote, level: '' }"></notice>
 
 				<h3 class="sub">项目（metadata.project）</h3>
 				<el-select v-model="filters.project" style="width:100%" @change="onFilterChange">
@@ -1703,34 +1720,14 @@
 						</div>
 					</div>
 
-					<!-- 危险区：整库还原（不是单条撤销） -->
-					<div class="danger-zone" id="opsDanger">
-						<h3>危险区 · 整库还原（L1）</h3>
-						<div class="ops">
-							<div class="ops-row" :class="{ busy: ops.busy === 'rollback' }">
-								<div class="ops-label">选择备份</div>
-								<div class="ops-ctl">
-									<el-select :model-value="chosenBackup" style="width:340px" :disabled="!hasPort() || !backupOptions.length" @change="(v) => (ops.rollbackBackup = v)">
-										<el-option v-if="!backupOptions.length" value="" label="（没有备份）"></el-option>
-										<el-option v-for="b in backupOptions" :key="b.value" :value="b.value" :label="b.label"></el-option>
-									</el-select>
-									<el-button :disabled="!hasPort() || !chosenBackup || !!ops.busy" @click="previewRollback">预演</el-button>
-								</div>
-								<div class="ops-note">整库还原 = 删掉当前 L1 全部 <code>.jsonl</code> 再复制备份内容，<b>不是单条撤销</b>；当前库会先自动备份一份（pre-rollback）。预演只比对，不写盘。</div>
-							</div>
-							<div class="ops-row" :class="{ busy: ops.busy === 'rollback' }">
-								<div class="ops-label">打字确认</div>
-								<div class="ops-ctl">
-									<span class="confirm-token">{{ chosenBackup || "(无备份)" }}</span>
-									<el-input v-model="ops.rollbackConfirm" style="width:260px" placeholder="逐字输入所选备份目录名" :disabled="!hasPort() || !chosenBackup"></el-input>
-									<el-button type="danger" :disabled="!rollbackReady || !!ops.busy" @click="applyRollback">执行还原</el-button>
-									<span v-if="ops.busy === 'rollback'" class="hint">还原中（桥被占满，勿重复点）</span>
-								</div>
-								<div class="ops-note">必须逐字输入上面显示的备份目录名 —— 与桥的 confirm 副验一致；输入正确前「执行还原」保持禁用。</div>
-							</div>
-							<div v-if="ops.rollbackPreview">
-								<details class="log" :open="ops.rollbackPreview.open"><summary>{{ ops.rollbackPreview.title }}</summary><pre class="log-text">{{ ops.rollbackPreview.text }}</pre></details>
-							</div>
+					<!-- 危险区（整库还原）：破坏性动作**不常驻侧栏**，只留一个入口按钮 ——
+					     理由见下方弹层处的注释（336px 的侧栏放不下备份下拉，且不可逆动作不该待在
+					     "随手就能点"的位置）。 -->
+					<div class="ops-row">
+						<div class="ops-label">危险区</div>
+						<div class="ops-ctl">
+							<el-button type="danger" :disabled="!hasPort() || !backupOptions.length" @click="dangerOpen = true">整库还原…</el-button>
+							<span class="hint">删掉当前 L1 全部 <code>.jsonl</code> 再复制备份内容（不是单条撤销）</span>
 						</div>
 					</div>
 				</div>
@@ -1924,8 +1921,15 @@
 					<metric kind="id" :value="modalRow.id || '?'" tip="记录 id：l1_fix / l1_task_state 的入参"></metric>
 					<chip :kind="qualClass(modalRow.q.tag)" :label="modalRow.q.tag + ' ' + fmtQ(modalRow.q.quality)" :tip="'质量分 ' + fmtQ(modalRow.q.quality) + ' —— 热度，按天数衰减'"></chip>
 					<chip :kind="modalRow.prune.eligible ? 'prune' : ''" :label="(modalRow.prune.eligible ? '淘汰候选：' : '不淘汰：') + pruneLabel(modalRow.prune.reason)"></chip>
-					<!-- 这里**刻意不再放任务状态胶囊**（2026-10-10，用户问"明明状态是已完成，为什么三种都显示"）：
-					     状态由下面那个下拉自己说明。卡片列表上那枚照旧保留（卡片没有切换器）。 -->
+					<!-- 任务状态**在这里只展示**（用户 2026-10-10 要求）：顶部一眼看到"这条现在什么状态"，
+					     改的入口统一在下方编辑区 —— 展示与改写分开，就不会再出现"三颗按钮看着像三种状态"
+					     那种误读。卡片列表上那枚照旧保留（卡片没有切换器）。 -->
+					<chip
+						v-if="modalRow.isTask"
+						:kind="'task-' + modalRow.taskState"
+						:label="taskLabel(modalRow.taskState)"
+						:tip="(modalRow.audit.taskStateChange ? '审计：' + modalRow.audit.taskStateChange.at + ' by ' + modalRow.audit.taskStateChange.by : '缺省即待办') + ' —— 要改请用下方的「编辑」区'"
+					></chip>
 					<chip v-if="modalRow.deleted" kind="del" label="deleted"></chip>
 				</div>
 				<!-- 诊断值全在这里：卡片只留了「多久没动」，其余从列表层搬进来 -->
@@ -1935,53 +1939,37 @@
 					<metric v-if="modalHitStat && (modalHitStat.injectHits || modalHitStat.toolHits)" :value="'注入 ' + modalHitStat.injectHits + ' / 工具 ' + modalHitStat.toolHits" tip="自动注入 / 工具召回"></metric>
 				</div>
 
-				<!-- 任务状态：**一个下拉，不是三颗按钮**（用户 2026-10-10 报"看起来就像是展示状态"）。
-				     三颗带形状编码的描边按钮并排，谁看都像"这条记录有这几种状态"而不像"这里可以改"。
-				     行为不变：选中即写（l1_task_state，就地改写 + 写锁 + metadata.taskStateChange 审计）。 -->
-				<div class="ops-row" style="margin:12px 0" v-if="modalRow.isTask">
-					<div class="ops-label">任务状态</div>
-					<div class="ops-ctl">
-						<el-select :model-value="modalRow.taskState" style="width:130px" :disabled="!hasPort() || taskBusy" @change="onTaskStateChange">
-							<el-option v-for="s in ['open','done','dropped']" :key="s" :value="s" :label="taskLabel(s)"></el-option>
-						</el-select>
-						<el-input v-model="taskReason" style="width:250px" placeholder="可选：原因（写入审计）" :disabled="!hasPort() || taskBusy" maxlength="200"></el-input>
-						<span v-if="taskBusy" class="hint">写入中…</span>
-					</div>
-					<div class="ops-note">
-						改这里就<b>就地改写</b>该条（保留 id / 正文 / 向量），并写 <code>metadata.taskStateChange</code> 审计<template v-if="!hasPort()">。只读：需带 <code>?port=</code> 打开才能写盘。</template>。
-					</div>
-				</div>
-
 				<!-- 弹层里的正文**只读**：全页唯一的正文编辑入口是下面纠错面板的「新正文」框（写盘要过四道闸） -->
 				<div class="full-content">{{ modalRow.content || "" }}</div>
 
-				<el-collapse>
-					<el-collapse-item name="fields" title="字段与审计（点开）">
-						<dl class="kv">
-							<!-- 这里不再重复 id：它已经在标题那一行 -->
-							<dt>priority</dt><dd>{{ modalRow.priority === undefined ? "—" : modalRow.priority }}</dd>
-							<dt>场景（解析后）</dt><dd>{{ modalRow.scene.canonical || "—" }}<br /><span class="hint">{{ modalRow.scene.note || "" }}</span></dd>
-							<dt>scene_id / scene_name</dt><dd>{{ (modalRow.scene.id || "—") + " / " + (modalRow.scene.rawName || "—") }}</dd>
-							<dt>项目 / scope</dt><dd>{{ (modalRow.project || "—") + " / " + (modalRow.scope || "—") }}</dd>
-							<dt>cwd</dt><dd>{{ modalRow.cwd || "—" }}</dd>
-							<dt>sessionKey</dt><dd>{{ modalRow.sessionKey || "—" }}</dd>
-							<dt>version / deleted</dt><dd>{{ (modalRow.version === undefined ? "—" : modalRow.version) + " / " + (modalRow.deleted ? "true" : "false") }}</dd>
-							<dt>createdAt / updatedAt</dt><dd>{{ fmtTime(modalRow.createdAt) + " / " + fmtTime(modalRow.updatedAt) }}<br /><span class="hint">最后更新 {{ fromNow(modalRow.updatedAt || modalRow.createdAt) }}</span></dd>
-							<dt>质量明细</dt><dd>{{ "q=" + fmtQ(modalRow.q.quality) + " decay=" + fmtQ(modalRow.q.decay) + " days=" + Number(modalRow.q.days).toFixed(2) + "（" + (modalRow.q.activeDayClock ? "活跃会话日" : "日历天") + "） tag=" + modalRow.q.tag }}</dd>
-							<dt>淘汰判定</dt><dd>{{ pruneLabel(modalRow.prune.reason) + "（保护带 priority ≥ " + protectedPriority + "）" }}</dd>
-							<template v-if="modalRow.audit.taskStateChange">
-								<dt>taskStateChange</dt><dd>{{ "from " + modalRow.audit.taskStateChange.from + " → " + modalRow.audit.taskStateChange.to + " · " + modalRow.audit.taskStateChange.at + " · by " + modalRow.audit.taskStateChange.by + (modalRow.audit.taskStateChange.reason ? " · " + modalRow.audit.taskStateChange.reason : "") }}</dd>
-							</template>
-							<template v-if="modalRow.audit.valueCheck">
-								<dt>valueCheck</dt><dd>{{ modalRow.audit.valueCheck.verdict + (modalRow.audit.valueCheck.from ? "（" + modalRow.audit.valueCheck.from + " → " + modalRow.audit.valueCheck.to + "）" : "") + (modalRow.audit.valueCheck.reason ? " · " + modalRow.audit.valueCheck.reason : "") }}</dd>
-							</template>
-							<template v-if="modalRow.audit.l1Cleanup">
-								<dt>l1Cleanup</dt><dd>{{ (modalRow.audit.l1Cleanup.action || "") + (modalRow.audit.l1Cleanup.appliedAt || modalRow.audit.l1Cleanup.at || modalRow.audit.l1Cleanup.date ? " · " + (modalRow.audit.l1Cleanup.appliedAt || modalRow.audit.l1Cleanup.at || modalRow.audit.l1Cleanup.date) : "") + (modalRow.audit.l1Cleanup.replacedBy ? " · replacedBy " + modalRow.audit.l1Cleanup.replacedBy : "") }}</dd>
-							</template>
-							<dt>sourceFile</dt><dd>{{ modalRow.sourceFile || "—" }}</dd>
-						</dl>
-						<pre class="log-text">{{ JSON.stringify(modalRow, null, 2) }}</pre>
-					</el-collapse-item>
+				<!-- 编辑区：**所有写动作集中在这一段**（改任务状态 / 改写正文；作废在页脚）。
+				     顶部只展示状态、正文之后才出现控件，于是"读"和"改"在视觉上分成两段。 -->
+				<div class="edit-zone">
+					<h3 class="sub">编辑（会写盘）</h3>
+
+					<!-- 任务状态：**一个下拉，不是三颗按钮**（用户 2026-10-10 报"看起来就像是展示状态"）。
+					     三颗带形状编码的描边按钮并排，谁看都像"这条记录有这几种状态"而不像"这里可以改"。
+					     行为不变：选中即写（l1_task_state，就地改写 + 写锁 + metadata.taskStateChange 审计）。 -->
+					<div class="ops-row" v-if="modalRow.isTask">
+						<div class="ops-label">任务状态</div>
+						<div class="ops-ctl">
+							<el-select :model-value="modalRow.taskState" style="width:130px" :disabled="!hasPort() || taskBusy" @change="onTaskStateChange">
+								<el-option v-for="s in ['open','done','dropped']" :key="s" :value="s" :label="taskLabel(s)"></el-option>
+							</el-select>
+							<el-input v-model="taskReason" style="width:250px" placeholder="可选：原因（写入审计）" :disabled="!hasPort() || taskBusy" maxlength="200"></el-input>
+							<span v-if="taskBusy" class="hint">写入中…</span>
+						</div>
+						<div class="ops-note">
+							改这里就<b>就地改写</b>该条（保留 id / 正文 / 向量），并写 <code>metadata.taskStateChange</code> 审计<template v-if="!hasPort()">。只读：需带 <code>?port=</code> 打开才能写盘。</template>。
+						</div>
+					</div>
+
+					<el-collapse>
+						<!-- 字段清单已删（2026-10-10 用户要求）：上面那几行胶囊 + 这里的原始 JSON 已经够了，
+						     再摆一份"字段名 → 值"的表格等于同一批数据说两遍。 -->
+						<el-collapse-item name="fields" title="原始记录（JSON）">
+							<pre class="log-text">{{ JSON.stringify(modalRow, null, 2) }}</pre>
+						</el-collapse-item>
 
 					<!-- 纠错面板（l1_fix）：预演（checkFixGates 裁决）→ 执行。审计标注会**追加进正文本身**。
 					     默认收起：这一块实测 382px、占弹层一半高，而它是 agent 自纠的走法；人的日常动作是
@@ -2022,7 +2010,8 @@
 							<notice v-if="fixVerdict.html" :msg="fixVerdict"></notice>
 						</div>
 					</el-collapse-item>
-				</el-collapse>
+					</el-collapse>
+				</div>
 			</template>
 			<template #footer>
 				<div class="foot">
@@ -2030,6 +2019,51 @@
 					<el-button type="danger" @click="onTombstoneClick">删除（墓碑）</el-button>
 					<el-button @click="closeModal">关闭</el-button>
 				</div>
+			</template>
+		</el-dialog>
+
+		<!-- 整库还原（危险区）：破坏性动作的**独立弹层**，默认不在侧栏占位置。
+		     放弹层而不是常驻侧栏，有三条具体理由：
+		       ① 侧栏只有 336px，备份下拉要显示「时间 · 分片数 · 目录名」才能把五个同前缀的
+		          backfill-* 区分开（旧版正是在侧栏里分不开，才把时间挪到下拉项最前面）；
+		       ② 不可逆动作不该待在"随手就能点"的位置；
+		       ③ 预演的 CLI 输出很长，弹层里读得下来，侧栏里只能内滚动（契约 3 不允许）。
+		     闸门一条没少：预演只比对；执行要**逐字输入备份目录名**（与桥的 confirm 副验一致），
+		     再经一次不可逆确认。 -->
+		<el-dialog v-model="dangerOpen" title="整库还原（L1）· 危险区" width="860px" top="7vh" class="viewer-dialog">
+			<div class="ops">
+				<p class="hint">
+					整库还原 = 删掉当前 L1 全部 <code>.jsonl</code> 再复制备份内容，<b>不是单条撤销</b>；当前库会先自动备份一份（pre-rollback）。预演只比对，不写盘。
+				</p>
+				<div class="ops-row" :class="{ busy: ops.busy === 'rollback' }">
+					<div class="ops-label">选择备份</div>
+					<div class="ops-ctl">
+						<el-select :model-value="chosenBackup" style="width:420px" :disabled="!hasPort() || !backupOptions.length" @change="(v) => (ops.rollbackBackup = v)">
+							<el-option v-if="!backupOptions.length" value="" label="（没有备份）"></el-option>
+							<el-option v-for="b in backupOptions" :key="b.value" :value="b.value" :label="b.label"></el-option>
+						</el-select>
+						<el-button :disabled="!hasPort() || !chosenBackup || !!ops.busy" @click="previewRollback">预演（只比对）</el-button>
+					</div>
+					<div class="ops-note">下拉项把<b>时间与分片数放在最前</b>：备份目录名只有末尾时间戳不同，只看目录名分不开。</div>
+				</div>
+				<div class="ops-row" :class="{ busy: ops.busy === 'rollback' }">
+					<div class="ops-label">打字确认</div>
+					<div class="ops-ctl">
+						<span class="confirm-token">{{ chosenBackup || "(无备份)" }}</span>
+						<el-input v-model="ops.rollbackConfirm" style="width:320px" placeholder="逐字输入所选备份目录名" :disabled="!hasPort() || !chosenBackup"></el-input>
+						<el-button type="danger" :disabled="!rollbackReady || !!ops.busy" @click="applyRollback">执行还原</el-button>
+						<span v-if="ops.busy === 'rollback'" class="hint">还原中（桥被占满，勿重复点）</span>
+					</div>
+					<div class="ops-note">必须逐字输入上面显示的备份目录名 —— 与桥的 confirm 副验一致；输入正确前「执行还原」保持禁用。</div>
+				</div>
+				<!-- 动作结果就摆在这里：弹层盖住侧栏时，那条状态提示在侧栏里看不见 -->
+				<notice v-if="opsNote.html" :msg="opsNote"></notice>
+				<div v-if="ops.rollbackPreview">
+					<details class="log" :open="ops.rollbackPreview.open"><summary>{{ ops.rollbackPreview.title }}</summary><pre class="log-text">{{ ops.rollbackPreview.text }}</pre></details>
+				</div>
+			</div>
+			<template #footer>
+				<el-button @click="dangerOpen = false">关闭</el-button>
 			</template>
 		</el-dialog>
 		`,
