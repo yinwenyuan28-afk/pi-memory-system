@@ -537,7 +537,19 @@ try {
 	ok("⑯ 契约 4：度量/统计行等宽 + tabular-nums", /font-variant-numeric:\s*tabular-nums/.test(themeCss) && /\.metric,\s*\.stat\s*>\s*span:last-child/.test(themeCss));
 	// 契约 5 + 卡片正文截断（卡片仍是领域形状，不用 el-card）
 	ok("⑯ .card-body 正文声明了 -webkit-line-clamp", /\.card-body \.full-content\s*\{[^}]*-webkit-line-clamp/.test(themeCss));
-	ok("⑯ 标题不小于内容（h2 = --t-md / h3.sub = --t-sm）", /aside h2, section h2\s*\{[^}]*font-size:\s*var\(--t-md\)/.test(themeCss) && /aside h3\.sub\s*\{[^}]*font-size:\s*var\(--t-sm\)/.test(themeCss));
+	ok("⑯ 标题不小于内容（h2 = --t-md / h3.sub = --t-sm）", /aside h2, section h2\s*\{[^}]*font-size:\s*var\(--t-md\)/.test(themeCss) && /^h3\.sub\s*\{[^}]*font-size:\s*var\(--t-sm\)/m.test(themeCss));
+	// 标题一律走令牌，**不许退回浏览器默认字号**：默认 h1/h2/h3 = 2em/1.5em/1.17em，
+	// 一旦某个标题落在没有被作用域覆盖的地方，层级就直接反过来 —— 2026-10-10 实测：
+	// 弹层「编辑（会写盘）」的 h3.sub 因为样式只挂在 `aside` 下，渲染成 14×1.17 = 16.38px，
+	// 比弹层标题（16px）还大（字号整体 +1px 之后才一眼看出来）。所以既要有全局兜底，
+	// 也要确保 `.sub` 这个类本身是全局的（弹层与侧栏都在用它）。
+	ok(
+		"⑯ h1/h2/h3 有全局兜底字号（任何位置都不退回浏览器默认）",
+		/^h1\s*\{[^}]*font-size:\s*var\(--t-xl\)/m.test(themeCss) &&
+			/^h2\s*\{[^}]*font-size:\s*var\(--t-md\)/m.test(themeCss) &&
+			/^h3\s*\{[^}]*font-size:\s*var\(--t-sm\)/m.test(themeCss),
+	);
+	ok("⑯ 区段小标题 .sub 是全局类，未挂在 aside 下（弹层里也要生效）", !/^aside h3\.sub/m.test(themeCss));
 	ok("⑯ color-scheme: dark 在场（原生控件变暗的前提）", /color-scheme\s*:\s*dark/.test(themeCss));
 	ok("⑯ 条形图兜底色写成 :where()（让出特异度给 .c-*）", /:where\(\.bar-track\)\s*>\s*i\s*\{\s*background:\s*var\(--muted\)/.test(themeCss));
 	ok("⑯ .bar-track > i / .qbar > i 自身不声明 background", !/\.bar-track\s*>\s*i\s*\{[^}]*background/.test(themeCss) && !/\.qbar\s*>\s*i\s*\{[^}]*background/.test(themeCss));

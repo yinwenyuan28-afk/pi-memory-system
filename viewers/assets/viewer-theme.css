@@ -83,12 +83,15 @@
 	--ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", sans-serif;
 	--mono: ui-monospace, "Cascadia Mono", SFMono-Regular, Consolas, monospace;
 
-	/* 字号六级 */
-	--t-xs: 11px;
-	--t-sm: 12px;
-	--t-md: 13px;
-	--t-lg: 15px;
-	--t-xl: 21px;
+	/* 字号六级。
+	   2026-10-10 用户反馈"字号有点小"，**整条阶梯整体 +1px** —— 保持六级与相互比例，
+	   只把基线抬上去（长文本读起来轻松一档，层级关系一点没动）。
+	   改这里就够了：全站字号都走这五个令牌，主题里除 `?` 标记外没有写死的 px 字号。 */
+	--t-xs: 12px;
+	--t-sm: 13px;
+	--t-md: 14px;
+	--t-lg: 16px;
+	--t-xl: 22px;
 
 	--r-lg: 12px;
 	--r-md: 8px;
@@ -207,7 +210,15 @@ html.dark {
 
 	/* 尺寸：契约 5（只有一档 31px；紧凑档 25px 由 .el-button--small 承担） */
 	--el-font-family: var(--ui);
+	/* EP 自己的六级字号令牌也接到本仓库阶梯上 —— 不接的话，任何读到它们的组件
+	   （`size="small"` 的按钮、表格小号、分页…）都会漏回 EP 默认的 12/13/16/18/20px，
+	   于是"改字号"这件事只改了本仓库写的规则，EP 那半边不动，页面出现两套基线。 */
+	--el-font-size-extra-small: var(--t-xs);
+	--el-font-size-small: var(--t-sm);
 	--el-font-size-base: var(--t-sm);
+	--el-font-size-medium: var(--t-md);
+	--el-font-size-large: var(--t-md);
+	--el-font-size-extra-large: var(--t-lg);
 	--el-component-size: 31px;
 	--el-component-size-large: 34px;
 	--el-component-size-small: 25px;
@@ -481,6 +492,15 @@ section.content { padding: 16px 20px 64px; min-width: 0; }
 	}
 }
 
+/* 兜底：h1–h3 在任何位置都不许退回浏览器默认字号。
+ * 浏览器默认 h1/h2/h3 = 2em/1.5em/1.17em，一旦某个标题落在没有被作用域覆盖的地方，
+ * 层级就会直接反过来 —— 2026-10-10 实测：弹层「编辑（会写盘）」的 h3.sub 因为样式只挂在
+ * `aside` 下，渲染成 14×1.17 = 16.38px，**比弹层标题（16px）还大**（字号整体 +1px 之后才一眼看出来）。
+ * 作用域规则（`aside h2, section h2` / `.ops h3.sub` / `header.page h1`）特异度更高，照常生效。 */
+h1 { font-size: var(--t-xl); font-weight: 600; }
+h2 { font-size: var(--t-md); font-weight: 600; color: var(--muted); }
+h3 { font-size: var(--t-sm); font-weight: 600; color: var(--muted); }
+
 /* 小标题：只靠分隔线分组，不用全大写 + 字距（那是模板感最重的写法）。
    字号必须 ≥ 内容行（--t-sm）：2026-10-10 用户报「左侧菜单栏里标题比下面的内容还小」，
    根因就是标题曾按"eyebrow 标签"压到 11px。层级靠分隔线 + 字重 + 静音色表达。 */
@@ -493,7 +513,9 @@ aside h2, section h2 {
 	border-top: 1px solid var(--border-soft);
 }
 aside > h2:first-child, section > h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-aside h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
+/* 区段小标题（`.sub`）：侧栏分组内、管理操作区内、弹层编辑区内都在用它 —— 所以是**全局类**，
+   不能只挂在 aside 下（那样弹层里就没有规则，见上面 h1–h3 兜底那条的实测记录）。 */
+h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
 
 /* ── 侧栏：统计行（分隔线列表，不是一叠盒子） ─────────────────────────────── */
 .stats { display: grid; gap: 0; }
@@ -531,13 +553,14 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); 
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 15px;
-	height: 15px;
+	width: 16px;
+	height: 16px;
 	margin-left: 5px;
 	border: 1px solid var(--border);
 	border-radius: 50%;
 	color: var(--muted);
-	font-size: 10px;
+	/* 唯一的写死字号：它是圆圈里的一个字形，跟着 --t-xs 会撑破 16px 的圈 */
+	font-size: 11px;
 	line-height: 1;
 	cursor: help;
 	vertical-align: 1px;
@@ -820,6 +843,7 @@ label.check { display: inline-flex; align-items: center; gap: 6px; cursor: point
 .cell-line > .chip { flex: 0 0 auto; }
 /* 等高行：给 el-table 加这个类，所有单元格取同一最小高度。
    用途是数据列表要"扫读"——行高由内容决定时，最长的 summary 会把它的行撑高一倍，
-   整张表的横线就再也对不齐（本仓库既有约定：长文本单行省略 + title 悬停看全文）。 */
-.fixed-rows .el-table__cell { height: 36px; }
+   整张表的横线就再也对不齐（本仓库既有约定：长文本单行省略 + title 悬停看全文）。
+   38px = --t-sm(13px) 的单行 + 单元格内边距 + 一点余量，与动作胶囊（~23px）同处一行不挤。 */
+.fixed-rows .el-table__cell { height: 38px; }
 
