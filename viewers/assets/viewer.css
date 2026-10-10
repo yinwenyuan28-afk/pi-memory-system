@@ -267,8 +267,9 @@ select { cursor: pointer; }
  * L1 有 566 处，与同行 21px 度量胶囊对齐）与播种表的行内按钮（`#seedTable button`，列宽只有
  * 36px，12px 字号下 `移除` 会折成两行、高 48px）。其余一律 31px。
  *
- * **刻意不属于这套语言的一处**：`button.task-open/done/dropped`（弹层里的任务状态）。它编码的
- * 是**数据状态**（实线/虚线/点线 = 已定/未落定/已搁置，契约 2），不是动作权重 —— 别顺手统一掉。
+ * **曾经的一处例外已经消失**：`button.task-open/done/dropped`（弹层里三颗带虚线/实线/点线编码的
+ * 状态按钮）在 2026-10-10 被用户判为"看起来就像是展示状态"，已替成 `#taskState` 下拉 —— 于是这一页
+ * 再没有"按数据状态换长相的按钮"。状态编码仍活在**胶囊**上（`.chip.task-*`，卡片与筛选标记在用）。
  *
  * 这一节放在基样式位置而不是某个作用域里：作用域以后只准覆盖**尺寸与间距**，不准再决定长相，
  * 否则"再长出一种外观"这件事没有东西拦得住（踩坑 20 的同一条教训：注释不算契约）。 */
@@ -766,15 +767,9 @@ td.acts { width: 200px; }
 }
 .modal .sheet h3 { margin: 0 0 10px; font-size: var(--t-lg); font-weight: 600; }
 .modal .foot { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
-/* 弹层里的任务状态按钮：与 chip 同一套语义配色 */
-button.task-open { color: var(--text); border-style: dashed; border-color: var(--muted); }
-button.task-done { color: var(--ok); border-color: var(--ok); }
-button.task-dropped { color: var(--muted); border-style: dotted; border-color: var(--faint); }
-button.task-open:disabled, button.task-done:disabled, button.task-dropped:disabled {
-	opacity: 1;
-	background: var(--panel3);
-	cursor: default;
-}
+/* （原先这里有一组 `button.task-open/done/dropped`：弹层里三颗带虚线/实线/点线编码的状态按钮。
+   2026-10-10 用户报"看起来就像是展示状态"，改成下拉后这三条规则连同 `:disabled` 那条一起删掉。
+   状态胶囊的 `.chip.task-*` 是另一组，卡片上照旧用。） */
 
 dl.kv { display: grid; grid-template-columns: 128px 1fr; gap: 4px 12px; margin: 12px 0; font-size: var(--t-sm); }
 dl.kv dt { color: var(--muted); }

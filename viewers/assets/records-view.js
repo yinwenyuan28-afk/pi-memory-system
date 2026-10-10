@@ -1360,16 +1360,24 @@
 					? metric("注入 " + hitSt.injectHits + " / 工具 " + hitSt.toolHits, "自动注入 / 工具召回")
 					: "") +
 				"</div>" +
+			// 任务状态：**一个下拉，不是三颗按钮**（2026-10-10 用户报"看起来就像是展示状态"）。
+			// 三颗带形状编码的描边按钮并排，谁看都像"这条记录有这几种状态"，而不像"这里可以改";
+			// 下拉的字段外观（与页头那些 select 同一套）本身就带着"这是个值、你可以换"的暗示。
+			// 行为与原按钮一致：选中即写（`l1_task_state`，就地改写 + 写锁 + `metadata.taskStateChange`
+			// 审计），原因框仍然可选、仍然会被读走；只读模式下整个控件禁用，但当前值照样看得见。
 			(r.isTask
-				? '<div style="margin:12px 0"><div class="hint" style="margin-bottom:5px">任务状态（就地改写，保留 id/正文/向量；写 <code>metadata.taskStateChange</code> 审计）' +
-					(hasPort ? "" : " —— <b>需带 ?port= 打开才能写盘</b>") + "：</div>" +
-					'<div class="toolbar">' +
+				? '<div class="ops-row" style="margin:12px 0"><div class="ops-label">任务状态</div><div class="ops-ctl">' +
+					'<select id="taskState"' + (hasPort ? "" : " disabled") + ">" +
 					["open", "done", "dropped"]
 						.map(function (s) {
-							return '<button type="button" class="task-' + s + '" data-task="' + s + '"' + (r.taskState === s ? " disabled" : "") + ">" + V.TASK_STATE_LABELS[s] + "</button>";
+							return '<option value="' + s + '"' + (r.taskState === s ? " selected" : "") + ">" + V.TASK_STATE_LABELS[s] + "</option>";
 						})
 						.join("") +
-					'<input type="text" class="reason" id="taskReason" placeholder="可选：关闭原因（写入审计）" />' +
+					"</select>" +
+					'<input type="text" class="reason" id="taskReason" placeholder="可选：原因（写入审计）"' + (hasPort ? "" : " disabled") + " />" +
+					"</div>" +
+					'<div class="ops-note">改这里就<b>就地改写</b>该条（保留 id / 正文 / 向量），并写 <code>metadata.taskStateChange</code> 审计' +
+					(hasPort ? "。" : "。只读：需带 <code>?port=</code> 打开才能写盘。") +
 					"</div></div>"
 				: "") +
 			// 弹层里的正文**只读**：卡片正文是 6 行截断的，这里才是看全文的地方。全页唯一的正文编辑
@@ -1800,26 +1808,29 @@
 				closeModal();
 			}
 		});
+		// 任务状态：改成**换值即写**（下拉的 change）。与原先"点状态按钮即写"同义，只是控件换了形态。
+		$("modalBody").addEventListener("change", function (e) {
+			var sel = e.target;
+			if (!sel || sel.id !== "taskState") return;
+			var row = state.modalRow;
+			if (!row) return;
+			var target = sel.value;
+			if (target === row.taskState) return; // 值没变就不写（下拉在某些浏览器上会派发 change）
+			var reasonEl = $("taskReason");
+			var reason = reasonEl ? reasonEl.value.trim() : "";
+			sel.disabled = true;
+			applyTaskState(row, target, reason).then(function () {
+				// 成功时 applyTaskState 已经把 row.taskState 改掉并关了弹层；这里只处理失败：
+				// 把下拉拨回真实值，免得控件显示的状态和盘上的不一致。
+				if (row.taskState !== target) sel.value = row.taskState;
+				sel.disabled = false;
+			});
+		});
 		$("modalBody").addEventListener("click", function (e) {
 			var t = e.target;
 			var row = state.modalRow;
 			if (!row) return;
 
-			var taskBtn = t.closest("[data-task]");
-			if (taskBtn) {
-				var target = taskBtn.getAttribute("data-task");
-				var reasonEl = $("taskReason");
-				var reason = reasonEl ? reasonEl.value.trim() : "";
-				if (!V.bridgePort()) {
-					V.note("loadNote", "写盘需要写盘桥：请运行 <code>node scripts/l1-admin/viewer-bridge.mjs --port 5174</code> 并以 <code>?port=5174</code> 重新打开本页。", "warn");
-					return;
-				}
-				taskBtn.disabled = true;
-				applyTaskState(row, target, reason).then(function () {
-					taskBtn.disabled = false;
-				});
-				return;
-			}
 			if (t.id === "delBtn") {
 				if (!V.bridgePort()) {
 					if (!confirm("未带 ?port=，无法真实删除。\n\n请先运行：node scripts/l1-admin/viewer-bridge.mjs\n再以 ?port= 打开本页。\n\n现在仅在本页预览标记（刷新即恢复）？")) return;
