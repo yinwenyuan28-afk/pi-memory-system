@@ -351,3 +351,97 @@
 **扫法（可复用）**：对每个 `h1–h4`，取它的**下一个兄弟元素**，算那棵子树里**带文字**节点的最大字号，比标题大就报出来。五个页面一次扫完 —— 改前 L1 报 3 处、其余 4 页 0；改后**全 0**。顺带量了弹层：标题 15px、面板与字段 12px ✓。
 
 门禁：`verify-viewer-deploy` **219/0**（⑯ 新增一条「标题不小于内容：h2 = `--t-md` / h3.sub = `--t-sm`」）、`verify-viewer-write-paths` 145/0、`verify-viewer-quality-parity` 278/0、`check-types` 0 新增；5 页视觉体检 **12 / 0 / 0 / 0 / 0**（12 仍是 L1 那批刻意的场景名省略号）；部署 `0.1.0+6600f10c`、`drifted: false`。
+
+## 2026-10-10 查看器整体重构：Vue 3 + Element Plus（内置库、无构建步骤）
+
+用户诉求原文：「帮我将 C:\dev\code\pi-extension\pi-memory-system\viewers 下的所有的页面使用 vue3+elementplus
+进行重构」。五个页面（总览 / L1 记录 / L2 场景 / L3 画像 / 流水线）全部改成 Vue 3 应用，外壳控件交给
+Element Plus，领域形状仍由本仓库 CSS 表达。
+
+### 为什么是"内置 UMD 文件 + classic script"而不是 Vite 工程
+
+这次重构之前必须先回答一个问题：**谁保证构建产物跟版**。同一套页面 2026-08-23 已经 Vue 化过一版
+（`vue-viewer/`：Vite + `package.json` + `src/*.vue`），它死在没有 `node_modules`、没有 `dist`，
+最后被 `deploy.ts` 的 `RETIRED_PATHS` 移进 `backups/viewers-retired/`。而本仓库的部署链路
+（`memory/viewers/deploy.ts`：按内容哈希逐文件同步 + 写 `viewer-manifest.json` + 桥的漂移检测）
+只认"仓库里的普通文件"。所以这一版的取舍是：
+
+- Vue 3.5.43（`vue.global.prod.js` 168 KB）、Element Plus 2.14.7（`index.full.min.js` 1.06 MB +
+  `index.css` 361 KB + 暗色 css-vars + zh-CN 语言包）**放仓库**（`viewers/assets/vendor/`，共 1.6 MB），
+  出处 / sha256 / 升级步骤写在 `viewers/assets/vendor/README.md`；
+- 页面仍是 classic script，**源码即产物** —— 于是哈希清单、漂移检测、退役机制自动覆盖这些库文件，
+  一行部署代码都不用改，`file://` 下也照样能渲染（取不到数据，但页面不是白屏）。
+
+### 分工：组件库负责一致性，本仓库 CSS 负责"属于数据的形状"
+
+- **交给 EP**：按钮 / 输入框 / 下拉 / 表格 / 弹层 / 分页 / 复选框 / 折叠面板 / 分段切换 / 提示 / 确认框。
+  旧版 987 行的 `viewer.css` 里有一大半是在手工做这些事（7 种按钮外观、4 档尺寸就是这么长出来的）。
+- **留在本仓库**（`viewer-theme.css`，734 行）：胶囊（形状编码种类）、度量 token、统计行、卡片、
+  条形图 / 直方图、时间线、预算条、规则条目。它们承载的是"这一页怎么表达记忆库"的语义：
+  EP 的 `el-tag` 只有五种实心同形，表达不了"虚线 = 未落定 / 点线 = 已搁置"；`el-card` 的
+  header/body 结构塞不下"3px 质量条 + 6 行截断正文"的卡片。
+- **共享 Vue 层**（`viewer-vue.js`，380 行）：装 EP + 中文语言包、注册九个别域组件
+  （`<chip>` `<metric>` `<stat-list>` `<notice>` `<json-details>` `<seg>` `<help-note>` `<bar-list>` `<hist>`）、
+  统一挂载入口 `V.vue.mount()`，以及渲染期异常兜底（Vue 默认只把错误丢进控制台，页面看着"半截渲染"
+  却没有任何提示 —— 现在会把它摆在页面顶部）。
+- **`viewer-core.js` 一个字节没改**：导航 / 版本 chip / 只读横幅仍由它的 `mountChrome` 直接写 DOM
+  （`#nav` 与 `#modeBanner` 特意留在 Vue 挂载点之外）。理由：⑰ 节钉住的打开方式契约（页内跳转必须带
+  `location.search`、缺 `?port=` 要给可操作提示、桥地址按页面自身 hostname 拼）都在它里面，
+  搬进 Vue 只会让那条门禁去断言一段死代码 —— 顺手在 ⑯ 里加了一条"`viewer-vue` 仍调用 `mountChrome`"
+  来防止这件事发生。
+
+### 规模
+
+| | 旧 | 新 |
+|---|---|---|
+| 页面 HTML | 568 行（DOM 骨架 + 内联说明） | 180 行（只留 `#nav` / `#modeBanner` / `#app` + 脚本顺序） |
+| 页面脚本 | 4,325 行（`*-view.js`，命令式 `innerHTML` + 事件委托） | 5,326 行（`*-app.js`，组件 + `computed`） |
+| 样式 | `viewer.css` 987 行 | `viewer-theme.css` 734 行 + EP 自带 |
+| 新增 | — | `viewer-vue.js` 380 行 + `vendor/` 1.6 MB |
+
+### 换实现不换语义（逐条验收）
+
+- **端点、请求体、判定条件、文案**：五个页面的 `/api/*` 字面量集合与旧版**逐个相同**
+  （`grep -o '"/api/[a-z0-9/-]*"' 旧 | sort -u` 与新 `diff` 为空），写动作的请求体逐个比对过。
+- **写盘路径逐条用假桥验证**（`window.fetch` 存根只记录请求体并返回构造响应，真实 profile 一个字节不写）：
+  · 任务状态：`POST /api/task-state {ids:["l1_…"], state:"open"}` —— 与旧版同形（`reason` 空时随
+    `JSON.stringify` 自然丢弃，与旧版一致）；
+  · 纠错预演/执行：`POST /api/l1/fix {id, action:"rewrite", content, evidence}` 与加 `apply:true` 的第二次
+    请求**其余字段逐字段相同**；「执行（写盘）」只在预演通过后才出现；
+  · 批量：`POST /api/task-state {ids:[两条], state:"done"}` / `POST /api/tombstone {ids:[两条]}`（确认块
+    逐条列 id 后再发）；单条墓碑走 EP 确认弹层后才发；
+  · 两个"打字确认"闸：重建要键入 `REBUILD`、整库还原要**逐字等于所选备份目录名**才解锁（实测填错一个
+    字符立刻禁用回去）；
+  · 读写分离同样验过：**每次假桥测试后都回磁盘核对**，两条记录仍是原状态、`deleted:false`。
+- **只读模式（不带 `?port=`）五页全测**：只读横幅都在，写动作全禁用，页面不编造数据
+  （L1 退化为"静态探测（最近 90 天）"、L3 明说"没读到：MEMORY.md/USER.md/USER-temp.md"）。
+
+### 顺带修掉的旧缺陷
+
+- **L3 的同源数据渲染两遍**：旧版 `#entries`（只读清单）与 `#opsEntries`（带按钮）是同一批数据，
+  `#backups` 与 `#opsBackups` 也是。新版**每个数据集只渲染一处**，动作并进那唯一一份；
+  MEMORY 组的条目照旧**不给按钮**（写下去会落到语义错误的文件）。实测：MEMORY 组 3 条 / 0 按钮。
+- **L1 列表分页**（每页 60 / 120 / 240 / 全部，默认 60）。旧版一次渲染 566 张卡片，改一个搜索词就重建
+  整张列表。**语义不变**：「全选当前筛选」与「导出当前视图」作用的仍是筛选结果**全集**，分页只影响画面。
+- **弹层里的记录不再靠下标定位**：旧版卡片写 `data-idx`、点击时用 `state.lastRows[idx]` 取回记录 ——
+  下标只在"当前这一份渲染结果"里有效。新版直接把记录对象交给 `openModal(row)`，这类 bug 从结构上消失。
+
+### 门禁：⑪ 与 ⑯ 必须同轮重写（否则变成假绿）
+
+⑪ 原来查"页面 JS 里 `$("x")` 的 id 在 HTML 里存在"—— Vue 下 `$()` 全部消失，那条断言退化成**恒真**；
+⑯ 原来断言 `viewer.css` 的按钮基样式 / `.seg` 凹槽 / `.ops-ctl button`，而那个文件已经不存在。
+**为旧架构写的门禁，换架构后不会报错，只会什么都不保**。本轮重写为：
+
+- ⑪（挂载契约）：每页有 `#app`、`#nav`/`#modeBanner` 在挂载点之外、`active` 指向自身页面、
+  六个脚本的加载顺序严格递增（`src="…"` 字面量，不匹配注释里的文件名）；
+- ⑯（新设计契约）：配色单源（8 个 JS 无 hex）、**EP 令牌桥逐条**（primary = 墨色 `--ink`、
+  `--el-component-size: 31px`、bg/border/text/fill 接面板色、语义色接 ok/warn/danger）、
+  EP 按钮三档语义（默认描边 / primary 墨色描边 / danger 描边）且**不许填底色**、
+  契约 2~5（形状编码 / 滚动条兜底 / 等宽数字 / 卡片截断 / 标题不小于内容）、
+  以及三条新架构硬约束（语言包与 `mountChrome` 仍是活代码、页面不用同步 `confirm`、
+  **vendor 版本与 README 记录一致**）。
+
+结果：`verify-viewer-deploy` **306/0**、`verify-viewer-write-paths` 145/0、
+`verify-viewer-quality-parity` 278/0、`check-types` 0 新增。浏览器实测五页：无渲染错误、无横向溢出、
+总览统计 5 组全部有值（分片 24 / 活跃会话日 30 / L2 15·15 / L3 25 条·1921 字符 / P4 16·30）、
+L1 566 存活记录分页正常、L2 16 块 + 300 条成员反查、L3 68 个条目 + 9 份备份、流水线 110 条作业。
