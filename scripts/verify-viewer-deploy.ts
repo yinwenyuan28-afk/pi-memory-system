@@ -439,6 +439,13 @@ try {
 
 	// ④ 字号令牌与主题基线
 	for (const t of ["xs", "sm", "md", "lg", "xl"]) ok(`⑯ 字号令牌 --t-${t} 在场`, new RegExp(`--t-${t}\\s*:`).test(css));
+	// 标题不许比内容小：2026-10-10 用户报「左侧菜单栏中标题比下面的具体内容还小」—— 当时分组标题与
+	// 区段标题都写成 `--t-xs`(11px)，而侧栏内容行是 `--t-sm`(12px)，层级直接反了。现在 13 > 12 = 12。
+	ok(
+		"⑯ 标题不小于内容（h2 = --t-md 13px / h3.sub = --t-sm 12px，内容行同为 --t-sm）",
+		/aside h2, section h2\s*\{[^}]*font-size:\s*var\(--t-md\)/.test(css) &&
+			/aside h3\.sub\s*\{[^}]*font-size:\s*var\(--t-sm\)/.test(css),
+	);
 	ok("⑯ color-scheme: dark 在场（原生控件变暗的前提）", /color-scheme\s*:\s*dark/.test(css));
 
 	// ⑤ 卡片正文只截断、不再自带滚动条

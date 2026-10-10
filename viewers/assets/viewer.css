@@ -232,6 +232,11 @@ header.page .sub {
  * 少数派 type（number / url / 时间…）漏一个就又是一处"不统一"，所以按"除了勾选类都算字段"来写。 */
 input:not([type="checkbox"]):not([type="radio"]), select, textarea {
 	font: inherit;
+	/* 字号钉在 `--t-sm`(12px)：`font: inherit` 会让控件继承 body 的 13px，而整页**外壳**
+	   （按钮 / 行 / 单元格 / 说明）都是 12px —— 13px 只留给"内容"（卡片正文 `.card-body`）。
+	   不钉的话，侧栏里 12px 的标题下面跟着 13px 的下拉框，一眼就是"内容比标题大"
+	   （2026-10-10 用户报的正是这个：先报 h2/h3 比内容小，改完还剩这三处是控件字号造成的）。 */
+	font-size: var(--t-sm);
 	color: var(--text);
 	background: var(--panel2);
 	border: 1px solid var(--border);
@@ -393,9 +398,13 @@ section.content { padding: 16px 20px 64px; min-width: 0; }
 	}
 }
 
-/* 小标题：只靠分隔线分组，不用全大写 + 字距（那是模板感最重的写法） */
+/* 小标题：只靠分隔线分组，不用全大写 + 字距（那是模板感最重的写法）。
+   字号 2026-10-10 由 `--t-xs`(11px) 改回 `--t-md`(13px)：用户报「左侧菜单栏中标题比下面的
+   具体内容还小」。当时按"eyebrow 标签"的做法压到 11px，但侧栏里的内容行是 `--t-sm`(12px) ——
+   **标题比正文小 1px 就是把层级写反了**，读起来像注释而不是标题。现在：分组标题 13px >
+   区段标题 12px = 内容行 12px，层级靠"分隔线 + 字重 + 静音色"表达，而不是靠把标题压小。 */
 aside h2, section h2 {
-	font-size: var(--t-xs);
+	font-size: var(--t-md);
 	font-weight: 600;
 	color: var(--muted);
 	margin: 16px 0 7px;
@@ -403,10 +412,11 @@ aside h2, section h2 {
 	border-top: 1px solid var(--border-soft);
 }
 aside > h2:first-child, section > h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-/* 组内次级标签：与 h2 同字号同色，但**不带**分隔线 —— 分隔线只留给「筛选 / 操作 / 统计 / 说明」
-   这四个组标题，否则 14 个区块就是 14 条横线，分组等于没分。
+/* 组内次级标签：比组标题小一档（`--t-sm`，与内容行同号但更重更静音），**不带**分隔线 ——
+   分隔线只留给「筛选 / 操作 / 统计 / 说明」这四个组标题，否则 14 个区块就是 14 条横线，
+   分组等于没分。与 `.ops h3.sub`（同样 `--t-sm`）现在同号，两处不再分叉。
    不会波及管理区内部的小标题：`.ops h3.sub` 是 (0,2,1)、本条是 (0,1,2)，前者特异度更高。 */
-aside h3.sub { margin: 12px 0 6px; font-size: var(--t-xs); color: var(--muted); font-weight: 600; }
+aside h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
 
 /* ── 侧栏：统计行（改成分隔线列表，不再每行一个圆角盒子） ─────────────────── */
 .stats { display: grid; gap: 0; }
