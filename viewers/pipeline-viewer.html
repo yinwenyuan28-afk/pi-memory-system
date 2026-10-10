@@ -1,74 +1,35 @@
 <!doctype html>
-<html lang="zh-CN">
+<!--
+	流水线页（Vue 3 + Element Plus）。
+
+	骨架分界：`#nav` 与 `#modeBanner` 由 viewer-core 的 mountChrome 直接写 DOM（它是 gate ⑰ 钉住的
+	打开方式契约：页内跳转必须带 location.search、缺 ?port= 要给可操作提示、桥地址按页面自身 hostname
+	拼），**必须留在 Vue 挂载点之外** —— 放进 #app 会被 Vue 的重渲染擦掉。
+	`#app` 里的一切由 assets/pipeline-app.js 负责。
+
+	脚本顺序是硬约束（Vue → Element Plus → locale → viewer-core → viewer-vue → 页面），
+	理由见 assets/vendor/README.md。样式顺序：EP 主题 → EP 暗色 → 本仓库主题（后者覆盖前两者）。
+-->
+<html lang="zh-CN" class="dark">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>流水线 · 队列与子代理</title>
-		<link rel="stylesheet" href="assets/viewer.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/index.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/dark.css" />
+		<link rel="stylesheet" href="assets/viewer-theme.css" />
 	</head>
 	<body>
 		<div class="nav" id="nav"></div>
+		<div id="modeBanner" class="notice" style="display: none"></div>
 
-		<header class="page">
-			<h1>流水线 · 队列与子代理</h1>
-			<!-- 这一页只回答两件事：**现在在跑什么**、**接下来要跑什么**。
-			     三层的触发 / 待消费信号 / 停止此前散在 L1/L2/L3 三页各自的管理区里，
-			     2026-10-08 收拢到这里：三层动作的语义完全一致，写三遍就是三份会分叉的说明。 -->
-			<p class="sub">三层共用的作业队列（pipeline/jobs.sqlite）· 待消费触发信号 · 正在跑的子代理与停止。</p>
-			<div id="modeBanner" class="notice" style="display: none"></div>
-			<div class="toolbar">
-				<button type="button" id="reloadBtn">刷新</button>
-			</div>
-			<p class="hint" id="loadNote">加载中…</p>
-		</header>
+		<div id="app"></div>
 
-		<main>
-			<aside>
-				<h2>概览</h2>
-				<div class="stats" id="stats"><div class="stat"><span>加载中</span><span>…</span></div></div>
-
-				<h2>说明</h2>
-				<details class="more">
-					<summary>队列是什么 · 五个状态 · 来源 · 请求入队 / 停止的代价</summary>
-					<div class="hint">
-						<p><b>队列</b>：<code>memoryDB/pipeline/jobs.sqlite</code> 是三层<b>共用的一条队列</b>
-						（主进程 worker 认领、子代理提交时自己标 done）。认领是<b>单飞</b>的 —— 任何时刻最多一条在跑，
-						所以 <code>queued</code> 里排第一个的就是下一个。</p>
-						<p><b>状态</b>：<span class="chip st-queued">排队</span> 已入队未认领 ·
-						<span class="chip st-running">在跑</span> 已认领（子进程在工作）·
-						<span class="chip st-done">完成</span> 子代理提交成功 ·
-						<span class="chip st-skipped">跳过</span> 认领后门控不成立，没干活就收工（不是失败）·
-						<span class="chip st-failed">失败</span> 超时或异常，原因写在「说明」列。</p>
-						<p><b>来源</b>（谁把它排进来的）：周期到点 · 手动命令 · L1 提交（提交后自动排 L2）·
-						收尾续排（L1 收工时 L0 仍有积压）· 门控触发 / 显式信号（L3 的两条触发通道）。</p>
-						<p><b>请求入队</b>只写一份待消费信号，<b>不是立即执行</b>：需要 pi 会话活着，
-						在下一轮结束（<code>agent_settled</code>）时由主进程消费；pi 没开，信号就躺在盘上等。
-						已有同层排队 / 在跑时，队列去重会让这次请求不新增任务。</p>
-						<p><b>停止子代理</b>立即且不可逆：先拦信号再杀进程树；本批未提交 ⇒ 游标不推进，下一轮整批重做。
-						按钮只在确实有运行记录时可用（没有在跑的子代理时它是装饰，所以禁用）。</p>
-					</div>
-				</details>
-			</aside>
-
-			<section class="content">
-				<h2>三层子代理</h2>
-				<div id="layerTable" class="hint">尚未加载</div>
-				<div id="opsResult"></div>
-
-				<h2>队列（进行中）</h2>
-				<p class="hint" id="queueNote">尚未加载</p>
-				<div id="queueTable" class="hint"></div>
-
-				<h2>最近结束</h2>
-				<!-- 历史是"查"不是"用"：默认收起，展开才渲染（它可能几十行） -->
-				<details class="more" id="recentBox">
-					<summary id="recentCount">加载中…</summary>
-					<div id="recentTable"></div>
-				</details>
-			</section>
-		</main>
-
+		<script src="assets/vendor/vue.global.prod.js"></script>
+		<script src="assets/vendor/element-plus/index.full.min.js"></script>
+		<script src="assets/vendor/element-plus/locale-zh-cn.min.js"></script>
 		<script src="assets/viewer-core.js"></script>
-		<script src="assets/pipeline-view.js"></script>
+		<script src="assets/viewer-vue.js"></script>
+		<script src="assets/pipeline-app.js"></script>
 	</body>
 </html>

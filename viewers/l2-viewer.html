@@ -1,123 +1,36 @@
 <!doctype html>
-<html lang="zh-CN">
+<!--
+	L2 场景层页（Vue 3 + Element Plus）。
+
+	骨架分界：`#nav` 与 `#modeBanner` 由 viewer-core 的 mountChrome 直接写 DOM（它是 gate ⑰ 钉住的
+	打开方式契约：页内跳转必须带 location.search、缺 ?port= 要给可操作提示、桥地址按页面自身 hostname
+	拼），**必须留在 Vue 挂载点之外** —— 放进 #app 会被 Vue 的重渲染擦掉。
+	`#app` 里的一切由 assets/l2-app.js 负责。
+
+	脚本顺序是硬约束（Vue → Element Plus → locale → viewer-core → viewer-vue → 页面），
+	理由见 assets/vendor/README.md。样式顺序：EP 主题 → EP 暗色 → 本仓库主题（后者覆盖前两者）。
+	本页不涉及质量分，不引 quality-core.js。
+-->
+<html lang="zh-CN" class="dark">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>L2 场景层 · 块 / 成员 / 归档账本</title>
-		<link rel="stylesheet" href="assets/viewer.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/index.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/dark.css" />
+		<link rel="stylesheet" href="assets/viewer-theme.css" />
 	</head>
 	<body>
 		<div class="nav" id="nav"></div>
+		<div id="modeBanner" class="notice" style="display: none"></div>
 
-		<header class="page">
-			<h1>L2 场景层</h1>
-				<!-- 只列区块；「权威 vs 派生」那句方法论侧栏里已折叠成一份，页头不重复 -->
-				<p class="sub">场景块（live + 归档）· 成员侧车 · 归档账本 · 对账。</p>
-			<div id="modeBanner" class="notice" style="display: none"></div>
-			<div class="toolbar">
-				<button type="button" id="reloadBtn">重新加载</button>
-				<input type="search" id="q" placeholder="搜索块名 / summary / 成员 id …" />
-			</div>
-			<p class="hint" id="loadNote">加载中…</p>
-		</header>
+		<div id="app"></div>
 
-		<main>
-			<aside>
-				<h2>概览</h2>
-				<div class="stats" id="stats"><div class="stat"><span>加载中</span><span>…</span></div></div>
-
-				<h2>块数上限（l2.maxScenes）</h2>
-				<div id="capNote"></div>
-
-				<h2>L2 管理</h2>
-				<div id="opsBanner"></div>
-				<div class="ops" id="l2ops">
-					<!-- 触发组织与停止 L2 子代理**不在这里**：三层同名动作已在「流水线」页
-					     （pipeline-viewer.html）合成一张表；这一块只剩会改 L2 盘面的块操作。
-					     按钮搬走了要留一句指引 —— 凭空消失而不说去哪了是最糟的失效方式。 -->
-					<p class="hint">「请求 L2 组织」与「停止子代理」在顶部
-						<a href="pipeline-viewer.html" onclick="location.href='pipeline-viewer.html' + location.search; return false;">流水线页</a>。</p>
-
-					<h3 class="sub">场景池报告（按需生成，不随页面加载）</h3>
-					<div class="ops-row">
-						<span class="ops-label">只读报告</span>
-						<span class="ops-ctl">
-							<button type="button" id="reportBtn">场景池报告</button>
-							<button type="button" id="mergeReportBtn">合并报告</button>
-							<span class="busy-flag" id="reportBusy" hidden>生成中…</span>
-						</span>
-						<span class="ops-note">报告可能调用 embedding，要几秒到更久；桥是单线程同步执行 —— 生成期间整座桥都不响应请求，别重复点。</span>
-						<div class="ops-note" id="reportOut"></div>
-					</div>
-
-					<h3 class="sub">播种 —— 写 <code>l1/scenes.json</code></h3>
-					<div class="ops-row">
-						<span class="ops-label">场景映射</span>
-						<span class="ops-ctl">
-							<button type="button" id="seedAddBtn">添加一行</button>
-							<button type="button" id="seedPreviewBtn">预演</button>
-							<button type="button" class="primary" id="seedApplyBtn" disabled>执行（写盘）</button>
-						</span>
-						<span class="ops-note" id="seedNote">把「旧名 → 稳定标签」映射写进 <code>l1/scenes.json</code>：预演只打印计划，执行会<b>先自动备份该文件</b>再写。</span>
-						<div class="ops-note" id="seedTableWrap">
-							<table id="seedTable" style="table-layout: fixed">
-								<thead><tr><th>场景名</th><th>别名（逗号分隔）</th><th>备注</th><th style="width: 54px"></th></tr></thead>
-								<tbody id="seedRows"></tbody>
-							</table>
-						</div>
-						<div class="ops-note" id="seedOut"></div>
-					</div>
-
-					<!-- 契约三段（块数预算 / 恢复要先腾位 / 归档≠删除）是长解释，默认收起：
-					     它们描述"为什么会被拒"，只有真被拒时才需要读。 -->
-					<h3 class="sub">契约</h3>
-					<details class="more">
-						<summary>块数预算 / 恢复要先腾位 / 归档 ≠ 删除</summary>
-						<div class="ops-note" id="opsContract"></div>
-					</details>
-				</div>
-				<div id="opsResult"></div>
-
-				<h2>L2 游标水位</h2>
-				<div class="hint" id="cursorNote">—</div>
-
-				<!-- 这四段是方法论（谁是权威源、归档为什么不是删除），默认收起 ——
-				     侧栏原本 1,903px 高、要滚 1,049px 才看得见下面的内容，大半是这段。 -->
-				<h2>权威 / 派生的分工</h2>
-				<details class="more">
-					<summary>权威源是哪些 / 索引为什么是派生 / 归档 ≠ 删除</summary>
-					<div class="hint">
-						<p><b>权威</b>：块文件正文与 META、两份 <code>scene_members.json</code> 侧车、
-						<code>archive/ledger.jsonl</code>（append-only，不可重建）。</p>
-						<p><b>派生</b>：<code>index/scene_index.json</code> —— 每次提交都从块文件<b>全量重建</b>，
-						所以只存在于索引里的字段下次重建就没了；它的 <code>members</code> 也是从侧车并进去的。</p>
-						<p>因此「数成员」一律以侧车为准；索引与侧车不一致时会显示为告警。</p>
-						<p><b>归档 ≠ 删除</b>：归档把块搬到与 <code>scene-blocks/</code> 平级的 <code>archive/</code>
-						（不占 maxScenes 名额），有账、可 restore；<code>delete</code> 才是真的消失、且不留痕。</p>
-					</div>
-				</details>
-			</aside>
-
-			<section class="content">
-				<h2>对账结果</h2>
-				<div id="reconcile"></div>
-
-				<h2>场景块</h2>
-				<div id="blockTable" class="hint">尚未加载</div>
-
-				<h2>归档 / 恢复账本（时间线）</h2>
-				<div id="ledger" class="hint">尚未加载</div>
-
-				<h2>成员归属反查</h2>
-				<div id="memberIndex" class="hint">尚未加载</div>
-			</section>
-		</main>
-
-		<div class="modal" id="modal">
-			<div class="sheet"><div id="detail"></div></div>
-		</div>
-
+		<script src="assets/vendor/vue.global.prod.js"></script>
+		<script src="assets/vendor/element-plus/index.full.min.js"></script>
+		<script src="assets/vendor/element-plus/locale-zh-cn.min.js"></script>
 		<script src="assets/viewer-core.js"></script>
-		<script src="assets/l2-view.js"></script>
+		<script src="assets/viewer-vue.js"></script>
+		<script src="assets/l2-app.js"></script>
 	</body>
 </html>

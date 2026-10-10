@@ -1,130 +1,35 @@
 <!doctype html>
-<html lang="zh-CN">
+<!--
+	L3 画像层（Vue 3 + Element Plus）。
+
+	骨架分界：`#nav` 与 `#modeBanner` 由 viewer-core 的 mountChrome 直接写 DOM（它是 gate ⑰ 钉住的
+	打开方式契约：页内跳转必须带 location.search、缺 ?port= 要给可操作提示、桥地址按页面自身 hostname
+	拼），**必须留在 Vue 挂载点之外** —— 放进 #app 会被 Vue 的重渲染擦掉。
+	`#app` 里的一切由 assets/l3-app.js 负责（模板写在那个文件里，HTML 这边只留挂载点）。
+
+	脚本顺序是硬约束（Vue → Element Plus → locale → viewer-core → viewer-vue → 页面），
+	理由见 assets/vendor/README.md。样式顺序：EP 主题 → EP 暗色 → 本仓库主题（后者覆盖前两者）。
+-->
+<html lang="zh-CN" class="dark">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>L3 画像层 · 游标 / MEMORY / USER / 提议稿</title>
-		<link rel="stylesheet" href="assets/viewer.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/index.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/dark.css" />
+		<link rel="stylesheet" href="assets/viewer-theme.css" />
 	</head>
 	<body>
 		<div class="nav" id="nav"></div>
+		<div id="modeBanner" class="notice" style="display: none"></div>
 
-		<header class="page">
-			<h1>L3 画像层</h1>
-				<!-- 只列这一页有哪些区块；「预算口径与 entryBudget 一致、不是文件字节数」那句
-				     侧栏【怎么读这页】里已经写过一遍，页头不再重复。 -->
-				<p class="sub">游标与触发进度 · 三份「§ 分隔条目」文件的字符预算与自检 · 提议稿与 live 的差异 · 画像备份。</p>
-			<div id="modeBanner" class="notice" style="display: none"></div>
-			<div class="toolbar">
-				<button type="button" id="reloadBtn">重新加载</button>
-			</div>
-			<p class="hint" id="loadNote">加载中…</p>
-		</header>
+		<div id="app"></div>
 
-		<main>
-			<aside>
-				<h2>怎么读这页</h2>
-				<div class="hint">
-					<p><b>三份文件的分工</b>：<code>MEMORY.md</code> 由 <code>core/store</code> 维护（不是 L3 产物）；
-					<code>USER.md</code> 是 live 画像，<b>L3 自 2026-09-28 起只读它</b>；
-					<code>USER-temp.md</code> 是 L3 的提议稿，合并进 live 是<b>人工动作</b> ——
-					所以「temp 独有」那一段就是待你决定要不要合入的条目。</p>
-					<p><b>预算是字符不是字节</b>：<code>entryBudget = 条目正文 + 分隔符（\n§\n 记 3 字符）</code>。
-					中文一个字 3 字节，用 <code>ls</code> 的字节数看会误判成严重超限（实测 USER.md 磁盘 4745 字节 vs 预算 1921/2200）。</p>
-					<p><b>触发分级</b>：P1 显式请求 / P2 冷启动 / P2.5 恢复 / P3 首次场景 / P4 记忆阈值（累计新增记忆到阈值）。
-					<code>lastTriggeredAt</code> 与 <code>lastCommittedAt</code> 分开记，是为了让「跑了但没提交」可见。</p>
-					<p><b>单条契约</b>：每条必须单行、不含 <code>§</code>。首条若以 <code>§</code> 开头，说明文件开头多了一个分隔符，
-					那个 <code>§</code> 会被并进正文 —— 本页会把它标成异常。</p>
-				</div>
-
-				<h2>L3 游标与触发</h2>
-				<div id="cursor"><div class="hint">加载中…</div></div>
-			</aside>
-
-			<section class="content">
-				<h2>字符预算与自检</h2>
-				<div id="budgets" class="hint">加载中…</div>
-
-				<h2>提议稿与 live 的差异</h2>
-				<div id="diff" class="hint">加载中…</div>
-
-				<!-- 条目清单：全页唯一一份（改写 / 删除按钮就在行上），默认收起 ——
-				     31 条 × 每条带按钮，常开会占掉近 4 屏，把下面的操作区压到第 3 屏之外。 -->
-				<h2>逐条清单</h2>
-				<details class="more" id="entriesBox">
-					<summary><span id="entriesCount">加载中…</span></summary>
-					<div class="notice" id="opsEntryWarn" style="display: none"></div>
-					<div id="entries" class="hint">加载中…</div>
-				</details>
-
-				<!-- 备份清单：同样只留一份（预览 / 还原按钮在行上），默认收起 -->
-				<h2>画像备份（backups/user-backups）</h2>
-				<details class="more" id="backupsBox">
-					<summary><span id="backupsCount">加载中…</span></summary>
-					<div class="hint" id="opsBackupNote"></div>
-					<div id="backups" class="hint">加载中…</div>
-					<div id="opsRestoreOut"></div>
-				</details>
-
-				<h2>管理操作区</h2>
-				<div id="opsReadonly" class="hint" style="display: none"></div>
-				<div class="ops" id="ops">
-					<h3 class="sub" id="opsEditTitle">加一条（写 USER-temp.md）</h3>
-				<div class="ops-row">
-					<div class="ops-label">正文</div>
-					<div class="ops-ctl">
-						<input type="text" id="opsContent" placeholder="一条单行规则，不含 §，≤500 字符" />
-					</div>
-					<div class="ops-note" id="opsContentNote">必须单行、不含 §、≤ 单条上限。</div>
-				</div>
-				<div class="ops-row">
-					<div class="ops-label">定位</div>
-					<div class="ops-ctl">
-						<span class="confirm-token" id="opsTargetBox">—（加一条不需要定位）</span>
-						<button type="button" id="opsResetEdit">改回「加一条」</button>
-					</div>
-					<div class="ops-note" id="opsTargetNote">改写 / 删除时这里是定位片段（取自已选条目原文）。</div>
-				</div>
-				<div class="ops-row">
-					<div class="ops-label">确认</div>
-					<div class="ops-ctl">
-						<span>输入 <span class="confirm-token" id="opsTokenHint">—</span> 启用「执行」</span>
-						<input type="text" class="confirm-input" id="opsConfirm" autocomplete="off" />
-						<!-- 预演 = 只读动作（不落盘）走默认档；`.primary`（墨色描边）给"点了会写入内容"的执行。
-						     语义见 viewer.css 的「动作语言」一节：danger 只给"让既有内容消失或被替换"的动作。 -->
-						<button type="button" id="opsPreview">预演</button>
-						<button type="button" class="primary" id="opsApply" disabled>执行</button>
-					</div>
-					<div class="ops-note" id="opsEditHint">先「预演」看用量与后果，再按提示输入确认词启用「执行」。</div>
-				</div>
-				<div id="opsEditOut"></div>
-
-				<div class="danger-zone" id="opsMergeZone">
-					<h3>并入区 · 把提议稿并入 live USER.md</h3>
-					<div class="hint" id="opsMergeNote"></div>
-					<!-- 用 .ops-ctl 而不是 .toolbar：形态就是"一行操作控件"，而 .ops-ctl 自带侧栏那套
-					     按钮语言（文字动作 / 描边），.toolbar 是内容区工具条的样式，会在这里变成实心砖块。 -->
-					<div class="ops-ctl">
-						<button type="button" id="opsMergePreview">预演并入</button>
-						<span>输入 <span class="confirm-token">MERGE</span> 启用「执行并入」</span>
-						<input type="text" class="confirm-input" id="opsMergeConfirm" autocomplete="off" placeholder="MERGE" />
-						<button type="button" class="primary" id="opsMergeApply" disabled>执行并入</button>
-					</div>
-					<div id="opsMergeGates"></div>
-					<div id="opsMergeOut"></div>
-				</div>
-
-				<!-- 触发区（请求 L3 重算）已搬到「流水线」页（pipeline-viewer.html）：
-				     三层的同名动作 + 队列上下文合成了一张表，这一页只剩会改画像文件的写动作。
-				     按钮搬走了要留一句指引 —— 凭空消失而不说去哪了是最糟的失效方式。 -->
-			</div>
-			<p class="hint">「请求 L3 重算」在顶部
-				<a href="pipeline-viewer.html" onclick="location.href='pipeline-viewer.html' + location.search; return false;">流水线页</a>
-				（那里还有队列与三层子代理的在跑 / 停止）。</p>
-		</section>
-		</main>
-
+		<script src="assets/vendor/vue.global.prod.js"></script>
+		<script src="assets/vendor/element-plus/index.full.min.js"></script>
+		<script src="assets/vendor/element-plus/locale-zh-cn.min.js"></script>
 		<script src="assets/viewer-core.js"></script>
-		<script src="assets/l3-view.js"></script>
+		<script src="assets/viewer-vue.js"></script>
+		<script src="assets/l3-app.js"></script>
 	</body>
 </html>

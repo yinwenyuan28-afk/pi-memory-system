@@ -220,46 +220,61 @@ try {
 		ok("⑩ 至少引用了共享资源", referenced.size > 0, `引用 ${[...referenced].join(", ")}`);
 	}
 
-	// ── ⑪ 页面引用的元素 id 在页面里存在 ──────────────────────────
-	// 这一条能抓到「JS 里 $("x") 拼错/HTML 漏了元素」这类只有开浏览器才发现的错误。
-	// 由于三份页面共用共享资源，这里只检查每页自己的 *-view.js 与首方 <script src>。
-	{
-		const pairs: Array<[string, string]> = [
-			["index.html", "assets/index-view.js"],
-			["records-viewer.html", "assets/records-view.js"],
-			["l2-viewer.html", "assets/l2-view.js"],
-			["l3-viewer.html", "assets/l3-view.js"],
-			["pipeline-viewer.html", "assets/pipeline-view.js"],
-		];
-		for (const [htmlFile, jsFile] of pairs) {
-			const htmlPath = join(REPO_VIEWERS, htmlFile);
-			const jsPath = join(REPO_VIEWERS, jsFile.split("/").join("/"));
-			if (!existsSync(htmlPath) || !existsSync(jsPath)) {
-				ok(`⑪ ${htmlFile}/${jsFile} 存在`, false);
-				continue;
-			}
-			const html = readFileSync(htmlPath, "utf-8");
-			const pageJs = readFileSync(jsPath, "utf-8");
-			// 静态 HTML 里的 id **加上**页面 JS 自己注入的 id（如详情弹层用 innerHTML 拼出的
-			// `#taskReason`）。不合并这两处就会把"由 JS 生成的元素"误报成缺失。
-			const htmlIds = new Set<string>([
-				...[...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]),
-				...[...pageJs.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]),
-			]);
-			// 只看「页面专属 JS」里的静态字面量 id。共享 JS（viewer-core）里的 id 多为可选增强
-			// （nav / versionChip / modeBanner 由 mountChrome 注入），对它做强制检查会误报。
-			const pageUsed = new Set<string>();
-			for (const m of pageJs.matchAll(/\$\("([^"]+)"\)|getElementById\("([^"]+)"\)/g)) {
-				pageUsed.add(m[1] ?? m[2]);
-			}
-			const missing = [...pageUsed].filter((id) => !htmlIds.has(id));
-			ok(
-				`⑪ ${htmlFile} 的元素 id 全部存在（页面 JS 用到 ${pageUsed.size} 个）`,
-				missing.length === 0,
-				missing.length ? `HTML 与页面 JS 里都缺：${missing.join(", ")}` : "",
-			);
+// ── ⑪ 页面挂载契约（Vue 版，2026-10-10 重写） ───────────────────────────────
+// 旧版这一节查的是"JS 里 `$("x")` 的 id 在 HTML 里存在"（手写 DOM 时代最常犯的错）。
+// 换成 Vue 之后 `$()` 全部消失，那条断言会**退化成永远为真**（一个都不查等于不查），
+// 所以改钉新架构里同样致命、同样只有开浏览器才发现的三件事：
+//   · 挂载点：没有 `#app` 页面就是一片空白（Vue 无处可挂，控制台里才有提示）
+//   · `active`：错了不会报错，只会让顶部导航高亮另一个页面（复制粘贴新页面时必犯）
+//   · 脚本顺序：Vue 必须在 Element Plus 之前（EP 的 UMD 包装在**加载时**就取全局 `Vue`），
+//     locale 在 EP 之后、`viewer-core` 在 `viewer-vue` 之前 —— 顺序错了页面整片白屏。
+{
+	const pairs: Array<[string, string]> = [
+		["index.html", "assets/index-app.js"],
+		["records-viewer.html", "assets/records-app.js"],
+		["l2-viewer.html", "assets/l2-app.js"],
+		["l3-viewer.html", "assets/l3-app.js"],
+		["pipeline-viewer.html", "assets/pipeline-app.js"],
+	];
+	for (const [htmlFile, jsFile] of pairs) {
+		const htmlPath = join(REPO_VIEWERS, htmlFile);
+		const jsPath = join(REPO_VIEWERS, jsFile.split("/").join("/"));
+		if (!existsSync(htmlPath) || !existsSync(jsPath)) {
+			ok(`⑪ ${htmlFile}/${jsFile} 存在`, false);
+			continue;
 		}
+		const html = readFileSync(htmlPath, "utf-8");
+		const pageJs = readFileSync(jsPath, "utf-8");
+
+		ok(`⑪ ${htmlFile} 有 Vue 挂载点 #app`, /id="app"/.test(html));
+		// `#nav` 与 `#modeBanner` 由 viewer-core 的 mountChrome 直接写 DOM；放进挂载点内会被
+		// Vue 的重渲染擦掉（导航与只读横幅静默消失，而页面其余部分看着完全正常）。
+		const iApp = html.indexOf('id="app"');
+		ok(
+			`⑪ ${htmlFile} 的 #nav / #modeBanner 在挂载点之外`,
+			iApp >= 0 && html.indexOf('id="nav"') >= 0 && html.indexOf('id="nav"') < iApp && html.indexOf('id="modeBanner"') < iApp,
+		);
+		ok(`⑪ ${jsFile} 挂载时 active 指向自身页面`, pageJs.includes(`active: "${htmlFile}"`), "active 写错只会让导航高亮错页");
+
+		// 脚本顺序（找 `<script src="…">` 的字面量，而不是文件名字符串 ——
+		// 页面顶部的注释里也会提到这些文件名，用 indexOf(文件名) 会命中注释而不是标签）
+		const idx = (needle: string) => html.indexOf(`src="${needle}"`);
+		const order = [
+			"assets/vendor/vue.global.prod.js",
+			"assets/vendor/element-plus/index.full.min.js",
+			"assets/vendor/element-plus/locale-zh-cn.min.js",
+			"assets/viewer-core.js",
+			"assets/viewer-vue.js",
+			jsFile,
+		];
+		const positions = order.map(idx);
+		ok(
+			`⑪ ${htmlFile} 脚本顺序正确（Vue → EP → locale → core → vue → 页面）`,
+			positions.every((p) => p >= 0) && positions.every((p, i) => i === 0 || p > positions[i - 1]),
+			positions.join(" < "),
+		);
 	}
+}
 
 	// ── ⑫ 仓库源码可被真实部署（用真实目录跑一次，只读校验，不写 profile） ──
 	{
@@ -300,7 +315,7 @@ try {
 	// /api/profile-files 白名单端点。
 	{
 		const offenders: string[] = [];
-		for (const rel of ["index.html", "records-viewer.html", "l2-viewer.html", "l3-viewer.html", "pipeline-viewer.html", "assets/viewer-core.js", "assets/records-view.js", "assets/l2-view.js", "assets/l3-view.js", "assets/index-view.js", "assets/pipeline-view.js"]) {
+		for (const rel of ["index.html", "records-viewer.html", "l2-viewer.html", "l3-viewer.html", "pipeline-viewer.html", "assets/viewer-core.js", "assets/viewer-vue.js", "assets/records-app.js", "assets/l2-app.js", "assets/l3-app.js", "assets/index-app.js", "assets/pipeline-app.js"]) {
 			const p = join(REPO_VIEWERS, rel.split("/").join("/"));
 			if (!existsSync(p)) continue;
 			const src = readFileSync(p, "utf-8");
@@ -386,138 +401,139 @@ try {
 	}
 }
 
-// ── ⑯ 设计契约（2026-10-08 视觉打磨） ────────────────────────────────────────
-// 这一节钉住的是**静默失真**型错误：它们不会报错、不会让页面空白，只是"看起来不对"，
-// 所以只有断言能防住。四条对应四个当天真实踩到的坑：
-//   · 配色出现第二份副本（JS 里内联十六进制）→ 与 CSS 漂移，改一处不生效
-//   · 声明 scrollbar-color → Chromium 退回 16px 经典滚动条（比不声明更宽）
-//   · 兜底色特异度过高压过 .c-* 工具类 → 所有条形图变灰
-//   · 卡片正文自带内部滚动 → 几百张卡片各画一条原生滚动条
+// ── ⑯ 设计契约（2026-10-10 随 Vue + Element Plus 重构重写） ──────────────────
+// 这一节钉住的仍是**静默失真**型错误：不报错、不白屏，只是"看起来不对"。旧版那些断言是写给
+// 手写 DOM + 987 行 viewer.css 的（按钮基样式、`.ops-ctl button`、卡片脚紧凑档…），换架构后
+// 它们断言的是一份**已经不存在的文件**，等于假绿 —— 所以整节重写成新架构的契约：
+//
+//   A. 配色单源：色值只允许出现在 viewer-theme.css 的 :root
+//   B. Element Plus 令牌桥：外壳无彩度（EP primary = 墨色）、尺寸一档、暗色基色接本仓库面板色
+//   C. 设计契约 2/3/4/5：形状编码种类、滚动条兜底、等宽数字、卡片正文截断
+//   D. 新架构的三条硬约束：语言包/mountChrome 仍是活代码、页面不许用同步 confirm、
+//      内置库版本与 vendor/README.md 的记录一致（升级时忘改表 = 红）
 {
-	const jsNames = ["index-view.js", "l2-view.js", "l3-view.js", "pipeline-view.js", "quality-core.js", "records-view.js", "viewer-core.js"];
-	const viewerJs = jsNames.map((f) => ({ f, src: readFileSync(join(REPO_VIEWERS, "assets", f), "utf-8") }));
-	const css = readFileSync(join(REPO_VIEWERS, "assets", "viewer.css"), "utf-8");
+	const jsNames = ["index-app.js", "l2-app.js", "l3-app.js", "pipeline-app.js", "quality-core.js", "records-app.js", "viewer-core.js", "viewer-vue.js"];
+	const viewerJs = jsNames.filter((f) => existsSync(join(REPO_VIEWERS, "assets", f))).map((f) => ({ f, src: readFileSync(join(REPO_VIEWERS, "assets", f), "utf-8") }));
+	ok("⑯ 全部页面脚本都在场（8 个）", viewerJs.length === 8, `实际 ${viewerJs.length} 个：${viewerJs.map((x) => x.f).join(", ")}`);
+	const css = readFileSync(join(REPO_VIEWERS, "assets", "viewer-theme.css"), "utf-8");
+	const themeCss = stripCssComments(css);
 
-	// ① 配色单源：色值只允许出现在 viewer.css 的 :root
+	// ── A. 配色单源：色值只允许出现在 viewer-theme.css 的 :root ──────────────
+	// （EP 自己的 index.css / dark.css 是第三方产物，不在约束范围；页面 JS 一律不许带色值）
 	for (const { f, src } of viewerJs) {
 		const hits = src.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
 		ok(`⑯ ${f} 无硬编码色值（配色单源）`, hits.length === 0, `命中 ${hits.slice(0, 3).join(", ")}`);
 	}
 
-	// ② 滚动条：标准属性只允许出现在兼容兜底块内。
-	//    必须做「区间判定」而不是「只看兜底块之前」—— 声明写在兜底块**之后**同样会生效，
-	//    早先只查前缀的写法被位测试证明会漏掉这种情形。
+	// ── B. Element Plus 令牌桥 ──────────────────────────────────────────────
+	// 契约 1「色相属于数据」：EP 的 primary 是整套组件（复选框/焦点环/选中项/链接）的强调色，
+	// 不做这个映射，EP 就会往页面上泼一层它默认的蓝 —— 这是引入组件库最直接的风格回退风险。
+	ok(
+		"⑯ EP primary 被改成墨色（外壳无彩度，契约 1）",
+		/--el-color-primary:\s*var\(--ink\)/.test(themeCss),
+		"EP 默认 primary 是 #409eff（蓝），不改就会引入第二种强调色",
+	);
+	ok(
+		"⑯ EP 尺寸接到本仓库的 31px 一档（契约 5）",
+		/--el-component-size:\s*31px/.test(themeCss) && /--el-component-size-small:\s*25px/.test(themeCss),
+	);
+	ok("⑯ EP 基础字号接 --t-sm", /--el-font-size-base:\s*var\(--t-sm\)/.test(themeCss));
+	for (const [elVar, token] of [
+		["--el-bg-color", "--panel"],
+		["--el-bg-color-page", "--bg"],
+		["--el-bg-color-overlay", "--panel2"],
+		["--el-border-color", "--border"],
+		["--el-text-color-primary", "--text"],
+		["--el-text-color-secondary", "--muted"],
+		["--el-fill-color-blank", "--panel"],
+	] as Array<[string, string]>) {
+		ok(
+			`⑯ ${elVar} → var(${token})（组件底色/边框/文字走本仓库调色板）`,
+			new RegExp(`${elVar}:\\s*var\\(${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`).test(themeCss),
+		);
+	}
+	// 严重度也必须接过来，否则 EP 的 danger 红与 .chip.del 的红是两个红（同一个语义两种颜色）
+	ok("⑯ EP 语义色接 --ok / --warn / --danger", /--el-color-success:\s*var\(--ok\)/.test(themeCss) && /--el-color-warning:\s*var\(--warn\)/.test(themeCss) && /--el-color-danger:\s*var\(--danger\)/.test(themeCss));
+	// 按钮的三个语义仍按本仓库动作语言：默认描边、.primary 墨色描边、danger 描边，且**不许填底色**
+	ok(
+		"⑯ EP 按钮仍是描边动作（透明底 + --border 描边 + 正文色）",
+		/\.el-button\s*\{[^}]*--el-button-bg-color:\s*transparent[^}]*--el-button-border-color:\s*var\(--border\)[^}]*--el-button-text-color:\s*var\(--text\)/.test(themeCss),
+	);
+	ok("⑯ EP 按钮 .primary = 墨色描边 + 600（写入新内容）", /\.el-button--primary\s*\{[^}]*--el-button-border-color:\s*var\(--ink\)[^}]*font-weight:\s*600/.test(themeCss));
+	ok("⑯ EP 按钮 .danger = danger 描边（让数据消失）", /\.el-button--danger\s*\{[^}]*--el-button-border-color:\s*var\(--danger\)/.test(themeCss));
+	// 「外壳不做底色块」：EP 按钮规则里只允许出现透明 / panel2 / panel3 三种底
+	{
+		const bad: string[] = [];
+		for (const m of themeCss.matchAll(/([^{}]*\.el-button[^{}]*)\{([^}]*)\}/g)) {
+			const sel = (m[1].split("\n").pop() || "").trim();
+			const bg = /--el-button-(?:bg|hover-bg|active-bg)-color:\s*([^;]+)/.exec(m[2]);
+			if (bg && !/^(transparent|var\(--panel2\)|var\(--panel3\))$/.test(bg[1].trim())) bad.push(`${sel} → ${bg[1].trim()}`);
+		}
+		ok("⑯ EP 按钮没有任何一档把底色填成墨色 / 色相（外壳不做底色块）", bad.length === 0, bad.slice(0, 3).join(" | "));
+	}
+
+	// ── C. 设计契约 2/3/4/5 ─────────────────────────────────────────────────
+	for (const t of ["--bg", "--panel", "--panel2", "--panel3", "--border", "--border-soft", "--text", "--muted", "--faint", "--ink", "--ok", "--warn", "--danger", "--hot", "--warm", "--cold", "--new", "--noise", "--watch"]) {
+		ok(`⑯ 令牌 ${t} 在场`, new RegExp(`${t}\\s*:`).test(themeCss));
+	}
+	for (const t of ["xs", "sm", "md", "lg", "xl"]) ok(`⑯ 字号令牌 --t-${t} 在场`, new RegExp(`--t-${t}\\s*:`).test(themeCss));
+	// 契约 2：形状编码种类 —— 实心彩丸（currentColor 描边）/ 虚线（未落定）/ 点线（已搁置）
+	ok(
+		"⑯ 契约 2：已定状态用 currentColor 描边（.chip.del / .task-done / 温度 / 作业状态成组出现）",
+		/\.chip\.del,\s*\.chip\.prune,[\s\S]{0,200}?\.chip\.st-failed\s*\{\s*border-radius:\s*var\(--r-pill\);\s*border-color:\s*currentColor;/.test(themeCss),
+	);
+	ok("⑯ 契约 2：未落定 = 虚线（.chip.task-open）", /\.chip\.task-open\s*\{[^}]*border-style:\s*dashed/.test(themeCss));
+	ok("⑯ 契约 2：已搁置 = 点线（.chip.task-dropped）", /\.chip\.task-dropped\s*\{[^}]*border-style:\s*dotted/.test(themeCss));
+	ok("⑯ 契约 2：度量值走 .metric（等宽、无边框），不与状态药丸混用", /\.metric\s*\{\s*font-family:\s*var\(--mono\)/.test(themeCss));
+	// 契约 3：滚动条
 	const span = supportsBlockSpan(css, "@supports not selector(::-webkit-scrollbar)");
 	ok("⑯ 存在 ::-webkit-scrollbar 的兼容兜底块", span !== null);
 	const stdDecls = [...css.matchAll(/scrollbar-(?:color|width)\s*:/g)].map((m) => m.index ?? -1);
-	const outsideDecls = stdDecls.filter((i) => span === null || i < span[0] || i >= span[1]);
 	ok(
 		"⑯ scrollbar-color / scrollbar-width 只出现在兜底块内（否则滚动条 11px→16px）",
-		outsideDecls.length === 0,
-		`兜底块外 ${outsideDecls.length} 处：${outsideDecls.slice(0, 3).join(", ")}`,
+		stdDecls.every((i) => span !== null && i >= span[0] && i < span[1]),
+		`兜底块外 ${stdDecls.filter((i) => span === null || i < span[0] || i >= span[1]).length} 处`,
 	);
-	ok("⑯ 保留 ::-webkit-scrollbar 覆盖", /::-webkit-scrollbar\s*\{/.test(css));
-
-	// ②b overscroll-behavior 只允许落在弹层上。
-	//     实测（L2 场景页，2026-10-08）：把它加在 aside / .wrap-scroll 这类 overflow:auto 的包装层上，
-	//     滚轮会被它吞掉 —— **即使该容器根本没有可滚内容**。L2 的块表格正是"overflow:auto 但不溢出"
-	//     且占了内容列大半，于是表现为"鼠标滚动失效"（对照实验：改回 auto 后同样的滚轮立刻能滚页面）。
-	const obRules = [...stripCssComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-		.filter((m) => /overscroll-behavior\s*:/.test(m[2]))
-		.map((m) => m[1].trim());
-	const obHarmful = obRules.filter((s) => /(^|[\s,])(aside|\.wrap-scroll)([\s,]|$)/.test(s));
-	ok("⑯ overscroll-behavior 未落在 aside / .wrap-scroll 上（实测会吞掉滚轮）", obHarmful.length === 0, obHarmful.join(" | "));
-	ok("⑯ overscroll-behavior 仍留在弹层上（打开弹层时不该滚动背景）", obRules.some((s) => /\.modal/.test(s)));
-
-	// ③ 温度工具类不得被兜底色压过
-	for (const token of ["hot", "warm", "cold", "new", "noise", "watch"]) {
-		ok(`⑯ 温度工具类 .c-${token} 仍是 background: var(--${token})`, new RegExp(`\\.c-${token}\\s*\\{\\s*background:\\s*var\\(--${token}\\)`).test(css));
-	}
-	ok("⑯ 条形图兜底色写成 :where()（让出特异度给 .c-*）", /:where\(\.bar-track\)\s*>\s*i\s*\{/.test(css) && /:where\(\.qbar\)\s*>\s*i\s*\{/.test(css));
-	ok("⑯ .bar-track > i 自身不声明 background", !/\.bar-track\s*>\s*i\s*\{[^}]*background/.test(css));
-	ok("⑯ .qbar > i 自身不声明 background", !/\.qbar\s*>\s*i\s*\{[^}]*background/.test(css));
-
-	// ④ 字号令牌与主题基线
-	for (const t of ["xs", "sm", "md", "lg", "xl"]) ok(`⑯ 字号令牌 --t-${t} 在场`, new RegExp(`--t-${t}\\s*:`).test(css));
-	// 标题不许比内容小：2026-10-10 用户报「左侧菜单栏中标题比下面的具体内容还小」—— 当时分组标题与
-	// 区段标题都写成 `--t-xs`(11px)，而侧栏内容行是 `--t-sm`(12px)，层级直接反了。现在 13 > 12 = 12。
-	ok(
-		"⑯ 标题不小于内容（h2 = --t-md 13px / h3.sub = --t-sm 12px，内容行同为 --t-sm）",
-		/aside h2, section h2\s*\{[^}]*font-size:\s*var\(--t-md\)/.test(css) &&
-			/aside h3\.sub\s*\{[^}]*font-size:\s*var\(--t-sm\)/.test(css),
-	);
-	ok("⑯ color-scheme: dark 在场（原生控件变暗的前提）", /color-scheme\s*:\s*dark/.test(css));
-
-	// ⑤ 卡片正文只截断、不再自带滚动条
-	ok("⑯ 页面脚本不再使用 card-scroll（正文改截断预览）", !viewerJs.some(({ src }) => src.includes("card-scroll")));
-	ok("⑯ .card-body 正文声明了 -webkit-line-clamp", /\.card-body \.full-content\s*\{[^}]*-webkit-line-clamp/.test(css));
-
-	// ⑥ 动作语言（2026-10-10：用户报"UI 风格很不统一"）。
-	//    复盘：2026-10-09 那次诊断没错（按钮走的确实是全局那条"实心块"基样式），但**修法只覆盖了
-	//    `.ops-ctl` 一个作用域** —— 于是同一页里 `.ops-ctl` 是 12px/31px 透明行，而页头 / 页签 /
-	//    表格行 / 卡片脚 / 弹层页脚仍是 13px/34px 的实心砖块；实测 599 个按钮落在 **7 种外观、
-	//    4 档尺寸**（11/12/13px × 25/31/34px），连"选中"都有三副样子。
-	//    现在语言收在基样式位置（不在任何作用域里），这一节钉住它，并且钉住"作用域不准再定义长相"。
-	ok(
-		"⑯ 按钮基样式 = 描边动作（透明底 + --border 描边 + --text 文字 + 尺寸 5px 9px / --t-sm）",
-		/^button\s*\{[^}]*background:\s*transparent[^}]*border:\s*1px solid var\(--border\)[^}]*color:\s*var\(--text\)[^}]*font-size:\s*var\(--t-sm\)[^}]*padding:\s*5px 9px/m.test(css),
-	);
-	// 「描边给的是**可点性**，底色才决定轻重」：2026-10-10 第一版把默认做成无描边 + 静音色，当天就
-	// 被用户否掉（"重新加载、清空、导出当前视图…看起来就像是没有样式，和背景融为一体了"）。
-	// 文字动作现在只留给三个"读起来不是按钮"的地方，且必须成组出现 —— 少一个就会变成半套。
-	ok(
-		"⑯ 文字动作只留给列表行 / 行内链接三处（.btn-list、卡片脚、播种表），且都无描边",
-		/\.btn-list button,\s*\n\.card-foot \.expand-btn,\s*\n#seedTable button\s*\{\s*border-color:\s*transparent;\s*color:\s*var\(--muted\)/.test(css),
-	);
-	ok(
-		"⑯ 分段切换（.seg）= 凹槽 + 无描边段，比默认按钮更扁",
-		/\.ops-ctl\.seg\s*\{[^}]*background:\s*var\(--panel2\)[^}]*border:\s*1px solid var\(--border\)/.test(css) &&
-			/\.seg button\s*\{[^}]*border-color:\s*transparent[^}]*padding:\s*2px 8px/.test(css),
-	);
-	ok(
-		"⑯ 三个语义 + 一个状态都在基样式一节（.active 底色块 / .primary 墨色描边 / .danger danger 描边）",
-		/^button\.active\s*\{[^}]*background:\s*var\(--panel3\)[^}]*color:\s*var\(--text\)/m.test(css) &&
-			/^button\.primary\s*\{[^}]*border-color:\s*var\(--ink\)/m.test(css) &&
-			/^button\.danger\s*\{[^}]*border-color:\s*var\(--danger\)/m.test(css),
-	);
-	// 选中项划过去不许掉色：`button:hover:not(:disabled)` 的特异度比 `button.active` 高，
-	// 少了这条，鼠标划过选中行会把它从 --panel3 压回 --panel2（看着像"选中丢了"）。
-	ok(
-		"⑯ 选中项 hover 时保持 --panel3（不掉色）",
-		/^button\.active:hover:not\(:disabled\)\s*\{[^}]*background:\s*var\(--panel3\)/m.test(css),
-	);
-	// 2026-10-10 用户报"按钮被点击之后的样式是在侧边多一条白线，不太好看" —— 选中态改成
-	// 只给一层 `--panel3` 底色，**不再画任何线**。这条断言把"线"彻底钉死：全 CSS 里任何
-	// 含 `.active` 的规则都不许再声明 box-shadow（含后来者顺手给某个作用域加回墨色条）。
-	ok(
-		"⑯ 选中态不画线（任何 .active 规则都没有 box-shadow）",
-		!/\.active[^{]*\{[^}]*box-shadow/.test(css),
-	);
-	ok(
-		"⑯ 紧凑档只有两处：卡片脚（与同行胶囊对齐）与播种表行内按钮（列宽 36px 会折行）",
-		/\.card-foot \.expand-btn\s*\{[^}]*font-size:\s*var\(--t-xs\)[^}]*padding:\s*3px 7px/.test(css) &&
-			/#seedTable button\s*\{[^}]*font-size:\s*var\(--t-xs\)[^}]*white-space:\s*nowrap/.test(css),
-	);
-	// 「外壳不做底色块」：按钮规则里不许出现墨色 / 色相底 —— 这一条才是防复发的关键。
-	// 允许的底色只有三种：透明、hover/选中时的 --panel2、任务状态按钮"当前值"的 --panel3。
+	ok("⑯ 保留 ::-webkit-scrollbar 覆盖", /::-webkit-scrollbar\s*\{/.test(themeCss));
+	// overscroll-behavior 一律不许落在 aside / .wrap-scroll 上（实测吞滚轮；弹层的背景锁交给 EP）
 	{
-		const buttonBgRules: string[] = [];
-		for (const m of css.matchAll(/([^{}]*button[^{}]*)\{([^}]*)\}/g)) {
-			const sel = m[1].trim().split("\n").pop()!.trim();
-			// `::-webkit-search-cancel-button` 是**伪元素**（搜索框里那个清除叉），名字里带 "button"
-			// 但不是按钮控件 —— 它的底色是该画上去的叉，不在本节约束范围。
-			if (/::-webkit-/.test(sel)) continue;
-			const bg = /background(?:-color)?:\s*([^;]+)/.exec(m[2]);
-			if (bg) buttonBgRules.push(`${sel} → ${bg[1].trim()}`);
-		}
-		const badBg = buttonBgRules.filter((r) => !/→\s*(transparent|var\(--panel2\)|var\(--panel3\))$/.test(r));
-		ok("⑯ 没有任何按钮规则把底色填成墨色 / 色相（外壳不做底色块）", badBg.length === 0, badBg.slice(0, 3).join(" | "));
+		const obRules = [...themeCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+			.filter((m) => /overscroll-behavior\s*:/.test(m[2]))
+			.map((m) => m[1].trim());
+		ok("⑯ overscroll-behavior 未落在 aside / .wrap-scroll 上（实测会吞掉滚轮）", obRules.filter((s) => /(^|[\s,])(aside|\.wrap-scroll)([\s,]|$)/.test(s)).length === 0, obRules.join(" | "));
 	}
-	ok("⑯ 作用域不再定义按钮长相（.ops-ctl button 已无背景声明）", !/\.ops-ctl button[^{]*\{[^}]*background/.test(css));
-	ok(
-		"⑯ 字段（输入框 / 下拉 / 文本域）仍是可见边界，且不再逐个点名 type（number 曾漏在外面）",
-		/input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\),\s*select,\s*textarea\s*\{[^}]*background:\s*var\(--panel2\)[^}]*border:\s*1px solid var\(--border\)/.test(css),
-	);
+	// 契约 4：等宽数字
+	ok("⑯ 契约 4：度量/统计行等宽 + tabular-nums", /font-variant-numeric:\s*tabular-nums/.test(themeCss) && /\.metric,\s*\.stat\s*>\s*span:last-child/.test(themeCss));
+	// 契约 5 + 卡片正文截断（卡片仍是领域形状，不用 el-card）
+	ok("⑯ .card-body 正文声明了 -webkit-line-clamp", /\.card-body \.full-content\s*\{[^}]*-webkit-line-clamp/.test(themeCss));
+	ok("⑯ 标题不小于内容（h2 = --t-md / h3.sub = --t-sm）", /aside h2, section h2\s*\{[^}]*font-size:\s*var\(--t-md\)/.test(themeCss) && /aside h3\.sub\s*\{[^}]*font-size:\s*var\(--t-sm\)/.test(themeCss));
+	ok("⑯ color-scheme: dark 在场（原生控件变暗的前提）", /color-scheme\s*:\s*dark/.test(themeCss));
+	ok("⑯ 条形图兜底色写成 :where()（让出特异度给 .c-*）", /:where\(\.bar-track\)\s*>\s*i\s*\{\s*background:\s*var\(--muted\)/.test(themeCss));
+	ok("⑯ .bar-track > i / .qbar > i 自身不声明 background", !/\.bar-track\s*>\s*i\s*\{[^}]*background/.test(themeCss) && !/\.qbar\s*>\s*i\s*\{[^}]*background/.test(themeCss));
+	for (const token of ["hot", "warm", "cold", "new", "noise", "watch"]) {
+		ok(`⑯ 温度工具类 .c-${token} 仍是 background: var(--${token})`, new RegExp(`\\.c-${token}\\s*\\{\\s*background:\\s*var\\(--${token}\\)`).test(themeCss));
+	}
+
+	// ── D. 新架构的硬约束 ───────────────────────────────────────────────────
+	const vueLayer = viewerJs.find((x) => x.f === "viewer-vue.js")?.src ?? "";
+	ok("⑯ viewer-vue 装上中文语言包（否则 EP 的按钮/分页是英文）", /locale:\s*window\.ElementPlusLocaleZhCn/.test(vueLayer));
+	// mountChrome 必须是**活代码**：⑰ 断言的导航/只读横幅契约都在 viewer-core 里，
+	// 若 Vue 层自己重写了导航而不再调它，⑰ 就变成在断言一段死代码（门禁看着全绿却什么也没保）。
+	ok("⑯ viewer-vue 仍调用 viewer-core 的 mountChrome（⑰ 的契约不是死代码）", /V\.mountChrome\(\{\s*active:/.test(vueLayer));
+	// 同步 confirm 会被浏览器自动化直接接受、而页面 JS 卡在阻塞上（2026-10-10 实测踩过）
+	for (const { f, src } of viewerJs.filter((x) => x.f.endsWith("-app.js"))) {
+		ok(`⑯ ${f} 不用 window.confirm（改用 V.vue.confirm 的异步弹层）`, !/\bwindow\.confirm\s*\(/.test(src));
+	}
+	// 内置库与 vendor/README.md 的记录必须同步：升级时忘了改表，那张表就成了新的错误来源
+	const vendorReadme = readFileSync(join(REPO_VIEWERS, "assets", "vendor", "README.md"), "utf-8");
+	const vueBundle = readFileSync(join(REPO_VIEWERS, "assets", "vendor", "vue.global.prod.js"), "utf-8").slice(0, 400);
+	const epBundle = readFileSync(join(REPO_VIEWERS, "assets", "vendor", "element-plus", "index.full.min.js"), "utf-8").slice(0, 200);
+	const vueVer = /vue v([\d.]+)/.exec(vueBundle)?.[1] ?? "";
+	const epVer = /Element Plus v([\d.]+)/.exec(epBundle)?.[1] ?? "";
+	ok("⑯ 内置 Vue 版本可识别", !!vueVer, vueVer);
+	ok("⑯ 内置 Element Plus 版本可识别", !!epVer, epVer);
+	ok(`⑯ vendor/README.md 记录的 Vue 版本与文件一致（${vueVer}）`, !!vueVer && vendorReadme.includes(`vue@${vueVer}`));
+	ok(`⑯ vendor/README.md 记录的 Element Plus 版本与文件一致（${epVer}）`, !!epVer && vendorReadme.includes(`element-plus@${epVer}`));
 }
 
 // ── ⑰ 打开方式契约：`?port=` 不能被静默丢掉 ─────────────────────────────────

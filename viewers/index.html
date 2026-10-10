@@ -1,75 +1,35 @@
 <!doctype html>
-<html lang="zh-CN">
+<!--
+	总览页（Vue 3 + Element Plus）。
+
+	骨架分界：`#nav` 与 `#modeBanner` 由 viewer-core 的 mountChrome 直接写 DOM（它是 gate ⑰ 钉住的
+	打开方式契约：页内跳转必须带 location.search、缺 ?port= 要给可操作提示、桥地址按页面自身 hostname
+	拼），**必须留在 Vue 挂载点之外** —— 放进 #app 会被 Vue 的重渲染擦掉。
+	`#app` 里的一切由 assets/index-app.js 负责。
+
+	脚本顺序是硬约束（Vue → Element Plus → locale → viewer-core → viewer-vue → 页面），
+	理由见 assets/vendor/README.md。样式顺序：EP 主题 → EP 暗色 → 本仓库主题（后者覆盖前两者）。
+-->
+<html lang="zh-CN" class="dark">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>记忆库查看器 · 总览</title>
-		<link rel="stylesheet" href="assets/viewer.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/index.css" />
+		<link rel="stylesheet" href="assets/vendor/element-plus/dark.css" />
+		<link rel="stylesheet" href="assets/viewer-theme.css" />
 	</head>
 	<body>
 		<div class="nav" id="nav"></div>
+		<div id="modeBanner" class="notice" style="display: none"></div>
 
-		<header class="page">
-			<h1>记忆库查看器</h1>
-				<p class="sub">L0–L3 记忆库的本地查看器。源码在插件仓库 <code>viewers/</code>，激活时按内容哈希同步到 <code>{profile}/memoryDB/viewers/</code>。</p>
-			<div id="modeBanner" class="notice" style="display: none"></div>
-			<div class="toolbar">
-				<button type="button" id="reloadBtn">刷新摘要</button>
-				<button type="button" id="openBridge">写盘状态</button>
-			</div>
-			<p class="hint" id="loadNote">加载中…</p>
-			<div id="hint"></div>
-		</header>
+		<div id="app"></div>
 
-		<main>
-			<aside>
-				<!-- 导航放最前：这一页的左栏是入口，不是说明书。
-				     「怎么用」三段是 366 字的教程，此前占着左栏第一屏（整页 53% 的字都是它）。 -->
-				<h2>页面</h2>
-				<div class="btn-list">
-					<button type="button" onclick="location.href='records-viewer.html' + location.search"><span>L1 原子记忆</span><span class="n">记录 / 质量分 / 任务状态</span></button>
-					<button type="button" onclick="location.href='l2-viewer.html' + location.search"><span>L2 场景层</span><span class="n">块 / 成员 / 归档账本</span></button>
-					<button type="button" onclick="location.href='l3-viewer.html' + location.search"><span>L3 画像层</span><span class="n">游标 / 三份画像文件</span></button>
-					<button type="button" onclick="location.href='pipeline-viewer.html' + location.search"><span>流水线</span><span class="n">队列 / 子代理 / 触发与停止</span></button>
-				</div>
-
-				<h2>怎么用</h2>
-				<details class="more">
-					<summary>经写盘桥打开 / file:// 会降级 / 版本 chip 怎么看</summary>
-					<div class="hint">
-						<p><b>推荐经写盘桥打开</b>：<code>node scripts/l1-admin/viewer-bridge.mjs</code>，
-						然后打开终端打印的 <code>http://localhost:5174/viewers/index.html?port=5174</code>。
-						带 <code>?port=</code> 才有：全部分片的自动加载、目录列举（解开日期窗口）、以及写盘（改任务状态 / 删除）。</p>
-						<p><b>直接双击 HTML（file://）</b>：页面能打开，但自动加载与写回都不可用
-						（浏览器禁止 <code>file://</code> 下的 fetch），所以看不到数据。必须经写盘桥。</p>
-						<p><b>要在别的设备上打开</b>（同一局域网）：给桥加 <code>--lan</code>（或 <code>--host &lt;本机IP&gt;</code>），
-						它会额外监听局域网那张网卡，然后从别的设备访问它打印的那个地址。注意这个地址上
-						<b>没有鉴权</b> —— 同网段任何设备都能读写，只在可信网络里用。</p>
-						<p><b>版本 chip</b>：右上角显示已部署版本；若源码改过但还没部署，会标黄提示
-						「源码已更新未部署」。</p>
-					</div>
-				</details>
-			</aside>
-
-			<section class="content">
-				<div id="health"></div>
-
-				<h2>L1 记录库</h2>
-				<div class="stats" id="l1"><div class="stat"><span>加载中</span><span>…</span></div></div>
-				<div class="stats" id="l1sample" style="margin-top: 6px"></div>
-
-				<h2>衰减时钟来源</h2>
-				<div class="stats" id="clock"></div>
-
-				<h2>L2 场景层</h2>
-				<div class="stats" id="l2"><div class="stat"><span>加载中</span><span>…</span></div></div>
-
-				<h2>L3 画像层</h2>
-				<div class="stats" id="l3"><div class="stat"><span>加载中</span><span>…</span></div></div>
-			</section>
-		</main>
-
+		<script src="assets/vendor/vue.global.prod.js"></script>
+		<script src="assets/vendor/element-plus/index.full.min.js"></script>
+		<script src="assets/vendor/element-plus/locale-zh-cn.min.js"></script>
 		<script src="assets/viewer-core.js"></script>
-		<script src="assets/index-view.js"></script>
+		<script src="assets/viewer-vue.js"></script>
+		<script src="assets/index-app.js"></script>
 	</body>
 </html>
