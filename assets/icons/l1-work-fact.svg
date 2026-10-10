@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>L1 Work Fact</title>
+  <path d="M18 9h20l10 10v36H18V9Z" stroke="#F3F3EA" stroke-width="3.5" stroke-linejoin="round"/>
+  <path d="M37 10v11h11M25 30h16M25 37h10" stroke="#F3F3EA" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="42" cy="45" r="9" fill="#101716" stroke="#4CC48A" stroke-width="3.5"/>
+  <path d="m38 45 3 3 5-6" stroke="#4CC48A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

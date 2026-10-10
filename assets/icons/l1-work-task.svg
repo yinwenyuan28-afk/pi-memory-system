@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>L1 Work Task</title>
+  <rect x="10" y="11" width="35" height="42" rx="6" stroke="#F3F3EA" stroke-width="3.5"/>
+  <path d="m17 24 3 3 5-6M29 25h9M17 38h8M29 39h9" stroke="#95B9D5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="45" cy="44" r="11" fill="#101716" stroke="#95B9D5" stroke-width="3.5"/>
+  <path d="M45 37v7l5 3" stroke="#95B9D5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

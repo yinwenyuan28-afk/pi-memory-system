@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>L1 Work Method</title>
+  <path d="M46 22a17 17 0 0 0-29-5l-4 4M18 42a17 17 0 0 0 29 5l4-4" stroke="#E9BA74" stroke-width="4" stroke-linecap="round"/>
+  <path d="M13 13v8h8M51 51v-8h-8" stroke="#E9BA74" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 32h16M32 24v16" stroke="#F3F3EA" stroke-width="3.5" stroke-linecap="round"/>
+</svg>

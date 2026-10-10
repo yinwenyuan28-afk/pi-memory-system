@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>L1 Work Artifact</title>
+  <path d="M17 9h22l10 10v36H17V9Z" stroke="#F3F3EA" stroke-width="3.5" stroke-linejoin="round"/>
+  <path d="M38 10v11h11M24 31h17M24 38h11" stroke="#F3F3EA" stroke-width="3" stroke-linecap="round"/>
+  <path d="m42 43 2.3 4.5 5 .7-3.7 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.7-3.5 5-.7L42 43Z" fill="#E9BA74"/>
+</svg>

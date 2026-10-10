@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 610" fill="none">
+  <rect width="1200" height="610" rx="28" fill="#101716"/>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif">
+    <text x="52" y="62" font-size="30" font-weight="700" fill="#F3F3EA">Pi Memory System · 主图标备选</text>
+    <text x="52" y="96" font-size="16" fill="#A8B4AC">四款都代表整个扩展；差异在于突出记忆网络、Pi 品牌、持续召回或分层架构</text>
+  </g>
+  <g transform="translate(52 132)">
+    <rect width="260" height="410" rx="20" fill="#18211F" stroke="#34413C"/>
+    <circle cx="130" cy="145" r="94" fill="#101716" stroke="#34413C" stroke-width="2"/>
+    <g transform="translate(82 97) scale(1)"><circle cx="48" cy="48" r="32" stroke="#4CC48A" stroke-width="6"/><path d="M26 48h44M48 26v44" stroke="#4CC48A" stroke-width="4" stroke-linecap="round" opacity=".45"/><rect x="32" y="35" width="32" height="26" rx="8" fill="#101716" stroke="#F3F3EA" stroke-width="4"/><path d="M40 43h16M40 52h11" stroke="#F3F3EA" stroke-width="3.5" stroke-linecap="round"/><circle cx="74" cy="21" r="8" fill="#E9BA74" stroke="#101716" stroke-width="3"/></g>
+    <text x="26" y="290" font-size="22" font-weight="700" fill="#F3F3EA">A · 记忆轨道</text>
+    <text x="26" y="325" font-size="15" fill="#A8B4AC">记忆核心连接上下文</text>
+    <text x="26" y="362" font-size="13" fill="#77877D">直观、通用，缩小后仍清晰</text>
+  </g>
+  <g transform="translate(342 132)">
+    <rect width="260" height="410" rx="20" fill="#18211F" stroke="#34413C"/>
+    <circle cx="130" cy="145" r="94" fill="#101716" stroke="#34413C" stroke-width="2"/>
+    <g transform="translate(82 97)"><path d="M17 27h62M31 27v39M65 27v39" stroke="#4CC48A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M31 50h34" stroke="#F3F3EA" stroke-width="4" stroke-linecap="round"/><circle cx="31" cy="72" r="7" fill="#E9BA74"/><circle cx="65" cy="72" r="7" fill="#95B9D5"/><circle cx="48" cy="50" r="5" fill="#F3F3EA"/></g>
+    <text x="26" y="290" font-size="22" font-weight="700" fill="#F3F3EA">B · Pi 记忆网络</text>
+    <text x="26" y="325" font-size="15" fill="#A8B4AC">Pi 字形与记忆节点结合</text>
+    <text x="26" y="362" font-size="13" fill="#77877D">品牌识别最直接</text>
+  </g>
+  <g transform="translate(632 132)">
+    <rect width="260" height="410" rx="20" fill="#18211F" stroke="#34413C"/>
+    <circle cx="130" cy="145" r="94" fill="#101716" stroke="#34413C" stroke-width="2"/>
+    <g transform="translate(82 97)"><path d="M72 37a27 27 0 0 0-45-12l-7 8M24 59a27 27 0 0 0 45 12l7-8" stroke="#4CC48A" stroke-width="7" stroke-linecap="round"/><path d="M20 20v14h14M76 76V62H62" stroke="#4CC48A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="m48 31 6.5 11.5L67 49l-12.5 6.5L48 68l-6.5-12.5L29 49l12.5-6.5L48 31Z" fill="#E9BA74" stroke="#F3F3EA" stroke-width="3" stroke-linejoin="round"/></g>
+    <text x="26" y="290" font-size="22" font-weight="700" fill="#F3F3EA">C · 持续召回</text>
+    <text x="26" y="325" font-size="15" fill="#A8B4AC">循环路径围绕记忆核心</text>
+    <text x="26" y="362" font-size="13" fill="#77877D">突出跨会话与反复调用</text>
+  </g>
+  <g transform="translate(922 132)">
+    <rect width="260" height="410" rx="20" fill="#18211F" stroke="#34413C"/>
+    <circle cx="130" cy="145" r="94" fill="#101716" stroke="#34413C" stroke-width="2"/>
+    <g transform="translate(82 97)"><path d="m48 12 34 17-34 17-34-17 34-17Z" fill="#4CC48A" fill-opacity=".2" stroke="#4CC48A" stroke-width="5" stroke-linejoin="round"/><path d="m14 46 34 17 34-17M14 63l34 17 34-17" stroke="#F3F3EA" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="48" cy="29" r="6" fill="#E9BA74"/></g>
+    <text x="26" y="290" font-size="22" font-weight="700" fill="#F3F3EA">D · 分层记忆</text>
+    <text x="26" y="325" font-size="15" fill="#A8B4AC">用叠层表现记忆结构</text>
+    <text x="26" y="362" font-size="13" fill="#77877D">突出 L1 / L2 / L3 架构</text>
+  </g>
+  <text x="52" y="582" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#77877D">颜色沿用宣传视频：深绿底 · 薄荷绿主色 · 暖黄与浅蓝作记忆节点强调</text>
+</svg>

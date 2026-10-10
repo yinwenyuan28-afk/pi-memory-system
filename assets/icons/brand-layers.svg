@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Pi Memory System — Memory Layers</title>
+  <path d="m32 10 22 11-22 11L10 21 32 10Z" fill="#4CC48A" fill-opacity=".22" stroke="#4CC48A" stroke-width="3.5" stroke-linejoin="round"/>
+  <path d="m10 31 22 11 22-11M10 41l22 11 22-11" stroke="#F3F3EA" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="21" r="3.5" fill="#E9BA74"/>
+</svg>
