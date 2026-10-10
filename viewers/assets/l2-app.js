@@ -995,15 +995,18 @@
 				     整页空白 + ReferenceError: row is not defined，而 new Function 语法检查照样通过
 				     （漏出来那截恰好是合法语句时）。门禁 ⑨ 现在断言模板内部没有第二个反引号。 -->
 				<div class="ops">
-					<div class="ops-row">
-						<div class="ops-label">只读报告</div>
+					<!-- 「按需生成」这条注解进悬停提示（用户 2026-10-10 要求）：它是"什么时候会花代价"
+					     的备忘，不是每次都要读的信息 —— 挂在问号上，需要时悬停即可。
+					     这一行用 .ops-row.wide：控件列只有 ~178px，两颗并排按钮要约 200px，
+					     不放开列宽就会换行（"两个按钮并排"是用户明确要的形态）。 -->
+					<div class="ops-row wide">
+						<div class="ops-label">只读报告<help-note text="按需生成（不随页面加载）：一次点开即开始生成。生成期间桥被整座占满（单线程同步执行），别重复点。"></help-note></div>
 						<div class="ops-ctl">
 							<el-button :disabled="!hasPort()" @click="openReport('report')">场景池报告…</el-button>
 							<el-button :disabled="!hasPort()" @click="openReport('merge')">合并报告…</el-button>
 						</div>
-						<div class="ops-note">按需生成（不随页面加载）：一次点开即开始生成。</div>
 					</div>
-					<div class="ops-row">
+					<div class="ops-row wide">
 						<div class="ops-label">播种</div>
 						<div class="ops-ctl">
 							<el-button :disabled="!hasPort()" @click="seedOpen = true">编辑场景映射…</el-button>

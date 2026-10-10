@@ -707,6 +707,11 @@ aside h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); 
    颜色用 --muted：--faint 在 11px 上只有 3.41:1，达不到小字号 4.5:1 的下限。 */
 .ops-note { color: var(--muted); font-size: var(--t-xs); line-height: 1.55; }
 .ops-row > .ops-note { grid-column: 1 / -1; }
+/* 单列版操作行：标签占一行、控件与脚注整行铺满。
+ * 用在**控件列（~178px）放不下**的地方 —— 例如"两个并排按钮"共需约 200px。侧栏窄，
+ * 与其把按钮挤成两行，不如让这一行从控件列解放出来（危险区一直是这个形状）。 */
+.ops-row.wide { grid-template-columns: 1fr; }
+.ops-row.wide > .ops-label { padding-top: 0; }
 .ops h3.sub { margin: 14px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
 .ops h3.sub:first-child { margin-top: 0; }
 /* 长任务（向量回填/重建、整库还原）：整栏置灰 + 明说"运行中" —— 桥是单线程同步执行，
