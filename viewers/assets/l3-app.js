@@ -821,7 +821,9 @@
 					</el-collapse-item>
 				</el-collapse>
 
-				<h2>L3 游标与触发</h2>
+				<!-- 触发分级是**静态口径**（谁触发 L3），不是每次都要读的信息；挂到问号上，
+				     需要时悬停即可（同一段完整解释也在左栏「怎么读这页」里）。 -->
+				<h2>L3 游标与触发<help-note text="P1 显式请求 / P2 冷启动 / P2.5 恢复 / P3 首次场景 / P4 记忆阈值（累计新增记忆到阈值）。lastTriggeredAt 与 lastCommittedAt 分开记，是为了让「跑了但没提交」可见。"></help-note></h2>
 				<div v-if="!loaded" class="hint">加载中…</div>
 				<template v-else-if="cursor">
 					<stat-list :rows="cursorRows"></stat-list>
@@ -829,7 +831,6 @@
 					<div v-else class="budget">
 						<div class="meta"><span>P4 记忆阈值进度</span><span>{{ sinceText }} / {{ interval }}</span></div>
 						<div class="track"><i :style="{ width: p4Pct + '%' }"></i></div>
-						<div class="hint">新增记忆累计到 {{ interval }} 条时触发 P4。触发分级：P1 显式请求 / P2 冷启动 / P2.5 恢复 / P3 首次场景 / P4 记忆阈值。</div>
 					</div>
 					<notice v-if="pending" :msg="pendingMsg"></notice>
 					<notice v-if="ranWithoutCommit" :msg="staleTriggerMsg"></notice>
@@ -838,13 +839,12 @@
 			</aside>
 
 			<section class="content">
-				<h2>字符预算与自检</h2>
+				<h2>字符预算与自检<help-note text="预算按 entryBudget 计（条目正文 + 分隔符），不是文件字节数：中文 1 字符 = 3 字节，用 ls 的字节数看会误判成严重超限。" raw></help-note></h2>
 				<div v-if="!loaded" class="hint">加载中…</div>
 				<template v-else>
 					<notice v-if="!profileFilesAvailable" :msg="profileFilesMsg"></notice>
 					<!-- 三份文件每个只出一根条；used 由 BudgetBar 现算（与 entries.ts 的 entryBudget 同口径） -->
 					<budget-bar v-for="g in fileGroups" :key="g.key" :label="g.budgetLabel" :entries="g.list" :limit="g.limit" :note="g.note"></budget-bar>
-					<div class="hint">预算按 <code>entryBudget</code> 计（条目正文 + 分隔符），<b>不是文件字节数</b>：中文 1 字符 = 3 字节，用 <code>ls</code> 的字节数看会误判成严重超限。</div>
 					<notice v-if="!allIssues.length" :msg="noIssuesMsg"></notice>
 					<notice v-for="(m, i) in issueNotices" :key="i" :msg="m"></notice>
 				</template>
@@ -953,20 +953,18 @@
 				<div class="ops">
 					<h3 class="sub">{{ editTitle }}</h3>
 					<div class="ops-row">
-						<div class="ops-label">正文</div>
+						<div class="ops-label">正文<help-note :text="contentNote"></help-note></div>
 						<div class="ops-ctl">
 							<el-input v-model="editContent" style="width:100%" placeholder="一条单行规则，不含 §，≤500 字符" :disabled="!hasPort()"></el-input>
 						</div>
-						<div class="ops-note">{{ contentNote }}</div>
 					</div>
 					<div class="ops-row">
-						<div class="ops-label">定位</div>
+						<div class="ops-label">定位<help-note text="改写 / 删除时这里是定位片段（取自已选条目原文）。"></help-note></div>
 						<div class="ops-ctl">
 							<span v-if="editOp.target" class="confirm-token">{{ editOp.target }}</span>
 							<span v-else class="confirm-token">—（加一条不需要定位）</span>
 							<el-button :disabled="!hasPort()" @click="resetEdit">改回「加一条」</el-button>
 						</div>
-						<div class="ops-note">改写 / 删除时这里是定位片段（取自已选条目原文）。</div>
 					</div>
 					<div class="ops-row">
 						<div class="ops-label">确认</div>

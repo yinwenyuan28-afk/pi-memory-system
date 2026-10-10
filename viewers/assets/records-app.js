@@ -1981,18 +1981,16 @@
 								作废某条请用右下<b>删除（墓碑）</b> —— 与 l1_fix 的 tombstone 是同一个写盘动作，这里不再重复入口。改写会把审计标注【YYYY-MM-DD L1 修正：…】<b>追加进正文本身</b>（不是独立审计键），同时记 <code>metadata.l1Cleanup</code> —— 正文会真的变长。四道闸：证据 ≥20 字符、新正文 ≥10 字符、24h 防抖、高价值保护。
 							</div>
 							<div class="ops-row">
-								<div class="ops-label">新正文</div>
+								<div class="ops-label">新正文<help-note text="≥10 字符；短于此预演就会被拒。"></help-note></div>
 								<div class="ops-ctl">
 									<el-input type="textarea" v-model="fix.content" :autosize="{ minRows: 5, maxRows: 14 }" :disabled="!hasPort()"></el-input>
 								</div>
-								<div class="ops-note">≥10 字符；短于此预演就会被拒。</div>
 							</div>
 							<div class="ops-row">
-								<div class="ops-label">证据 *</div>
+								<div class="ops-label">证据 *<help-note text="必填且 ≥20 字符：修正必须附可复核证据，否则预演就会被拒。"></help-note></div>
 								<div class="ops-ctl">
 									<el-input v-model="fix.evidence" placeholder="grep 输出 / file:line / 命令输出（≥20 字符，必填）" :disabled="!hasPort()"></el-input>
 								</div>
-								<div class="ops-note">必填且 ≥20 字符：修正必须附可复核证据，否则预演就会被拒。</div>
 							</div>
 							<div class="ops-row">
 								<div class="ops-label">原因 / 优先级</div>

@@ -29,6 +29,15 @@
  * 4. **数字一律等宽 + tabular-nums**；字号只走 --t-* 六级。
  * 5. **控件尺寸只有一档**：31px / --t-sm，紧凑档 25px 只留给卡片脚与播种表行内按钮。
  *    实现方式是覆盖 EP 的 `--el-component-size`，而不是给每个组件写尺寸。
+ * 6. **说明文字的三种去处，按"它是什么"选容器**（2026-10-10 定，用户按此逐条收过一轮）：
+ *    · **留在页面上**：当前状态（加载了几个分片 / 对账一致 / 跑了但没提交）、失败原因、
+ *      **写盘的代价与不可逆性**（会备份吗、能不能回退、是不是单条撤销）、"按钮搬到哪去了"的导航指引、
+ *      两拍流程的操作指引（先预演再执行）。判断口径是**"不读它会不会做错事"**。
+ *    · **进问号 `<help-note>`**：静态口径注解（这个数怎么算的、哪个是权威源、字段的校验规则），
+ *      读一次就够、不读也不会做错事，但每次访问都占一行。
+ *    · **进折叠 `<details>` / `el-collapse`**：成段的方法论（几段连读才成立），例如「怎么读这页」。
+ *    一句话：**代价留明面，口径进问号，方法论进折叠**。
+ *    反例（别这么干）：把"执行会先自动备份"塞进问号 —— 那是安全信息；把状态码藏起来 —— 那是状态。
  *
  * 主题基线：`color-scheme: dark` + `<html class="dark">`（EP 暗色 css-vars 的开关）是原生控件
  * 与 Element Plus 同时变暗的前提，两者缺一个都会看到浅色控件。
@@ -804,4 +813,13 @@ label.check { display: inline-flex; align-items: center; gap: 6px; cursor: point
 /* 表格单元格：不换行（配合 title 悬停看全）/ 单行省略 */
 .nowrap { white-space: nowrap; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 单元格里"省略号 + 后缀胶囊"的一行：胶囊不许被压扁、文本吸收剩余宽度再省略。
+   （直接给 td 加 nowrap 不行：胶囊会被裁掉，而"无 META / 已归档"这类标记必须在场。） */
+.cell-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.cell-line > .ellipsis { flex: 1 1 auto; min-width: 0; }
+.cell-line > .chip { flex: 0 0 auto; }
+/* 等高行：给 el-table 加这个类，所有单元格取同一最小高度。
+   用途是数据列表要"扫读"——行高由内容决定时，最长的 summary 会把它的行撑高一倍，
+   整张表的横线就再也对不齐（本仓库既有约定：长文本单行省略 + title 悬停看全文）。 */
+.fixed-rows .el-table__cell { height: 36px; }
 

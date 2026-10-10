@@ -402,14 +402,22 @@
 				var m = this.maxScenes;
 				return m ? Math.min(100, Math.round((this.liveCount / m) * 100)) : 0;
 			},
-			/** 预算条下面的那句（模板外面那层已经是 .hint）：有配置说配置，没配置说清"为什么读不到"。 */
-			capHint: function () {
+			/**
+			 * 「块数上限」的口径注解（归档配置 + "归档块不占名额"）—— 挂到标题的问号上。
+			 * 它是静态注解，不随数据变；只有"读不到配置"才是要写在页面上的失败态（见 capError）。
+			 */
+			capHelp: function () {
 				var c = this.config;
-				return c
-					? "归档配置：" + (c.archive && c.archive.enabled ? "启用" : "关闭") +
-							"（最低年龄 " + (c.archive && c.archive.minAgeCalendarDays) + " 日历天，每批最多 " +
-							(c.archive && c.archive.maxPerBatch) + " 个）。归档块与 scene-blocks/ 平级，<b>不占 maxScenes 名额</b>。"
-					: "无写盘桥：读不到 <code>l2.maxScenes</code>（配置节由 /api/limits 提供，避免把含密钥的 config/ 交给页面）。";
+				if (!c) return "";
+				return (
+					"归档配置：" + (c.archive && c.archive.enabled ? "启用" : "关闭") +
+					"（最低年龄 " + (c.archive && c.archive.minAgeCalendarDays) + " 日历天，每批最多 " +
+					(c.archive && c.archive.maxPerBatch) + " 个）。归档块与 scene-blocks/ 平级，<b>不占 maxScenes 名额</b>。"
+				);
+			},
+			/** 配置读不到时的可见提示（失败态不许藏进问号）。 */
+			capError: function () {
+				return this.config ? "" : "无写盘桥：读不到 <code>l2.maxScenes</code>（配置节由 /api/limits 提供，避免把含密钥的 config/ 交给页面）。";
 			},
 			/** 侧栏概览：七项全库口径（不随搜索变）。 */
 			statRows: function () {
@@ -429,12 +437,11 @@
 					{ label: "对账问题", value: this.recon.issues.filter(function (i) { return i.level === "warn"; }).length },
 				];
 			},
-			/** L2 游标水位（含那句"水位用来判什么"）。 */
+			/** L2 游标水位（值留给页面；"水位用来判什么"那句进标题的问号）。 */
 			cursorHtml: function () {
 				if (!this.cursor) return '<span class="hint">无 cursor.json</span>';
 				return "<code>lastProcessedAt</code> = " + this.esc(V.fmtTime(new Date(this.cursor.lastProcessedAt).toISOString())) +
-					"<br><code>lastRecordId</code> = " + this.esc(this.cursor.lastRecordId || "—") +
-					'<br><span class="hint">水位用于「有哪些 L1 记录还没进任何场景块」的判定（见下方未归属统计）。</span>';
+					"<br><code>lastRecordId</code> = " + this.esc(this.cursor.lastRecordId || "—");
 			},
 			/** 管理区契约三段（长解释；默认收起，真被拒时再展开读）。 */
 			contractHtml: function () {
@@ -973,12 +980,13 @@
 				<h2>概览</h2>
 				<stat-list :rows="statRows"></stat-list>
 
-				<h2>块数上限（l2.maxScenes）</h2>
+				<h2>块数上限（l2.maxScenes）<help-note v-if="config" :text="capHelp" raw></help-note></h2>
 				<div class="budget">
 					<div class="track"><i :class="gradeClass" :style="{ width: gradePct + '%' }"></i></div>
 					<div class="meta"><span>{{ liveCount }} / {{ maxScenes === null ? "?" : maxScenes }} 个 live 块</span><span>{{ gradeText }}</span></div>
 				</div>
-				<div class="hint" v-html="capHint"></div>
+				<!-- 读不到配置是失败态，留在页面上；能读到时的口径注解进问号 -->
+				<div class="hint" v-if="!config" v-html="capError"></div>
 
 				<h2>L2 管理</h2>
 				<div v-if="!hasPort()" class="hint" v-html="readOnlyHint"></div>
@@ -1029,7 +1037,8 @@
 					<json-details v-if="opsNote.json !== null" :summary="opsNote.jsonSummary" :value="opsNote.json"></json-details>
 				</div>
 
-				<h2>L2 游标水位</h2>
+				<!-- 水位"用来判什么"是静态口径 → 问号；游标值本身（两行数据）留在页面上 -->
+				<h2>L2 游标水位<help-note text="水位用于「有哪些 L1 记录还没进任何场景块」的判定（见下方未归属统计）。"></help-note></h2>
 				<div class="hint" v-html="cursorHtml"></div>
 
 				<!-- 这四段是方法论（谁是权威源、归档为什么不是删除），默认收起 ——
@@ -1064,15 +1073,20 @@
 					:data="visibleRows"
 					size="small"
 					row-key="filename"
+					class="fixed-rows"
 					:row-style="rowStyle"
 					:empty-text="loaded ? '暂无数据' : '尚未加载'"
 					@row-click="onRowClick"
 				>
 					<el-table-column label="块文件" min-width="190">
 						<template #default="{ row }">
-							<span class="wrap-any">{{ row.filename }}</span>
-							<chip v-if="row.noMeta" label="无 META"></chip>
-							<chip v-if="row.archived" label="已归档"></chip>
+							<!-- 文件名单行省略（全文走 title 悬停）：长中文文件名折行会把行撑高，
+							     而行高不一致的表格没法扫读。后面的胶囊保持在行内。 -->
+							<div class="cell-line">
+								<span class="ellipsis" :title="row.filename">{{ row.filename }}</span>
+								<chip v-if="row.noMeta" label="无 META"></chip>
+								<chip v-if="row.archived" label="已归档"></chip>
+							</div>
 						</template>
 					</el-table-column>
 					<el-table-column label="heat" width="52" align="right" class-name="mono">
@@ -1084,8 +1098,10 @@
 					<el-table-column label="updated" width="90" class-name="nowrap">
 						<template #default="{ row }">{{ row.updated }}</template>
 					</el-table-column>
-					<el-table-column label="summary" width="180" class-name="wrap-any">
-						<template #default="{ row }">{{ row.summary }}</template>
+					<el-table-column label="summary" width="180">
+						<template #default="{ row }">
+							<div class="ellipsis" :title="row.summary">{{ row.summary }}</div>
+						</template>
 					</el-table-column>
 					<el-table-column label="操作" width="290">
 						<template #default="{ row }">
@@ -1140,12 +1156,12 @@
 				<div v-else-if="!loaded" class="hint">尚未加载</div>
 				<template v-else>
 					<div class="hint">共 {{ ownerTotal }} 个成员 id 有归属（全部在页面内可搜）。点上方块行查看该块的实际成员清单。</div>
-					<el-table :data="visibleOwners" size="small" max-height="260">
+					<el-table :data="visibleOwners" size="small" max-height="260" class="fixed-rows">
 						<el-table-column label="L1 记录 id" min-width="220" class-name="mono">
-							<template #default="{ row }">{{ row.id }}</template>
+							<template #default="{ row }"><div class="ellipsis" :title="row.id">{{ row.id }}</div></template>
 						</el-table-column>
 						<el-table-column label="所属块" min-width="220">
-							<template #default="{ row }">{{ row.file }}</template>
+							<template #default="{ row }"><div class="ellipsis" :title="row.file">{{ row.file }}</div></template>
 						</el-table-column>
 					</el-table>
 					<div v-if="ownerTotal > 300" class="hint">只列前 300 条。</div>
