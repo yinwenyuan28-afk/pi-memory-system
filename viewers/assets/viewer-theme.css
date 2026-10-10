@@ -831,6 +831,21 @@ h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-w
    这期间它真的不响应任何请求。 */
 .ops-row.busy .ops-ctl { pointer-events: none; opacity: 0.5; }
 
+/* L1 侧栏操作：将状态提示和三类操作拆成紧凑区块，标签不再挤在窄窄的左列。 */
+.ops-connection-notice { margin: 0 0 12px; padding: 9px 12px; border-left-color: var(--ok); font-size: var(--t-xs); line-height: 1.5; }
+#l1ops { gap: 12px; }
+#l1ops .ops-card { grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 12px; border: 1px solid var(--border-soft); border-radius: var(--r-md); background: var(--panel); }
+#l1ops .ops-card > .ops-label { padding: 0; color: var(--text); font-size: var(--t-sm); font-weight: 600; }
+#l1ops .ops-card > .ops-ctl { width: 100%; }
+#l1ops .mode-ops-ctl { align-items: flex-start; }
+#l1ops .vector-ops-ctl { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+.vector-ops-status, .vector-ops-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.vector-ops-actions > .el-button { flex: 1 1 128px; min-width: 0; min-height: 38px; margin-left: 0; }
+#l1ops .danger-ops-ctl { align-items: flex-start; flex-direction: column; gap: 6px; }
+#l1ops .danger-ops-ctl > .el-button { min-height: 38px; margin-left: 0; }
+#l1ops .danger-ops-ctl .ops-note { margin: 0; }
+.pipeline-ops-hint { margin: 12px 0 18px; padding: 10px 12px; border-top: 1px solid var(--border-soft); line-height: 1.55; }
+
 /* 危险区：只换描边与标题色，不加底色（契约 1）。标签折到控件上方 —— 这块被 12px 内边距再吃掉
    一圈，控件列只剩 ~141px，备份下拉只能显示到「backfill-project-」（5 个同名前缀的目录分不开）。 */
 .l3-edit-zone {

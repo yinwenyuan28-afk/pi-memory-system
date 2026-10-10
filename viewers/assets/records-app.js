@@ -1426,8 +1426,8 @@
 					}).length;
 					self.setNote2(
 						failed === 0
-							? "写盘桥已连接：下面每个动作都注明是否落盘（标「预演」的不写，要按「确认执行」才写）。"
-							: "写盘桥已连接，但有 " + failed + " 项状态没读到 —— 面板里对应格子会写出原因，别把空白当默认值。",
+							? "写盘桥已连接。预演不会写入；确认执行后才会保存。"
+							: "写盘桥已连接，但有 " + failed + " 项状态无法读取，请查看下方对应原因。",
 						failed === 0 ? "" : "warn",
 					);
 				});
@@ -1681,15 +1681,15 @@
 				<!-- 管理操作区：值全部来自 /api/*，失败时字段留空而不是沿用旧值（宁缺勿假）。
 				     这里只有「L1 自己的」写动作：提取模式 / 向量库 / 整库还原 ——
 				     请求触发与停止子代理是三层同名动作，2026-10-08 已归「流水线」页。 -->
-				<notice :msg="opsNote"></notice>
+				<notice class="ops-connection-notice" :msg="opsNote"></notice>
 				<div class="ops" id="l1ops">
 					<div v-if="!hasPort()" class="hint">写回需要写盘桥：请用带 <code>?port=</code> 的地址打开本页（<code>npm run viewer</code> 一键起桥）。只读模式下这里的按钮全部禁用。</div>
 
 					<!-- 提取模式：分段切换 + 扁平段；说明文本默认隐藏、悬停整行才显示（title）。
 					     这类"什么时候会写盘、真源在哪"的注解平时占一大块侧栏，只有真要去点时才需要。 -->
-					<div class="ops-row" :title="modeTitle">
+					<div class="ops-row ops-card mode-row" :title="modeTitle">
 						<div class="ops-label">提取模式</div>
-						<div class="ops-ctl">
+						<div class="ops-ctl mode-ops-ctl">
 							<seg :model-value="ops.mode || ''" :options="modeOptions" :disabled="!hasPort() || !!ops.busy" @change="setL1Mode"></seg>
 							<span v-if="ops.busy === 'mode'" class="hint">切换中…</span>
 							<span v-else-if="!ops.mode && ops.loaded" class="hint">{{ ops.modeError }}</span>
@@ -1697,16 +1697,20 @@
 					</div>
 
 					<!-- 向量库（长任务：桥单线程同步执行，期间整座桥不响应） -->
-					<div class="ops-row" :class="{ busy: ops.busy === 'embedding' }" :title="embedTitle">
+					<div class="ops-row ops-card embedding-row" :class="{ busy: ops.busy === 'embedding' }" :title="embedTitle">
 						<div class="ops-label">向量库</div>
-						<div class="ops-ctl">
-							<template v-if="ops.embedding">
-								<metric :value="'向量 ' + ops.embedding.vectorizedCount + '/' + ops.embedding.totalRecords" tip="已向量化 / 总记录"></metric>
-								<metric :value="'缺 ' + ops.embedding.unVectorizedCount" tip="未向量化条数"></metric>
-							</template>
-							<span v-else class="hint">{{ ops.embeddingError || (ops.loaded ? "读不到向量库状态" : "读取中…") }}</span>
-							<el-button :disabled="!hasPort() || !!ops.busy" @click="previewEmbedding('backfill')">回填：预演</el-button>
-							<el-button :disabled="!hasPort() || !!ops.busy" @click="previewEmbedding('rebuild')">重建：预演</el-button>
+						<div class="ops-ctl vector-ops-ctl">
+							<div class="vector-ops-status">
+								<template v-if="ops.embedding">
+									<metric :value="'向量 ' + ops.embedding.vectorizedCount + '/' + ops.embedding.totalRecords" tip="已向量化 / 总记录"></metric>
+									<metric :value="'缺 ' + ops.embedding.unVectorizedCount" tip="未向量化条数"></metric>
+								</template>
+								<span v-else class="hint">{{ ops.embeddingError || (ops.loaded ? "读不到向量库状态" : "读取中…") }}</span>
+							</div>
+							<div class="vector-ops-actions">
+								<el-button :disabled="!hasPort() || !!ops.busy" @click="previewEmbedding('backfill')">回填：预演</el-button>
+								<el-button :disabled="!hasPort() || !!ops.busy" @click="previewEmbedding('rebuild')">重建：预演</el-button>
+							</div>
 							<span v-if="ops.busy === 'embedding'" class="hint">运行中（桥被占满，勿重复点）</span>
 						</div>
 						<div style="grid-column:1 / -1" v-if="ops.embedOp">
@@ -1727,18 +1731,18 @@
 					<!-- 危险区（整库还原）：破坏性动作**不常驻侧栏**，只留一个入口按钮 ——
 					     理由见下方弹层处的注释（336px 的侧栏放不下备份下拉，且不可逆动作不该待在
 					     "随手就能点"的位置）。 -->
-					<div class="ops-row">
+					<div class="ops-row ops-card danger-row">
 						<div class="ops-label">危险区</div>
-						<div class="ops-ctl">
+						<div class="ops-ctl danger-ops-ctl">
 							<el-button type="danger" :disabled="!hasPort() || !backupOptions.length" @click="dangerOpen = true">整库还原…</el-button>
-							<span class="hint">删掉当前 L1 全部 <code>.jsonl</code> 再复制备份内容（不是单条撤销）</span>
+							<span class="ops-note">会替换全部 L1 记录，不是单条撤销。</span>
 						</div>
 					</div>
 				</div>
 				<!-- 搬走的两个动作留一句指引：按钮凭空消失而不说去哪了，是这一版最不想要的失效方式 -->
-				<p class="hint">「请求触发 L1」与「停止子代理」在顶部
+				<p class="hint pipeline-ops-hint">管理队列与子代理，请前往顶部的
 					<a href="pipeline-viewer.html" @click.prevent="gotoPipeline">流水线页</a>
-					（队列与三层子代理合成一张表）。</p>
+					。</p>
 
 				<h2>统计</h2>
 				<el-collapse v-model="statsOpen">
