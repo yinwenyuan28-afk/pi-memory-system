@@ -1,0 +1,796 @@
+/*
+ * viewers/assets/viewer-theme.css —— 查看器主题（Vue 3 + Element Plus 版，2026-10-10 重写）
+ *
+ * ── 这一份与 Element Plus 的分工（改样式前先读这一条）────────────────────────
+ *
+ *   · **外壳控件 = Element Plus**：按钮 / 输入框 / 下拉 / 表格 / 弹层 / 分页 / 复选框 /
+ *     折叠面板 / 分段切换 / 提示。它们的长相由 index.css + dark.css 提供，本文件只做**令牌映射**
+ *     （把 `--el-*` 接到本仓库的调色板），不再逐条覆写组件外观。
+ *   · **领域形状 = 本文件**：胶囊（形状编码种类）/ 度量 token / 统计行 / 卡片 / 条形图 /
+ *     直方图 / 时间线 / 预算条 / 规则条目 —— 这些承载的是"这页怎么表达记忆库"的语义，
+ *     Element Plus 表达不了（详见 viewer-vue.js 文件头的三条理由）。
+ *
+ * 于是规则是：**组件库负责一致性，本文件负责"属于数据的形状"**。新增 UI 时先问"这是外壳还是
+ * 领域形状" —— 外壳写 `<el-*>`，领域形状才往这里加规则。（旧版 987 行的 viewer.css 之所以
+ * 会长成那样，就是因为按钮 / 字段 / 表格全都得自己写，7 种按钮外观、4 档尺寸都从那里来。）
+ *
+ * ── 设计契约（前四条沿用，第五条 2026-10-10 起改为"外壳控件交给组件库"）──────
+ *
+ * 1. **色相属于数据，不属于装饰**。界面外壳（导航 / 按钮 / 边框 / 统计行）一律无彩度；
+ *    六个「记忆温度」（热 温 冷 新 噪 待观察）是全页仅有的成组饱和色。允许饱和的例外只有
+ *    三种严重度（ok / warn / danger）—— 它们也是数据状态。**推论：Element Plus 的
+ *    `--el-color-primary` 被改成墨色（--ink），不是它默认的蓝** —— 否则每颗选中项、焦点环、
+ *    复选框都会往页面上泼第二层强调色。
+ * 2. **形状编码种类**：实心彩丸=已定状态；虚线丸=未落定（task open / 未归类）；点线丸=已搁置
+ *    （task dropped / 跳过）；无色方块=分类值；等宽 token=度量值。所以 `.chip` 的描边只允许
+ *    出现在第一类，度量一律 `.metric`。这条也是"胶囊不用 el-tag"的原因。
+ * 3. **一层只有一条滚动轴**：页面纵向 / 侧栏自身 / 表格与 JSON 内部，全部细滚动条；
+ *    卡片正文不带滚动条（截断预览，全文在弹层）。
+ * 4. **数字一律等宽 + tabular-nums**；字号只走 --t-* 六级。
+ * 5. **控件尺寸只有一档**：31px / --t-sm，紧凑档 25px 只留给卡片脚与播种表行内按钮。
+ *    实现方式是覆盖 EP 的 `--el-component-size`，而不是给每个组件写尺寸。
+ *
+ * 主题基线：`color-scheme: dark` + `<html class="dark">`（EP 暗色 css-vars 的开关）是原生控件
+ * 与 Element Plus 同时变暗的前提，两者缺一个都会看到浅色控件。
+ */
+
+/* ── 设计令牌（与旧版同名，页面与 JS 里的直引处不用改） ─────────────────────── */
+:root {
+	color-scheme: dark;
+
+	/* 外壳：全套无彩度（蓝灰） */
+	--bg: #0d1219;
+	--panel: #141b25;
+	--panel2: #1c2634;
+	--panel3: #24313f;
+	--border: #2b3846;
+	--border-soft: #1f2937;
+	--text: #dbe3ec;
+	--muted: #8b98a9;
+	/* --faint 只允许用于非文字（边框 / 时间线圆点 / 装饰线）：它在深底上只有 ~3:1 */
+	--faint: #5c6a7c;
+	/* 外壳"墨色"：主按钮 / 选中标记 / EP primary 都用它，代替强调色（契约 1） */
+	--ink: #c8d4e0;
+	--focus: #8fb6dc;
+
+	/* 记忆温度：与 memory/l1/quality.ts 的标签一一对应，图例与卡片必须同色 */
+	--hot: #ff6a48;
+	--warm: #f0a332;
+	--cold: #4a9eff;
+	--new: #2bc9c0;
+	--noise: #cf6ad0;
+	--watch: #93a1b2;
+
+	/* 严重度（也是数据状态，允许饱和）。warn 刻意用黄而非琥珀，避免与「温」同色 */
+	--ok: #3ecf8e;
+	--warn: #e3c04a;
+	--danger: #ef5f6b;
+
+	/* 滚动条 */
+	--sc-thumb: #35424f;
+	--sc-thumb-hover: #4a5a6b;
+
+	/* 字体：本工具只在 Windows 上跑，系统 UI 字面就是最贴合的选择（不引 webfont） */
+	--ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", sans-serif;
+	--mono: ui-monospace, "Cascadia Mono", SFMono-Regular, Consolas, monospace;
+
+	/* 字号六级 */
+	--t-xs: 11px;
+	--t-sm: 12px;
+	--t-md: 13px;
+	--t-lg: 15px;
+	--t-xl: 21px;
+
+	--r-lg: 12px;
+	--r-md: 8px;
+	--r-sm: 5px;
+	--r-pill: 999px;
+
+	--nav-h: 46px;
+}
+
+/* ── 滚动条：细 + 暗色（契约 3） ────────────────────────────────────────────── */
+/*
+ * 实测（Chrome 146 / Electron 41）：**千万不要写 scrollbar-color**。一旦指定它，引擎就退回 16px
+ * 的经典滚动条（带箭头），比完全不指定还宽；`scrollbar-width`/`scrollbar-color` 保持 auto 时，
+ * 下面的 ::-webkit-scrollbar 才会接管。变暗的职责交给 `color-scheme: dark`。
+ */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+	background: var(--sc-thumb);
+	border-radius: var(--r-pill);
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sc-thumb-hover); background-clip: padding-box; }
+
+/* 没有 ::-webkit-scrollbar 的引擎（Firefox）才用标准属性兜底。二者不能同时生效 */
+@supports not selector(::-webkit-scrollbar) {
+	:root { scrollbar-width: thin; scrollbar-color: var(--sc-thumb) transparent; }
+}
+
+/* ── 基础 ──────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font: var(--t-md) / 1.55 var(--ui);
+}
+a { color: var(--focus); text-decoration: none; text-underline-offset: 2px; }
+a:hover { text-decoration: underline; text-decoration-color: currentColor; }
+code {
+	font-family: var(--mono);
+	font-size: 0.94em;
+	background: var(--panel2);
+	border: 1px solid var(--border-soft);
+	border-radius: var(--r-sm);
+	padding: 0 4px;
+	word-break: break-word;
+}
+b, strong { color: var(--text); font-weight: 600; }
+::selection { background: #2b4a6b; color: var(--text); }
+:where(a, button, select, input, textarea, summary, [tabindex]):focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 1px;
+	border-radius: var(--r-sm);
+}
+.hint { color: var(--muted); font-size: var(--t-sm); margin: 6px 0; }
+.hint p { margin: 6px 0; }
+.hint code { font-size: 0.94em; }
+.text-warn { color: var(--warn); }
+.text-err { color: var(--danger); }
+.wrap-scroll { overflow: auto; }
+.metric, .stat > span:last-child, dl.kv dd, .tl-item .when { font-variant-numeric: tabular-nums; }
+
+/* ── Element Plus 令牌桥（暗色）────────────────────────────────────────────────
+ *
+ * 只做"把 EP 的语义令牌接到本仓库调色板"这一件事。EP 的组件在暗色下全部读这些变量，
+ * 于是不用逐个组件覆写外观 —— 这也是引入组件库真正省下来的那部分工作。
+ */
+html.dark {
+	/* 背景三级：页面 < 悬浮/面板 < 选中（与旧版 --bg/--panel/--panel2/--panel3 同序） */
+	--el-bg-color: var(--panel);
+	--el-bg-color-page: var(--bg);
+	--el-bg-color-overlay: var(--panel2);
+	--el-fill-color-blank: var(--panel);
+	--el-fill-color: var(--panel2);
+	--el-fill-color-light: var(--panel2);
+	--el-fill-color-lighter: var(--panel2);
+	--el-fill-color-extra-light: var(--panel);
+	--el-fill-color-dark: var(--panel3);
+	--el-fill-color-darker: var(--panel3);
+
+	/* 文字 */
+	--el-text-color-primary: var(--text);
+	--el-text-color-regular: var(--text);
+	--el-text-color-secondary: var(--muted);
+	--el-text-color-placeholder: var(--muted);
+	--el-text-color-disabled: var(--faint);
+
+	/* 边框 */
+	--el-border-color: var(--border);
+	--el-border-color-light: var(--border);
+	--el-border-color-lighter: var(--border-soft);
+	--el-border-color-extra-light: var(--border-soft);
+	--el-border-color-dark: var(--border);
+	--el-border-color-darker: var(--border);
+	--el-border-color-hover: var(--faint);
+
+	/* 主色 = 墨色（契约 1：外壳无彩度）。light-N 是 EP 用来做 hover / 禁用 / 淡底的档位，
+	   用 color-mix 往面板色里混 —— 既不写死第二组色值，也不会引入色相。 */
+	--el-color-primary: var(--ink);
+	--el-color-primary-light-3: color-mix(in srgb, var(--ink) 62%, var(--panel));
+	--el-color-primary-light-5: color-mix(in srgb, var(--ink) 44%, var(--panel));
+	--el-color-primary-light-7: color-mix(in srgb, var(--ink) 26%, var(--panel));
+	--el-color-primary-light-8: color-mix(in srgb, var(--ink) 18%, var(--panel));
+	--el-color-primary-light-9: color-mix(in srgb, var(--ink) 10%, var(--panel));
+	--el-color-primary-dark-2: var(--ink);
+	--el-color-success: var(--ok);
+	--el-color-warning: var(--warn);
+	--el-color-danger: var(--danger);
+	--el-color-error: var(--danger);
+	--el-color-info: var(--muted);
+	--el-color-white: var(--panel);
+	--el-color-black: var(--text);
+
+	/* 尺寸：契约 5（只有一档 31px；紧凑档 25px 由 .el-button--small 承担） */
+	--el-font-family: var(--ui);
+	--el-font-size-base: var(--t-sm);
+	--el-component-size: 31px;
+	--el-component-size-large: 34px;
+	--el-component-size-small: 25px;
+	--el-border-radius-base: var(--r-md);
+	--el-border-radius-small: var(--r-sm);
+
+	/* 遮罩与阴影：弹层压暗背景，但不要 EP 默认那种厚阴影（深色下会糊成一块） */
+	--el-mask-color: rgba(6, 9, 13, 0.72);
+	--el-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+	--el-box-shadow-light: 0 6px 18px rgba(0, 0, 0, 0.35);
+	--el-box-shadow-lighter: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Element Plus 组件的外观修正（少而必要） ─────────────────────────────────
+ *
+ * 三件事：① 按钮回到"描边动作"（透明底 + 描边），② 去掉 EP 的默认色相残留，
+ * ③ 表格 / 弹层 / 折叠面板的边框与底色与外壳一致。
+ */
+
+/* ① 按钮：默认 = 描边动作（透明底 + --border 描边 + 正文色）
+ *    `.primary`（写入新内容）= 墨色描边 + 600；`.danger`（让数据消失）= danger 描边。
+ *    其余 EP 类型（success/warning/info）一律不用 —— 语义只有这三个 + 一个选中态。 */
+.el-button {
+	--el-button-bg-color: transparent;
+	--el-button-border-color: var(--border);
+	--el-button-text-color: var(--text);
+	--el-button-hover-bg-color: var(--panel2);
+	--el-button-hover-border-color: var(--border);
+	--el-button-hover-text-color: var(--text);
+	--el-button-active-bg-color: var(--panel3);
+	--el-button-active-border-color: var(--border);
+	--el-button-active-text-color: var(--text);
+	--el-button-disabled-bg-color: transparent;
+	--el-button-disabled-border-color: var(--border-soft);
+	--el-button-disabled-text-color: var(--faint);
+	padding: 5px 9px;
+	font-size: var(--t-sm);
+	font-weight: 400;
+}
+/* EP 给相邻按钮加了 12px 外边距；本仓库一律用 flex gap 排版，留着会变成双份间距 */
+.el-button + .el-button { margin-left: 0; }
+.el-button--small { padding: 3px 7px; font-size: var(--t-xs); }
+.el-button--primary {
+	--el-button-border-color: var(--ink);
+	--el-button-text-color: var(--text);
+	--el-button-hover-border-color: var(--ink);
+	--el-button-active-border-color: var(--ink);
+	--el-button-disabled-border-color: var(--ink);
+	font-weight: 600;
+}
+.el-button--danger {
+	--el-button-border-color: var(--danger);
+	--el-button-text-color: var(--danger);
+	--el-button-hover-border-color: var(--danger);
+	--el-button-hover-text-color: var(--danger);
+	--el-button-active-border-color: var(--danger);
+	--el-button-active-text-color: var(--danger);
+	--el-button-disabled-border-color: var(--danger);
+	--el-button-disabled-text-color: var(--danger);
+}
+/* 纯文字动作（无描边）：只留给列表行与行内链接 —— 外壳的默认是描边，这条**不是**默认 */
+.el-button.is-text,
+.el-button.is-link { --el-button-border-color: transparent; color: var(--muted); }
+.el-button.is-text:hover,
+.el-button.is-link:hover { color: var(--text); background: transparent; }
+/* 选中态（状态，不是动作）：EP 的按钮没有这个状态，补一个与 `.seg` 选中项同款的语言 ——
+ * 一层 --panel3 底色、不画线。筛选菜单（.btn-list）与记录页签用它。 */
+.el-button.active {
+	background: var(--panel3);
+	border-color: var(--border);
+	color: var(--text);
+	font-weight: 600;
+}
+.el-button.active:hover { background: var(--panel3); border-color: var(--border); color: var(--text); }
+
+/* ② 输入框 / 下拉 / 文本域：可见边界（用户 2026-10-10 明确要过："看起来就像没有样式、
+ *    和背景融为一体"是这套界面的反面教材） */
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+	background-color: transparent;
+	box-shadow: 0 0 0 1px var(--border) inset;
+}
+.el-input__wrapper:hover,
+.el-textarea__inner:hover,
+.el-select__wrapper:hover { box-shadow: 0 0 0 1px var(--faint) inset; }
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused { box-shadow: 0 0 0 1px var(--focus) inset; }
+.el-input__inner, .el-textarea__inner { color: var(--text); font-family: inherit; }
+.el-input__inner::placeholder,
+.el-textarea__inner::placeholder { color: var(--muted); }
+.el-select__placeholder { color: var(--muted); }
+
+/* ③ 表格：表头吸顶 + 与外壳同色（EP 默认给 header 一层 fill 色，深色下偏亮） */
+.el-table {
+	--el-table-border-color: var(--border-soft);
+	--el-table-border: 1px solid var(--border-soft);
+	--el-table-text-color: var(--text);
+	--el-table-header-text-color: var(--muted);
+	--el-table-row-hover-bg-color: var(--panel2);
+	--el-table-current-row-bg-color: var(--panel3);
+	--el-table-header-bg-color: var(--bg);
+	--el-table-bg-color: transparent;
+	--el-table-tr-bg-color: transparent;
+	--el-table-expanded-cell-bg-color: transparent;
+	font-size: var(--t-sm);
+}
+.el-table th.el-table__cell { background: var(--bg); font-weight: 600; }
+.el-table .cell { line-height: 1.5; }
+.el-table__inner-wrapper::before { background-color: var(--border-soft); }
+.el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell { background: var(--panel); }
+
+/* ④ 弹层：面板底 + 描边；正文可能很长，交给 .viewer-dialog 的 body 自己滚（契约 3） */
+.el-dialog { --el-dialog-bg-color: var(--panel); border: 1px solid var(--border); padding: 0; }
+.el-dialog__header { padding: 16px 18px 6px; margin: 0; }
+.el-dialog__title { font-size: var(--t-lg); font-weight: 600; color: var(--text); }
+.el-dialog__body { padding: 6px 18px 16px; color: var(--text); }
+.el-dialog__footer { padding: 0 18px 16px; }
+.el-overlay-dialog { display: flex; align-items: flex-start; justify-content: center; }
+/* 长正文的弹层（块正文 / 画像全文 / 记录详情）：**限高 + body 自身滚动**。
+   不给这条规则时对话框会长到超过视口，于是滚动的是遮罩层 —— 标题与页脚一起滚出视野，
+   而"这是哪一条、页脚那颗按钮是什么"恰恰是长正文时最需要的（旧版 .modal .sheet 就是自己滚的）。 */
+.viewer-dialog .el-dialog__body { max-height: calc(100vh - 210px); overflow: auto; }
+
+/* ⑤ 折叠面板：侧栏的「统计 / 说明」两组用它（旧版是原生 details，样式另写一套） */
+.el-collapse {
+	--el-collapse-border-color: var(--border-soft);
+	--el-collapse-header-bg-color: transparent;
+	--el-collapse-header-text-color: var(--muted);
+	--el-collapse-header-font-size: var(--t-sm);
+	--el-collapse-content-bg-color: transparent;
+	--el-collapse-content-font-size: var(--t-sm);
+	border-top: 0;
+	border-bottom: 0;
+}
+.el-collapse-item__header {
+	height: auto;
+	min-height: 30px;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--border-soft);
+	line-height: 1.45;
+}
+.el-collapse-item__wrap { border-bottom: 0; }
+.el-collapse-item__content { padding: 6px 0 4px; color: var(--text); }
+
+/* ⑥ 分段切换（Seg 组件 = el-radio-group + el-radio-button）：凹槽 + 扁平段，
+ *    选中项浮一层 --panel3 底色而**不画线**（与按钮选中态同一套语言） */
+.seg { background: var(--panel2); border-radius: var(--r-md); padding: 2px; }
+.seg .el-radio-button__inner {
+	background: transparent;
+	border: 0;
+	box-shadow: none !important;
+	color: var(--muted);
+	padding: 3px 10px;
+	font-size: var(--t-xs);
+	border-radius: var(--r-sm) !important;
+}
+.seg .el-radio-button__inner:hover { color: var(--text); background: var(--panel3); }
+.seg .el-radio-button__original-radio:checked + .el-radio-button__inner {
+	background: var(--panel3);
+	color: var(--text);
+	font-weight: 600;
+}
+
+/* ⑦ 复选框 / 分页 / 折叠 / 提示条：只接令牌，不改结构 */
+.el-checkbox {
+	--el-checkbox-checked-bg-color: var(--ink);
+	--el-checkbox-checked-input-border-color: var(--ink);
+	--el-checkbox-checked-icon-color: var(--panel);
+	--el-checkbox-checked-text-color: var(--text);
+	--el-checkbox-text-color: var(--text);
+	--el-checkbox-input-border: 1px solid var(--border);
+	--el-checkbox-input-border-color-hover: var(--faint);
+	--el-checkbox-font-size: var(--t-sm);
+	height: auto;
+}
+.el-pagination {
+	--el-pagination-bg-color: transparent;
+	--el-pagination-text-color: var(--muted);
+	--el-pagination-button-bg-color: transparent;
+	--el-pagination-button-color: var(--muted);
+	--el-pagination-hover-color: var(--text);
+	--el-pagination-font-size: var(--t-sm);
+	--el-pagination-button-height: 26px;
+	--el-pagination-button-width: 26px;
+}
+.el-pagination.is-background .el-pager li,
+.el-pagination.is-background .btn-prev,
+.el-pagination.is-background .btn-next { background: transparent; border: 1px solid var(--border); }
+.el-pagination.is-background .el-pager li.is-active { background: var(--panel3); border-color: var(--border); color: var(--text); }
+.el-popper.is-dark { background: var(--panel3); border: 1px solid var(--border); color: var(--text); }
+.el-popper.is-dark .el-popper__arrow::before { background: var(--panel3); border-color: var(--border); }
+.el-message { background: var(--panel2); border-color: var(--border); }
+.el-message .el-message__content { color: var(--text); }
+.el-message-box { background: var(--panel); border: 1px solid var(--border); }
+.el-message-box__title { color: var(--text); font-size: var(--t-lg); }
+.el-message-box__content { color: var(--text); }
+/* 确认框正文里有换行（代价说明），保留它 —— 折成一行就读不出"不可逆"在哪 */
+.el-message-box__message { white-space: pre-line; }
+.el-loading-mask { background-color: rgba(13, 18, 25, 0.6); }
+.el-empty { --el-empty-fill-color-7: var(--panel2); --el-empty-fill-color-8: var(--panel3); --el-empty-fill-color-9: var(--border); }
+
+/* ── 顶部导航（吸顶；由 viewer-core 的 mountChrome 渲染，见 viewer-vue.js 的说明） ── */
+.nav {
+	position: sticky;
+	top: 0;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: var(--nav-h);
+	padding: 0 16px;
+	background: var(--bg);
+	border-bottom: 1px solid var(--border);
+}
+.nav .brand { font-weight: 600; color: var(--text); margin-right: 12px; }
+.nav a.item {
+	padding: 5px 10px;
+	border-radius: var(--r-md);
+	color: var(--muted);
+	font-size: var(--t-sm);
+	text-decoration: none;
+}
+.nav a.item:hover { background: var(--panel2); color: var(--text); }
+.nav a.item.active { background: var(--panel3); color: var(--text); }
+.nav .spacer { flex: 1; }
+.nav .version {
+	font-family: var(--mono);
+	font-size: var(--t-xs);
+	color: var(--muted);
+	padding: 3px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--r-pill);
+}
+.nav .version.stale { color: var(--warn); border-color: var(--warn); }
+
+/* ── 页头 ─────────────────────────────────────────────────────────────────── */
+header.page { padding: 16px 20px 0; }
+header.page h1 { margin: 0 0 5px; font-size: var(--t-xl); font-weight: 600; letter-spacing: -0.01em; }
+header.page .sub { margin: 0 0 12px; color: var(--muted); font-size: var(--t-sm); }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.toolbar + .toolbar { margin-top: 8px; }
+.content > .toolbar { margin-bottom: 12px; }
+.toolbar .el-input, .toolbar .el-select { flex: 0 0 auto; }
+.toolbar > .grow { flex: 1 1 300px; max-width: 460px; }
+
+/* ── 主布局：左栏吸顶滚动 / 右栏随页面滚动（契约 3） ─────────────────────── */
+main { display: grid; grid-template-columns: 336px 1fr; align-items: start; }
+aside {
+	padding: 16px 16px 44px;
+	border-right: 1px solid var(--border);
+	position: sticky;
+	top: var(--nav-h);
+	max-height: calc(100vh - var(--nav-h));
+	overflow: auto;
+	/* 这里**不要**写 overscroll-behavior: contain。实测（L2 页）：只要光标落在带 contain 的
+	   overflow:auto 容器上，滚轮就被它吞掉 —— 哪怕该容器根本没有可滚内容，页面也不再滚动。
+	   层与层之间保持默认的滚动链接。 */
+	scrollbar-gutter: stable; /* 筛选后内容变高变矮，别让整栏文字跟着横跳 */
+}
+section.content { padding: 16px 20px 64px; min-width: 0; }
+
+@media (max-width: 1080px) {
+	main { grid-template-columns: 1fr; }
+	aside {
+		position: static;
+		max-height: none;
+		scrollbar-gutter: auto;
+		border-right: 0;
+		border-bottom: 1px solid var(--border);
+	}
+}
+
+/* 小标题：只靠分隔线分组，不用全大写 + 字距（那是模板感最重的写法）。
+   字号必须 ≥ 内容行（--t-sm）：2026-10-10 用户报「左侧菜单栏里标题比下面的内容还小」，
+   根因就是标题曾按"eyebrow 标签"压到 11px。层级靠分隔线 + 字重 + 静音色表达。 */
+aside h2, section h2 {
+	font-size: var(--t-md);
+	font-weight: 600;
+	color: var(--muted);
+	margin: 16px 0 7px;
+	padding-top: 12px;
+	border-top: 1px solid var(--border-soft);
+}
+aside > h2:first-child, section > h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+aside h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
+
+/* ── 侧栏：统计行（分隔线列表，不是一叠盒子） ─────────────────────────────── */
+.stats { display: grid; gap: 0; }
+.stat {
+	display: flex;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 4px 0;
+	border-bottom: 1px solid var(--border-soft);
+	font-size: var(--t-sm);
+	color: var(--muted);
+}
+.stat:last-child { border-bottom: 0; }
+.stat > span:last-child { color: var(--text); font-weight: 600; }
+.stats .hint { padding: 4px 0; }
+
+/* ── 侧栏：筛选按钮组（整行铺满 + 计数靠右；长相由 .el-button 决定） ───────── */
+.btn-list { display: flex; flex-direction: column; gap: 2px; }
+/* el-button 会把 slot 内容包进一个 <span>，所以"整行 + 两端对齐"要写在那一层上 ——
+   写在按钮上只会看到 space-between 作用在单个子节点上（等于没生效）。 */
+.btn-list .el-button { width: 100%; justify-content: flex-start; }
+.btn-list .el-button > span { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; }
+.btn-list .el-button + .el-button { margin-left: 0; }
+.btn-list .n { color: var(--muted); font-weight: 400; }
+.btn-list .n .alive { color: var(--ok); font-weight: 600; }
+/* 二级菜单（类型 → 任务状态）：缩进 + 一条竖线表示从属，比一级小一号 */
+.type-branch { display: flex; flex-direction: column; gap: 2px; }
+.btn-list .type-sub { margin: 2px 0 4px 9px; padding-left: 8px; border-left: 1px solid var(--border); }
+.btn-list .type-sub .el-button { font-size: var(--t-xs); padding: 3px 8px; }
+.caret { margin-left: 6px; color: var(--muted); font-family: var(--mono); user-select: none; }
+
+/* 悬停说明标记（HelpNote）：默认只是一个静音问号，悬停才展开说明 —— 用户 2026-10-10 要求
+   "说明文本默认隐藏"，但**标记本身必须可见**，否则说明等于不存在。 */
+.help-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 15px;
+	height: 15px;
+	margin-left: 5px;
+	border: 1px solid var(--border);
+	border-radius: 50%;
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1;
+	cursor: help;
+	vertical-align: 1px;
+}
+.help-mark:hover { color: var(--text); border-color: var(--faint); }
+
+/* ── chip / metric：形状编码种类（契约 2） ───────────────────────────────── */
+.chips { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.chip, .metric {
+	font-size: var(--t-xs);
+	line-height: 1.55;
+	padding: 1px 7px;
+	border-radius: var(--r-sm);
+	background: var(--panel2);
+	color: var(--muted);
+	white-space: nowrap;
+	border: 1px solid transparent;
+}
+/* 度量值：等宽、无边框、安静 —— 与"状态药丸"一眼可分 */
+.metric { font-family: var(--mono); }
+.metric.id { color: var(--text); font-weight: 600; }
+.chip.mono { font-family: var(--mono); }
+.chip.type, .chip.prio { color: var(--text); }
+.chip.scene { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+/* 已确定的状态：药丸 + 同色描边，底仍用 --panel2（不给底色叠同色调：实测 11px 下对比度
+   会掉到 4.0~4.4，低于 4.5 下限）。颜色只走「文字 + 描边」，全部色相实测 ≥ 4.7:1。 */
+.chip.del, .chip.prune, .chip.merged, .chip.err, .chip.task-done,
+.chip.q-hot, .chip.q-warm, .chip.q-cold, .chip.q-new, .chip.q-noise, .chip.q-watch,
+.chip.st-running, .chip.st-done, .chip.st-failed {
+	border-radius: var(--r-pill);
+	border-color: currentColor;
+}
+.chip.del { color: var(--danger); }
+.chip.prune { color: var(--warn); }
+.chip.merged { color: var(--warn); }
+.chip.err { color: var(--danger); }
+.chip.task-done { color: var(--ok); }
+/* 未落定：虚线 */
+.chip.task-open { color: var(--text); border-style: dashed; border-color: var(--muted); border-radius: var(--r-pill); }
+.chip.unclassified { color: var(--muted); border-style: dashed; border-color: var(--faint); border-radius: var(--r-pill); }
+/* 已搁置：点线 */
+.chip.task-dropped { color: var(--muted); border-style: dotted; border-color: var(--faint); border-radius: var(--r-pill); }
+
+/* 温度标签：颜色与图例、条形图、卡片温度条同源 */
+.chip.q-hot { color: var(--hot); }
+.chip.q-warm { color: var(--warm); }
+.chip.q-cold { color: var(--cold); }
+.chip.q-new { color: var(--new); }
+.chip.q-noise { color: var(--noise); }
+.chip.q-watch { color: var(--watch); }
+
+/* 流水线作业状态（pipeline 页）：五个状态与 jobs.sqlite 的 status 闭集一一对应。
+   色相仍属数据：跑 = warn、成 = ok、败 = danger；排队 / 跳过沿用虚线与点线形状，不引新色。 */
+.chip.st-queued { color: var(--muted); border-style: dashed; border-color: var(--faint); border-radius: var(--r-pill); }
+.chip.st-running { color: var(--warn); }
+.chip.st-done { color: var(--ok); }
+.chip.st-skipped { color: var(--muted); border-style: dotted; border-color: var(--faint); border-radius: var(--r-pill); }
+.chip.st-failed { color: var(--danger); }
+
+/* ── 条形图 / 直方图（领域形状：颜色=温度，EP 的进度条表达不了这套语义） ───── */
+.bars { display: flex; flex-direction: column; gap: 5px; }
+.bar-row { display: grid; grid-template-columns: 68px 1fr 46px; gap: 8px; align-items: center; font-size: var(--t-xs); }
+.bar-track { background: var(--panel2); border-radius: 3px; height: 6px; overflow: hidden; }
+.bar-track > i { display: block; height: 100%; border-radius: 3px; }
+.bar-row .num { text-align: right; color: var(--muted); font-family: var(--mono); }
+/* 温度色（与 .chip.q-* 同源） */
+.c-hot { background: var(--hot); }
+.c-warm { background: var(--warm); }
+.c-cold { background: var(--cold); }
+.c-new { background: var(--new); }
+.c-noise { background: var(--noise); }
+.c-watch { background: var(--watch); }
+/* 兜底色让出特异度给 .c-* —— 用 :where() 把自身特异度降到 0，否则同是 (0,1,0) 时靠书写顺序定胜负 */
+:where(.bar-track) > i { background: var(--muted); }
+
+.hist { display: flex; gap: 10px; align-items: flex-end; height: 104px; padding-top: 6px; }
+.hist .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; height: 100%; }
+.hist .col .fill { width: 100%; background: var(--panel3); border-radius: 2px 2px 0 0; min-height: 2px; }
+.hist .col .lbl, .hist .col .val { font-size: var(--t-xs); color: var(--muted); font-family: var(--mono); }
+
+/* ── 卡片（L1 记录）：领域形状（3px 质量条 + 截断正文 + 属性胶囊），不用 el-card ── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 12px; align-items: start; }
+.card {
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: var(--r-lg);
+	overflow: hidden;
+	cursor: pointer;
+	transition: border-color 120ms, background-color 120ms;
+}
+.card:hover { border-color: #3c4d60; background: #161e29; }
+.card.deleted { opacity: 0.55; }
+.card.deleted .full-content { text-decoration: line-through; text-decoration-color: var(--faint); }
+.card-head { padding: 10px 12px 8px; }
+/* 温度条：卡片自己的"身份标记"，颜色 = 这条记忆的热度 */
+.qbar { height: 3px; background: var(--panel2); }
+.qbar > i { display: block; height: 100%; }
+.card-body { padding: 9px 12px 10px; }
+/* 截断预览：不带滚动条（契约 3）。max-height 必须与 line-clamp 对齐：行高 1.55 × 6 = 9.3em；
+   之前写 8.8em 比 6 行矮，于是每张卡片的第 6 行都被切掉下半截（含省略号）。 */
+.card-body .full-content {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 6;
+	overflow: hidden;
+	max-height: 9.3em;
+	font-size: var(--t-md);
+	line-height: 1.55;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+/* 详情弹层的正文：同一份内容，但这里要看全文 —— 保留换行、不截断 */
+.full-content { white-space: pre-wrap; word-break: break-word; }
+.card-foot {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	padding: 8px 12px 9px;
+	border-top: 1px solid var(--border-soft);
+}
+/* 卡片脚的按钮走紧凑档（契约 5 的两处例外之一）：与同行 21px 度量胶囊对齐 */
+.card-foot .el-button { font-size: var(--t-xs); padding: 3px 7px; margin: -3px -7px; }
+.card-foot .el-button + .el-button { margin-left: 0; }
+
+/* ── 时间线（L2 归档账本） ────────────────────────────────────────────────── */
+.timeline { border-left: 1px solid var(--border); margin-left: 5px; }
+.tl-item { position: relative; padding: 7px 0 7px 18px; }
+.tl-item::before {
+	content: "";
+	position: absolute;
+	left: -3px;
+	top: 13px;
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--muted);
+}
+.tl-item.archive::before { background: var(--warm); }
+.tl-item.restore::before { background: var(--ok); }
+.tl-item .when { color: var(--muted); font-size: var(--t-xs); font-family: var(--mono); }
+
+/* ── 预算条（L3 字符用量 / 块数上限） ─────────────────────────────────────── */
+.budget { margin: 8px 0 4px; }
+.budget .track { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+.budget .track > i { display: block; height: 100%; background: var(--ok); transition: width 160ms ease-out; }
+.budget .track > i.over { background: var(--danger); }
+.budget .track > i.warn { background: var(--warn); }
+.budget .meta { display: flex; justify-content: space-between; gap: 10px; font-size: var(--t-xs); color: var(--muted); margin-top: 3px; }
+
+/* ── 规则条目（L3 画像逐条） ─────────────────────────────────────────────── */
+.entry { padding: 6px 0 6px 10px; border-left: 2px solid var(--border); font-size: var(--t-sm); }
+.entry + .entry { margin-top: 4px; }
+.entry.added { border-left-color: var(--ok); }
+.entry .idx { color: var(--muted); font-family: var(--mono); font-size: var(--t-xs); margin-right: 8px; }
+.entry .tag { font-size: var(--t-xs); color: var(--muted); margin-left: 6px; }
+.entry .tag.added { color: var(--ok); }
+.entry .chip { margin-left: 6px; }
+
+/* ── 管理操作面板（.ops* / 危险区 / 打字确认 / 差异清单）─────────────────────
+ *
+ * 为什么不复用 .stats / .card：操作区要回答的是"这一栏能改什么、代价是什么、现在可不可用"，
+ * 与只读展示是两回事。四条契约照旧：外壳无彩度（危险动作只用 --danger 描边/文字，**不做底色块**）；
+ * 形状编码种类（破坏性动作 = 描边按钮，预演/只读 = 默认描边动作）；一层一条滚动轴（日志一律
+ * `<details>` 展开 + 页面统一滚，不做内滚动）；度量值等宽。
+ */
+.ops { display: grid; gap: 10px; }
+.ops-row { display: grid; grid-template-columns: minmax(84px, 116px) 1fr; gap: 4px 10px; align-items: start; }
+.ops-row > .ops-label { color: var(--muted); font-size: var(--t-sm); padding-top: 7px; }
+.ops-row > .ops-ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+/* 控件不许撑破控件列：336px 侧栏里控件列只有约 178px，而下拉的固有宽度取「最长选项」（实测备份
+   下拉 660px）。aside 是 overflow:auto，溢出表现为侧栏横向滚动条 + 控件被裁。按钮不在此列 ——
+   不允许把按钮压扁换行。 */
+.ops-ctl .el-input, .ops-ctl .el-select, .ops-ctl .el-input-number { min-width: 0; max-width: 100%; }
+/* 说明跨满整行，而不是只占右侧控件列（那里只有 ~153px，一句"写信号只是入队请求…"要折 6 行）。
+   颜色用 --muted：--faint 在 11px 上只有 3.41:1，达不到小字号 4.5:1 的下限。 */
+.ops-note { color: var(--muted); font-size: var(--t-xs); line-height: 1.55; }
+.ops-row > .ops-note { grid-column: 1 / -1; }
+.ops h3.sub { margin: 14px 0 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
+.ops h3.sub:first-child { margin-top: 0; }
+/* 长任务（向量回填/重建、整库还原）：整栏置灰 + 明说"运行中" —— 桥是单线程同步执行，
+   这期间它真的不响应任何请求。 */
+.ops-row.busy .ops-ctl { pointer-events: none; opacity: 0.5; }
+
+/* 危险区：只换描边与标题色，不加底色（契约 1）。标签折到控件上方 —— 这块被 12px 内边距再吃掉
+   一圈，控件列只剩 ~141px，备份下拉只能显示到「backfill-project-」（5 个同名前缀的目录分不开）。 */
+.danger-zone { border: 1px dashed var(--border); border-radius: var(--r-lg); padding: 10px 12px; }
+.danger-zone > h3 { margin: 0 0 8px; font-size: var(--t-sm); color: var(--danger); font-weight: 600; }
+.danger-zone .ops-row { grid-template-columns: 1fr; }
+.danger-zone .ops-row > .ops-label { padding-top: 0; }
+
+/* 打字确认：要你打的字面量用等宽原样显示，减少"打错了"这种无谓失败 */
+.confirm-token {
+	font-family: var(--mono);
+	font-size: var(--t-xs);
+	color: var(--text);
+	background: var(--panel3);
+	border: 1px solid var(--border);
+	border-radius: var(--r-sm);
+	padding: 1px 5px;
+	word-break: break-all;
+}
+
+/* 差异清单（并入 / 还原 / 归档前给人看"会变什么"）：增 = ok、删 = danger，两者都是数据状态 */
+.diff-list { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.diff-list li { font-size: var(--t-xs); line-height: 1.5; padding-left: 14px; position: relative; word-break: break-word; }
+.diff-list li::before { position: absolute; left: 0; font-family: var(--mono); }
+.diff-list li.add { color: var(--ok); }
+.diff-list li.add::before { content: "+"; }
+.diff-list li.del { color: var(--danger); }
+.diff-list li.del::before { content: "−"; }
+.diff-list li.more { color: var(--faint); }
+.diff-list li.more::before { content: "…"; }
+
+/* 勾选框行的包装（卡片 chips 行首）：只声明布局与点击区，不碰 el-checkbox 自身长相 */
+label.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* ── 提示条 / 日志折叠块 ─────────────────────────────────────────────────── */
+.notice {
+	border: 1px solid var(--border);
+	border-left-width: 3px;
+	border-radius: var(--r-md);
+	padding: 8px 11px;
+	font-size: var(--t-sm);
+	background: var(--panel);
+	color: var(--text);
+	margin: 8px 0;
+}
+.notice.warn { border-left-color: var(--warn); }
+.notice.err { border-left-color: var(--danger); }
+.log { margin-top: 8px; }
+.log > summary {
+	cursor: pointer;
+	color: var(--muted);
+	font-size: var(--t-sm);
+	padding: 3px 0;
+}
+.log-text {
+	margin: 6px 0 0;
+	padding: 8px 10px;
+	background: var(--panel2);
+	border: 1px solid var(--border-soft);
+	border-radius: var(--r-md);
+	font-family: var(--mono);
+	font-size: var(--t-xs);
+	line-height: 1.5;
+	max-height: 320px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* 空态：一句人话 + 下一步做什么（不用 el-empty 的插画 —— 它占掉半屏且不带信息） */
+.empty { color: var(--muted); font-size: var(--t-sm); padding: 18px 0; }
+.empty strong { display: block; color: var(--text); margin-bottom: 4px; font-size: var(--t-md); }
+
+/* ── 工具类（模板里反复用到的最小集合；再多就该有语义名，别把这里养大） ───── */
+.cell-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* 长文本（失败堆栈、路径）允许任意断行：表格列宽固定，溢出会把整张表撑破 */
+.wrap-any { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+/* 表格单元格：不换行（配合 title 悬停看全）/ 单行省略 */
+.nowrap { white-space: nowrap; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
