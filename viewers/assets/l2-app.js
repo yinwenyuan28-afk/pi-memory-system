@@ -206,6 +206,16 @@
 				opsNote: { html: "", level: "", json: null, jsonSummary: "执行原始返回" },
 				/** 场景池报告：busy / 正文 / 折叠块的标题 */
 				report: { busy: false, html: "", level: "", text: null, textSummary: "", json: null },
+				/**
+				 * 报告弹层：几千字的 CLI 文本在 336px 侧栏里读不下来，所以结果进弹层。
+				 * 点侧栏那颗按钮**同时**打开弹层并开始生成（与旧版"点一下就开始生成"同一拍，
+				 * 只是把结果摆到了一个放得下的容器里）。
+				 */
+				reportOpen: false,
+				/** 当前报告类型："report"（场景池）| "merge"（合并） */
+				reportKind: "report",
+				/** 播种弹层（四列表格在侧栏里只能压成折行） */
+				seedOpen: false,
 				/** 播种表（一行 = 一个场景）；初始就留一行，空表会让用户以为"播种"没在做 */
 				seedRows: [{ name: "", aliases: "", note: "" }],
 				/** 执行（写盘）只在一次成功的预演之后可用（旧版同款：预演成功才启用） */
@@ -540,9 +550,16 @@
 			bumpOp: function () {
 				this.opVersion++;
 			},
-			/** 播种表单元格的内边距：336px 侧栏里三列要放得下，EP 默认 12px×2 会把输入框压到 ~54px。 */
-			seedCellStyle: function () {
-				return { padding: "0 4px" };
+			/**
+			 * 打开报告弹层并**立刻开始生成**。
+			 *
+			 * 与旧版同一拍（旧版点一下按钮就生成、结果留在侧栏）；只是把结果摆进放得下的容器。
+			 * `reportKind` 决定弹层标题与「重新生成」重新跑哪一种。
+			 */
+			openReport: function (which) {
+				this.reportKind = which;
+				this.reportOpen = true;
+				return this.runReport(which);
 			},
 			/** 块行可点（打开详情）：EP 默认不给 pointer，这里补上"这行能点"的提示。 */
 			rowStyle: function () {
@@ -553,15 +570,14 @@
 				this.openBlock(row.filename, row.archived);
 			},
 
-			/** 写行内操作格的状态（预演裁决 / 原始返回 / 是否给出"确认执行"）。 */
-	/**
-	 * 写行内操作格的状态（预演裁决 / 原始返回 / 是否给出"确认执行"）。
-	 *
-	 * ⚠ 必须 `bumpOp()`：操作格渲染在 `el-table` 的单元格里，而 **Element Plus 的表格只在 `:data`
-	 * 变化时重渲染单元格**（2026-10-10 实测 2.14.7：连父组件 `$forceUpdate()` 都不会让单元格重画）。
-	 * 若 `:data` 与 opState 无关，预演结果永远不显示、输入框也读不到模型值 —— 用户填了归档原因
-	 * 却被告知"必须写原因"（这是本轮真实测出的故障，静态检查与逻辑冒烟都抓不到）。
-	 */
+			/**
+			 * 写行内操作格的状态（预演裁决 / 原始返回 / 是否给出"确认执行"）。
+			 *
+			 * ⚠ 必须 `bumpOp()`：操作格渲染在 `el-table` 的单元格里，而 **Element Plus 的表格只在 `:data`
+			 * 变化时重渲染单元格**（2026-10-10 实测 2.14.7：连父组件 `$forceUpdate()` 都不会让单元格重画）。
+			 * 若 `:data` 与 opState 无关，预演结果永远不显示、输入框也读不到模型值 —— 用户填了归档原因
+			 * 却被告知"必须写原因"（这是本轮真实测出的故障，静态检查与逻辑冒烟都抓不到）。
+			 */
 			setOp: function (row, html, level, json, items, canApply, jsonSummary) {
 				var st = this.opOf(row.filename);
 				st.html = html;
@@ -971,58 +987,30 @@
 				     按钮搬走了要留一句指引 —— 凭空消失而不说去哪了是最糟的失效方式。 -->
 				<p class="hint">「请求 L2 组织」与「停止子代理」在顶部 <a :href="pipelineHref">流水线页</a>。</p>
 
-				<h3 class="sub">场景池报告（按需生成，不随页面加载）</h3>
-				<div class="cell-actions">
-					<span class="hint">只读报告</span>
-					<el-button :disabled="!hasPort() || report.busy" @click="runReport('report')">场景池报告</el-button>
-					<el-button :disabled="!hasPort() || report.busy" @click="runReport('merge')">合并报告</el-button>
-					<span v-if="report.busy" class="hint">生成中…</span>
+				<!-- 管理动作一律用 .ops-row（标签 / 控件 / 脚注）—— 与 L1「操作」组同一套排版。
+				     真正的交互各自进弹层：报告要读几千字、播种表四列要写，336px 的侧栏放不下
+				     （旧版在这里把表头折成两行、输入框压到 ~54px，正是这轮要修的那种"挤"）。 -->
+				<!-- ⚠ 模板里**不许出现反引号**（这句注释本身就踩过一次）：JS 模板字符串用反引号
+				     定界，注释里的反引号会提前把它闭合，后面半截模板会当成 JS 执行 —— 症状是
+				     整页空白 + ReferenceError: row is not defined，而 new Function 语法检查照样通过
+				     （漏出来那截恰好是合法语句时）。门禁 ⑨ 现在断言模板内部没有第二个反引号。 -->
+				<div class="ops">
+					<div class="ops-row">
+						<div class="ops-label">只读报告</div>
+						<div class="ops-ctl">
+							<el-button :disabled="!hasPort()" @click="openReport('report')">场景池报告…</el-button>
+							<el-button :disabled="!hasPort()" @click="openReport('merge')">合并报告…</el-button>
+						</div>
+						<div class="ops-note">按需生成（不随页面加载）：一次点开即开始生成。</div>
+					</div>
+					<div class="ops-row">
+						<div class="ops-label">播种</div>
+						<div class="ops-ctl">
+							<el-button :disabled="!hasPort()" @click="seedOpen = true">编辑场景映射…</el-button>
+						</div>
+						<div class="ops-note">把「旧名 → 稳定标签」映射写进 <code>l1/scenes.json</code>：预演只打印计划，执行会<b>先自动备份该文件</b>再写。</div>
+					</div>
 				</div>
-				<div class="hint">报告可能调用 embedding，要几秒到更久；桥是单线程同步执行 —— 生成期间整座桥都不响应请求，别重复点。</div>
-				<div v-if="report.html" :class="report.level ? 'notice ' + report.level : 'hint'" v-html="report.html"></div>
-				<details v-if="report.text !== null" class="log" open>
-					<summary>{{ report.textSummary }}</summary>
-					<pre class="log-text">{{ report.text }}</pre>
-				</details>
-				<json-details v-if="report.json !== null" summary="原始返回" :value="report.json"></json-details>
-
-				<h3 class="sub">播种 —— 写 <code>l1/scenes.json</code></h3>
-				<div class="cell-actions">
-					<span class="hint">场景映射</span>
-					<el-button :disabled="!hasPort() || busy === 'seed'" @click="seedAddRow">添加一行</el-button>
-					<el-button :disabled="!hasPort() || busy === 'seed'" @click="seedRun(false)">预演</el-button>
-					<el-button type="primary" :disabled="!hasPort() || busy === 'seed' || !seedPreviewed" @click="seedRun(true)">执行（写盘）</el-button>
-				</div>
-				<div class="hint">把「旧名 → 稳定标签」映射写进 <code>l1/scenes.json</code>：预演只打印计划，执行会<b>先自动备份该文件</b>再写。</div>
-				<!-- 播种表：一行 = 一个场景。输入框写死 width:100% —— 表在 336px 侧栏里，
-				     只能靠它把三列压在单元格里不撑破（配合 :cell-style 收紧的 4px 内边距）。 -->
-				<el-table :data="seedRows" size="small" :cell-style="seedCellStyle">
-					<el-table-column label="场景名" min-width="78">
-						<template #default="{ row }">
-							<el-input v-model="row.name" size="small" placeholder="场景名（稳定标签）" style="width: 100%" />
-						</template>
-					</el-table-column>
-					<el-table-column label="别名（逗号分隔）" min-width="78">
-						<template #default="{ row }">
-							<el-input v-model="row.aliases" size="small" placeholder="旧名1, 旧名2" style="width: 100%" />
-						</template>
-					</el-table-column>
-					<el-table-column label="备注" min-width="70">
-						<template #default="{ row }">
-							<el-input v-model="row.note" size="small" placeholder="备注（可选）" style="width: 100%" />
-						</template>
-					</el-table-column>
-					<el-table-column width="50">
-						<template #default="{ $index }">
-							<el-button size="small" @click="seedRemove($index)">移除</el-button>
-						</template>
-					</el-table-column>
-				</el-table>
-				<div v-if="seedOut.html" :class="seedOut.err ? 'notice err' : 'hint'" v-html="seedOut.html"></div>
-				<details v-if="seedOut.log" class="log" open>
-					<summary>{{ seedOut.log.summary }}</summary>
-					<pre class="log-text">{{ seedOut.log.text }}</pre>
-				</details>
 
 				<!-- 契约三段（块数预算 / 恢复要先腾位 / 归档≠删除）是长解释，默认收起：
 				     它们描述"为什么会被拒"，只有真被拒时才需要读。 -->
@@ -1200,6 +1188,73 @@
 			</template>
 			<template #footer>
 				<el-button @click="detailOpen = false">关闭</el-button>
+			</template>
+		</el-dialog>
+
+		<!-- 场景池报告（只读、按需生成）：几千字的 CLI 文本在 336px 侧栏里读不下来，
+		     所以结果进弹层；点侧栏那颗按钮=打开弹层并开始生成（与旧版同一拍）。
+		     生成期间桥被整座占满 —— "别重复点"这句话因此放在弹层里最显眼的位置。 -->
+		<el-dialog v-model="reportOpen" :title="reportKind === 'merge' ? '合并报告（场景池）' : '场景池报告'" width="1000px" top="6vh" class="viewer-dialog">
+			<div class="ops">
+				<div class="hint">报告可能调用 embedding，要几秒到更久；桥是单线程同步执行 —— 生成期间整座桥都不响应请求，别重复点。</div>
+				<div v-if="report.busy" class="hint">生成中…（桥在此期间不响应其他请求）</div>
+				<notice v-if="report.html" :msg="{ html: report.html, level: report.level }"></notice>
+				<template v-if="report.text !== null">
+					<div class="hint">{{ report.textSummary }}</div>
+					<pre class="log-text">{{ report.text }}</pre>
+				</template>
+				<json-details v-if="report.json !== null" summary="原始返回" :value="report.json"></json-details>
+			</div>
+			<template #footer>
+				<el-button :disabled="report.busy || !hasPort()" @click="runReport(reportKind)">重新生成</el-button>
+				<el-button @click="reportOpen = false">关闭</el-button>
+			</template>
+		</el-dialog>
+
+		<!-- 播种（写 l1/scenes.json）：四列表格 + 预演/执行。进弹层后列宽终于够用 ——
+		     旧版在侧栏里只能把表头折成两行、输入框压到 ~54px（那正是"挤"的来源）。 -->
+		<el-dialog v-model="seedOpen" title="播种 —— 写 l1/scenes.json" width="1000px" top="6vh" class="viewer-dialog">
+			<div class="ops">
+				<div class="ops-row">
+					<div class="ops-label">场景映射</div>
+					<div class="ops-ctl">
+						<el-button :disabled="!hasPort() || busy === 'seed'" @click="seedAddRow">添加一行</el-button>
+						<el-button :disabled="!hasPort() || busy === 'seed'" @click="seedRun(false)">预演</el-button>
+						<el-button type="primary" :disabled="!hasPort() || busy === 'seed' || !seedPreviewed" @click="seedRun(true)">执行（写盘）</el-button>
+						<span v-if="busy === 'seed'" class="hint">运行中…</span>
+					</div>
+					<div class="ops-note">一行 = 一个场景（场景名必填，别名与备注可空）；预演只打印计划，执行会<b>先自动备份 l1/scenes.json</b> 再整节重写。</div>
+				</div>
+				<el-table :data="seedRows" size="small" empty-text="还没有行">
+					<el-table-column label="场景名（稳定标签）" min-width="240">
+						<template #default="{ row }">
+							<el-input v-model="row.name" size="small" placeholder="场景名（稳定标签）" />
+						</template>
+					</el-table-column>
+					<el-table-column label="别名（逗号分隔）" min-width="340">
+						<template #default="{ row }">
+							<el-input v-model="row.aliases" size="small" placeholder="旧名1, 旧名2" />
+						</template>
+					</el-table-column>
+					<el-table-column label="备注（可选）" min-width="240">
+						<template #default="{ row }">
+							<el-input v-model="row.note" size="small" placeholder="备注（可选）" />
+						</template>
+					</el-table-column>
+					<el-table-column width="96">
+						<template #default="{ $index }">
+							<el-button size="small" @click="seedRemove($index)">移除</el-button>
+						</template>
+					</el-table-column>
+				</el-table>
+				<notice v-if="seedOut.html" :msg="{ html: seedOut.html, level: seedOut.err ? 'err' : '' }"></notice>
+				<details v-if="seedOut.log" class="log" open>
+					<summary>{{ seedOut.log.summary }}</summary>
+					<pre class="log-text">{{ seedOut.log.text }}</pre>
+				</details>
+			</div>
+			<template #footer>
+				<el-button @click="seedOpen = false">关闭</el-button>
 			</template>
 		</el-dialog>
 		`,
