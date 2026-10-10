@@ -506,17 +506,20 @@ const handler = async (req, res) => {  const cors = () => {
   }
 
   // ── 并入 live USER.md（l3-merge.mts → mergeTempIntoLive）：全仓库唯一写 live 画像的路径 ──
-  // 三道安全闸（陈旧 / 过半删除 / 清空）由实现裁决，页面把 `allow*` 透传给用户显式放行的情形。
+  // 默认只追加新条目；完整替换通过 strategy=replace 显式选择，三道安全闸由实现裁决。
   if (req.method === "POST" && url === "/api/l3/merge") {
     const body = (await readBody(req)) || {};
-    if (body.apply === true && body.confirm !== "MERGE") {
-      return sendJson(res, 400, { success: false, error: "并入会覆盖 live USER.md，需要 confirm=MERGE" });
+    const strategy = body.strategy === "replace" ? "replace" : "add";
+    const confirmToken = strategy === "replace" ? "REPLACE" : "MERGE";
+    if (body.apply === true && body.confirm !== confirmToken) {
+      return sendJson(res, 400, { success: false, error: `需要 confirm=${confirmToken}` });
     }
     const cliArgs = ["l3-merge.mts"];
+    if (strategy === "replace") cliArgs.push("--replace");
     if (body.allowStale === true) cliArgs.push("--allow-stale");
     if (body.allowMassRemoval === true) cliArgs.push("--allow-mass-removal");
     if (body.allowEmpty === true) cliArgs.push("--allow-empty");
-    if (body.apply === true) cliArgs.push("--apply", "--confirm", "MERGE");
+    if (body.apply === true) cliArgs.push("--apply", "--confirm", confirmToken);
     return passthrough(res, cliArgs);
   }
 

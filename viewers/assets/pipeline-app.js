@@ -176,6 +176,8 @@
 		mounted: function () {
 			// 旧版的 init() 做三件事：mountChrome（已在 V.vue.mount 里做过）、bind()（Vue 接管，
 			// 不再需要事件委托）、loadAll()。挂载后立刻取一次数。
+			var self = this;
+			V.registerRefreshHandler(function () { return self.loadAll(); });
 			this.loadAll();
 		},
 		computed: {
@@ -409,9 +411,6 @@
 			     完全一致，写三遍就是三份会分叉的说明。 -->
 			<p class="sub">三层共用的作业队列（pipeline/jobs.sqlite）· 待消费触发信号 · 正在跑的子代理与停止。</p>
 			<notice :msg="loadNote"></notice>
-			<div class="toolbar">
-				<el-button @click="loadAll">刷新</el-button>
-			</div>
 		</header>
 
 		<main>

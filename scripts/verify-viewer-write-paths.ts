@@ -240,7 +240,7 @@ check("夹具前提：live 6 条", (liveBefore.match(/规则/g) ?? []).length ==
 
 // ① 陈旧：temp 比 live 旧
 pinPersonaTimes(1_699_999_000_000);
-const staleMerge = mergeTempIntoLive(root, {});
+const staleMerge = mergeTempIntoLive(root, { strategy: "replace" });
 check("陈旧拒绝：提议稿比 live 旧 → 拒绝", staleMerge.ok === false && staleMerge.error!.includes("比 live 画像旧"), staleMerge.error?.slice(0, 60));
 check("拒绝时也报出「会删几条」", typeof staleMerge.removedTotal === "number", `removedTotal=${staleMerge.removedTotal}`);
 check("拒绝时 live 未被改动", readUserFile(root) === liveBefore);
@@ -248,24 +248,24 @@ check("拒绝时 live 未被改动", readUserFile(root) === liveBefore);
 // ② 过半删除：temp 更新，但只剩 1 条（放行陈旧闸也还不够）
 write(tempPath, "只剩一条的提议稿\n");
 pinPersonaTimes(1_700_000_200_000);
-const massMerge = mergeTempIntoLive(root, { allowStale: true });
+const massMerge = mergeTempIntoLive(root, { strategy: "replace", allowStale: true });
 check("过半删除拒绝：live 6 条要删 6 条 → 拒绝", massMerge.ok === false && massMerge.error!.includes("过半"), massMerge.error?.slice(0, 40));
 check("拒绝时 live 未被改动", readUserFile(root) === liveBefore);
 
 // ③ 清空：temp 为空而 live 非空（放行过半闸也只是让"清空"这道闸变得可达）
 write(tempPath, "\n");
 pinPersonaTimes(1_700_000_200_000);
-const emptyMerge = mergeTempIntoLive(root, { allowMassRemoval: true });
+const emptyMerge = mergeTempIntoLive(root, { strategy: "replace", allowMassRemoval: true });
 check("清空拒绝：提议稿 0 条而 live 有 6 条 → 拒绝", emptyMerge.ok === false && emptyMerge.error!.includes("清空"), emptyMerge.error?.slice(0, 40));
 
 // ④ dry-run：三闸全放行也只预演
-const okDry = mergeTempIntoLive(root, { dryRun: true, allowStale: true, allowMassRemoval: true, allowEmpty: true });
+const okDry = mergeTempIntoLive(root, { strategy: "replace", dryRun: true, allowStale: true, allowMassRemoval: true, allowEmpty: true });
 check("dry-run 全放行时报 ok 且标 dryRun", okDry.ok === true && okDry.dryRun === true);
 check("dry-run 不落盘（live 逐字节未变）", readUserFile(root) === liveBefore);
 
 // ⑤ 实写：三闸分别放行后落盘，并留档一份 -live-premerge 备份
 const backupsBefore = listUserBackups(root).length;
-const okMerge = mergeTempIntoLive(root, { allowStale: true, allowMassRemoval: true, allowEmpty: true });
+const okMerge = mergeTempIntoLive(root, { strategy: "replace", allowStale: true, allowMassRemoval: true, allowEmpty: true });
 check("三闸分别放行后实写成功", okMerge.ok === true && okMerge.backupFile !== undefined, `backup=${okMerge.backupFile}`);
 check("live 变成提议稿的内容（0 条 ⇒ 空文件）", (readUserFile(root) ?? "").trim() === "");
 check("备份数 +1（并入可回退）", listUserBackups(root).length === backupsBefore + 1);

@@ -273,6 +273,8 @@ export interface PersonaFileChange {
 	backupFile?: string;
 	/** 是否干跑（未落盘）。 */
 	dryRun: boolean;
+	/** 并入策略：追加新条目，或用提议稿完整替换。 */
+	strategy?: "add" | "replace";
 	/** 降级/拒绝判据用到的两个时间戳（ISO；文件不存在则 null）。 */
 	liveMtime?: string | null;
 	tempMtime?: string | null;
@@ -304,7 +306,8 @@ function entryCountOf(raw: string | null): number {
  * 这里只是把"手工"从手抄变成一次点击（内容判断仍归用户）。
  *
  * 语义：
- *   · 条目取 **temp 的**（temp 写入时以 live 播种，所以并入不会丢 live 里的旧条目）；
+ *   · 默认只把 temp 中 live 尚不存在的条目追加到 live，保留 live 的全部旧条目；
+ *   · 只有明确指定 `strategy: "replace"` 时，才用 temp 的完整条目集替换 live；
  *   · 行尾/结尾换行沿用 **live 的**格式（写回的是 live 文件，格式该由它决定；live 不存在时用 temp 的）；
  *   · 写前把 live 现况留档到 `user-backup-<ts>-live-premerge.md`（本次并入因此可回退）。
  *
@@ -312,8 +315,8 @@ function entryCountOf(raw: string | null): number {
  *
  *   ① **陈旧拒绝**（`allowStale`）：temp 比 live 旧 ⇒ live 在那之后被改过，拿旧稿覆盖新稿会
  *      静默丢掉那些改动。实测触发过：真实 profile 里 `USER-temp.md` 是 09-28 的 3 条残留，
- *      而 `USER.md` 是 09-30 的 24 条 —— 一条 `merge` 就会删掉 21 条用户手写的画像。
- *      这条闸把"提议稿生成后 live 又被改过"变成显式选择，而不是一次点击。
+ *      而 `USER.md` 是 09-30 的 24 条 —— 旧的整份替换语义会删掉 21 条用户手写的画像。
+ *      这条闸只对显式替换模式生效；追加模式不会覆盖 live 的后续改动。
  *   ② **过半删除拒绝**（`allowMassRemoval`）：要删掉 live 一半以上条目时，即使时间戳看着正常
  *      也要求再放行一次（时间戳能被"两边都在改"这种情况骗过，内容剧烈收缩骗不过）。
  *   ③ **清空拒绝**（`allowEmpty`）：live 有条目而 temp 为空的极端情形。
@@ -322,7 +325,14 @@ function entryCountOf(raw: string | null): number {
  */
 export function mergeTempIntoLive(
 	profilePath: string,
-	opts: { dryRun?: boolean; allowEmpty?: boolean; allowStale?: boolean; allowMassRemoval?: boolean; nowMs?: number } = {},
+	opts: {
+		dryRun?: boolean;
+		strategy?: "add" | "replace";
+		allowEmpty?: boolean;
+		allowStale?: boolean;
+		allowMassRemoval?: boolean;
+		nowMs?: number;
+	} = {},
 ): MergeResult {
 	try {
 		const tempRaw = readUserTempFile(profilePath);
@@ -340,26 +350,35 @@ export function mergeTempIntoLive(
 		const liveSet = new Set(live.entries);
 		const tempSet = new Set(temp.entries);
 		const removedAll = live.entries.filter((e) => !tempSet.has(e));
-		const addedAll = temp.entries.filter((e) => !liveSet.has(e));
+		const addedSet = new Set<string>();
+		const addedAll = temp.entries.filter((e) => {
+			if (liveSet.has(e) || addedSet.has(e)) return false;
+			addedSet.add(e);
+			return true;
+		});
+		const strategy = opts.strategy ?? "add";
+		const nextEntries = strategy === "replace" ? temp.entries : [...live.entries, ...addedAll];
+		const removed = strategy === "replace" ? removedAll : [];
 
 		const base: MergeResult = {
 			ok: false,
 			file: USER_FILE,
 			beforeCount: live.entries.length,
-			afterCount: temp.entries.length,
+			afterCount: nextEntries.length,
 			beforeChars: entryBudget(live.entries),
-			afterChars: entryBudget(temp.entries),
+			afterChars: entryBudget(nextEntries),
 			added: addedAll.slice(0, DIFF_LIMIT),
-			removed: removedAll.slice(0, DIFF_LIMIT),
+			removed: removed.slice(0, DIFF_LIMIT),
 			addedTotal: addedAll.length,
-			removedTotal: removedAll.length,
+			removedTotal: removed.length,
 			liveMtime,
 			tempMtime,
 			dryRun: opts.dryRun === true,
+			strategy,
 		};
 
-		// ① 陈旧：live 比 temp 新 ⇒ live 在提议之后被改过
-		if (!opts.allowStale && liveMtime && tempMtime && Date.parse(liveMtime) > Date.parse(tempMtime)) {
+		// 替换模式才有覆盖风险；追加不会覆盖 live 在提议稿生成后新增的内容。
+		if (strategy === "replace" && !opts.allowStale && liveMtime && tempMtime && Date.parse(liveMtime) > Date.parse(tempMtime)) {
 			return {
 				...base,
 				error:
@@ -369,23 +388,24 @@ export function mergeTempIntoLive(
 			};
 		}
 		// ③ 清空：live 有条目而提议稿为空
-		if (temp.entries.length === 0 && live.entries.length > 0 && !opts.allowEmpty) {
+		if (strategy === "replace" && temp.entries.length === 0 && live.entries.length > 0 && !opts.allowEmpty) {
 			return { ...base, error: `提议稿现在是空的（0 条），而 live USER.md 有 ${live.entries.length} 条 —— 并入等于把画像清空。确认要清空请显式放行。` };
 		}
 		// ② 过半删除：live 至少 5 条时，要删掉一半以上就再问一次
-		if (!opts.allowMassRemoval && live.entries.length >= 5 && removedAll.length * 2 > live.entries.length) {
+		if (strategy === "replace" && !opts.allowMassRemoval && live.entries.length >= 5 && removedAll.length * 2 > live.entries.length) {
 			return {
 				...base,
 				error:
-					`这次并入会删掉 ${removedAll.length}/${live.entries.length} 条（过半）。` +
-					`若提议稿确实是"大量作废"的正常结果，请显式放行；否则先确认提议稿是不是过期残留。`,
+					`提议稿 USER-temp.md 是完整替换稿：执行后 USER.md 将只保留其中的条目，` +
+					`这次会移除 ${removedAll.length}/${live.entries.length} 条现有条目（过半）。` +
+					`若确实要大幅删减，请显式放行；否则先检查提议稿是否不完整或过期。`,
 			};
 		}
 
 		// 格式沿用 live 的（并入的目标是 live 文件）；live 不存在时退回 temp 的格式。
 		const eol = liveRaw != null ? live.eol : temp.eol;
 		const trailingNewline = liveRaw != null ? live.trailingNewline : temp.trailingNewline;
-		const nextRaw = serializeUserFile(temp.entries, eol, trailingNewline);
+		const nextRaw = serializeUserFile(nextEntries, eol, trailingNewline);
 
 		const report: MergeResult = { ...base, ok: true };
 		if (opts.dryRun) return report;

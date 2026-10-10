@@ -167,7 +167,7 @@ Element Plus 还有一个**只有真去数 DOM 才会发现的坑**：`el-pagina
 | L2 | 场景池报告 / 播种 | 报告只读、按需拉取（可能较慢）；播种写 `l1/scenes.json`（先自动备份）。`cluster` 仍需走 CLI |
 | L3 | 条目增删改 | `l3_edit` 同一实现（`applyL3Edit`）：一次只动一条、单行、预算按"并入 live 之后的整篇"计价。**落盘目标是提议稿 `USER-temp.md`** |
 | L3 | 提议稿还原 | 还原目标是提议稿（备份文件名不记"捕获自哪一份"），写前先把当前提议稿另存；要打字输入备份文件名 |
-| L3 | 并入 live 画像 | **唯一会写 `USER.md` 的路径**。三道闸默认全开：提议稿比 live 旧 / 会删掉 live 过半条目 / 会清空 —— 每条都要**单独勾选放行**并打字 `MERGE`；写前自动备份。并入后运行中的会话仍注入旧快照，要 `/reload` 或新开会话 |
+| L3 | 并入 live 画像 | **唯一会写 `USER.md` 的路径**。默认只追加 temp 中尚不存在的条目，保留旧条目，打字 `MERGE` 确认；显式选择完整替换才会删除 temp 中缺少的 live 条目，且需逐条放行陈旧 / 过半删除 / 清空安全闸并打字 `REPLACE`。写前自动备份；并入后运行中的会话仍注入旧快照，要 `/reload` 或新开会话 |
 
 写盘桥的路由（**写端点默认 dry-run**，必须显式 `apply:true` 才落盘；破坏性动作另有 `confirm` 副验）：
 
@@ -185,7 +185,7 @@ Element Plus 还有一个**只有真去数 DOM 才会发现的坑**：`el-pagina
 | `POST /api/l2/scene-pool/seed` | `{scenes:[{name,aliases}], apply}` → 播种 `l1/scenes.json` |
 | `POST /api/l3/edit` | `{action, content?, target?, apply}` → 提议稿条目增删改 |
 | `POST /api/l3/restore` | `{file, apply, confirm, allowEmpty?}` → 还原到提议稿（`confirm` = 文件名） |
-| `POST /api/l3/merge` | `{apply, confirm:"MERGE", allowStale?, allowMassRemoval?, allowEmpty?}` → 并入 live 画像 |
+| `POST /api/l3/merge` | `{apply, strategy?:"add"|"replace", confirm:"MERGE"|"REPLACE", allowStale?, allowMassRemoval?, allowEmpty?}` → 默认追加新条目；`strategy:"replace"` 完整替换 live 画像 |
 | `GET /api/l1/shards` | 分片清单 + 行数（解开前端日期窗口） |
 | `GET /api/l1/backups` | L1 库备份目录清单（整库还原的候选） |
 | `GET /api/l1/embeddings` | 向量库状态（只读、便宜） |

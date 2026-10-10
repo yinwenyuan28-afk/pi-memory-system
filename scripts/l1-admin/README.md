@@ -21,7 +21,7 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 | `l2-archive.mts` | L2 块 `list` / `archive --file --reason` / `restore --file` | 持 **L2 run-lock**；归档必须有 reason；默认 dry-run（预演不跑自愈） |
 | `l3-edit.mts` | L3 提议稿条目 `add` / `update` / `delete`，转发 `applyL3Edit` | 默认 dry-run；写 `USER-temp.md`（提议稿），不碰 live |
 | `l3-restore.mts` | 列出 / 还原画像备份到提议稿（`--list` / `--file --confirm`） | 写前先另存当前提议稿；空备份默认拒（`--allow-empty` 才放行） |
-| `l3-merge.mts` | **把提议稿并入 live `USER.md`**（全仓库唯一写 live 画像的路径） | 三道闸默认全开（陈旧 / 过半删除 / 清空），每条要单独放行；实写要 `--confirm MERGE` |
+| `l3-merge.mts` | **把提议稿并入 live `USER.md`**（全仓库唯一写 live 画像的路径） | 默认只追加新条目并保留旧条目；`--replace` 才完整替换，替换模式的三道闸默认拒绝；实写分别确认 `MERGE` / `REPLACE` |
 | `viewer-cli.mts` | 上面那批包装的**共用骨架**（参数解析 / JSON 出口 / 哨兵收尾 / `run()`）；不是可执行入口 | — |
 | `viewer.mts` | **一键启动查看器**：同步最新页面 → 起桥 → 开浏览器（自动避让占用端口） | 只绑 `127.0.0.1`；`--no-open` / `--no-sync` 可关掉两件事 |
 | `启动查看器.cmd` | 上面的 Windows 双击入口（内容纯 ASCII，中文由 node 打印） | 同上 |
@@ -98,7 +98,7 @@ profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `me
 | `GET /api/health` · `/api/viewer-status` | 存活 / 版本与漂移 |
 
 **写端点一律默认 dry-run**（必须显式 `apply:true`），破坏性动作另有 `confirm` 副验（还原要备份名、
-重建要 `REBUILD`、并入要 `MERGE`）—— 桥里那道是**副验**，CLI 自己也会验一次，两道都在。
+重建要 `REBUILD`、追加并入要 `MERGE`、完整替换要 `REPLACE`）—— 桥里那道是**副验**，CLI 自己也会验一次，两道都在。
 这条安全默认由 `verify-viewer-deploy.ts` 的 ⑱ 节逐端点断言。
 
 二十个**实测踩过**的点，改动时别踩回去：

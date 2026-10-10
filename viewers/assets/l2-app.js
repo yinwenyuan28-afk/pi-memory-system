@@ -226,13 +226,11 @@
 		mounted: function () {
 			// 旧版 init() 做三件事：mountChrome（已在 V.vue.mount 里做过）、bind()（Vue 接管，
 			// 事件委托不再需要）、autoLoad()。挂载后立刻取一次数。
+			var self = this;
+			V.registerRefreshHandler(function () { return self.loadAll(); });
 			this.loadAll();
 		},
 		computed: {
-			/** 页内跳转必须带上 location.search：丢了 ?port= 页面立刻降级成只读（viewer-core 的契约）。 */
-			pipelineHref: function () {
-				return "pipeline-viewer.html" + location.search;
-			},
 			/** 详情弹层里「在 L1 页搜」的链接（旧版按 bridgePort() 拼，语义原样）。 */
 			recordsHref: function () {
 				return "records-viewer.html?port=" + V.bridgePort();
@@ -440,8 +438,11 @@
 			/** L2 游标水位（值留给页面；"水位用来判什么"那句进标题的问号）。 */
 			cursorHtml: function () {
 				if (!this.cursor) return '<span class="hint">无 cursor.json</span>';
-				return "<code>lastProcessedAt</code> = " + this.esc(V.fmtTime(new Date(this.cursor.lastProcessedAt).toISOString())) +
-					"<br><code>lastRecordId</code> = " + this.esc(this.cursor.lastRecordId || "—");
+				return '<div class="cursor-facts">' +
+					'<div class="cursor-fact"><span class="cursor-label">最近处理时间</span><time class="cursor-value">' +
+					this.esc(V.fmtTime(new Date(this.cursor.lastProcessedAt).toISOString())) + "</time></div>" +
+					'<div class="cursor-fact"><span class="cursor-label">最近处理记录</span><span class="cursor-value cursor-id">' +
+					this.esc(this.cursor.lastRecordId || "—") + "</span></div></div>";
 			},
 			/** 管理区契约三段（长解释；默认收起，真被拒时再展开读）。 */
 			contractHtml: function () {
@@ -460,7 +461,7 @@
 			},
 			/** 无桥时的整区说明（写回能力全部依赖写盘桥，这里要说清怎么把桥拉起来）。 */
 			readOnlyHint: function () {
-				return '<b>只读模式</b>：归档/恢复与播种都需要写盘桥，下面的按钮已禁用。' +
+				return '<b>只读模式</b>：归档/恢复与统一场景名称都需要写盘桥，下面的按钮已禁用。' +
 					"请运行 <code>node scripts/l1-admin/viewer-bridge.mjs</code>，再用它打印的<b>带 <code>?port=</code> 的地址</b>打开本页。";
 			},
 			/** 归档账本时间线（按 at 升序，与账本追加顺序一致）。 */
@@ -784,7 +785,7 @@
 					});
 			},
 
-			// ── 播种：把「旧名 → 稳定标签」映射写进 l1/scenes.json ──────────────────
+			// ── 统一场景名称：维护场景当前名称与历史名称的对应关系 ───────────────
 
 			/** 加一行空场景（name 必填，aliases 逗号分隔，note 可选）。 */
 			seedAddRow: function () {
@@ -847,7 +848,7 @@
 				this.seedPreviewed = false;
 				this.busy = "seed";
 				this.seedOut = {
-					html: apply ? "正在写入（会先自动备份 <code>l1/scenes.json</code>）…" : "正在预演（不写盘）…",
+					html: apply ? "正在保存名称设置（会先自动备份）…" : "正在检查变更（尚未保存）…",
 					err: false,
 					log: null,
 				};
@@ -857,13 +858,13 @@
 						var text = r && r.data ? r.data.text || r.data.error || r.data.raw || JSON.stringify(r.data) : "无响应";
 						self.busy = "";
 						if (!ok) {
-							self.seedOut = { html: "失败：" + self.esc(self.bridgeError(r)), err: true, log: { summary: "原始返回", text: clipText(text) } };
+							self.seedOut = { html: (apply ? "保存失败：" : "检查失败：") + self.esc(self.bridgeError(r)), err: true, log: { summary: "详细信息", text: clipText(text) } };
 							return;
 						}
 						self.seedOut = {
 							html: apply
-								? "已写入：<code>l1/scenes.json</code> 在备份后被更新。改回去可从备份目录取。"
-								: "预演完成（未写盘）。确认上面的计划无误后，点「执行（写盘）」。",
+								? "名称设置已保存，原设置已自动备份。"
+								: "检查完成，尚未保存。请查看上方变更，确认后点「保存名称设置」。",
 							err: false,
 							log: { summary: apply ? "执行输出" : "预演输出（CLI 计划）", text: clipText(text) },
 						};
@@ -871,7 +872,7 @@
 					})
 					.catch(function (e) {
 						self.busy = "";
-						self.seedOut = { html: "失败：" + self.esc(e && e.message ? e.message : String(e)), err: true, log: null };
+						self.seedOut = { html: (apply ? "保存失败：" : "检查失败：") + self.esc(e && e.message ? e.message : String(e)), err: true, log: null };
 					});
 			},
 
@@ -970,7 +971,6 @@
 			<p class="sub">场景块（live + 归档）· 成员侧车 · 归档账本 · 对账。</p>
 			<notice :msg="loadNote"></notice>
 			<div class="toolbar">
-				<el-button @click="loadAll">重新加载</el-button>
 				<el-input v-model="q" clearable placeholder="搜索块名 / summary / 成员 id …" class="grow" />
 			</div>
 		</header>
@@ -990,37 +990,25 @@
 
 				<h2>L2 管理</h2>
 				<div v-if="!hasPort()" class="hint" v-html="readOnlyHint"></div>
-				<!-- 触发组织与停止 L2 子代理**不在这里**：三层同名动作已在「流水线」页
-				     （pipeline-viewer.html）合成一张表；这一块只剩会改 L2 盘面的块操作。
-				     按钮搬走了要留一句指引 —— 凭空消失而不说去哪了是最糟的失效方式。 -->
-				<p class="hint">「请求 L2 组织」与「停止子代理」在顶部 <a :href="pipelineHref">流水线页</a>。</p>
-
-				<!-- 管理动作一律用 .ops-row（标签 / 控件 / 脚注）—— 与 L1「操作」组同一套排版。
-				     真正的交互各自进弹层：报告要读几千字、播种表四列要写，336px 的侧栏放不下
-				     （旧版在这里把表头折成两行、输入框压到 ~54px，正是这轮要修的那种"挤"）。 -->
+				<!-- 管理动作按用途分组：读报告、维护统一场景名称。表格进弹层，侧栏只留简短说明和入口。 -->
 				<!-- ⚠ 模板里**不许出现反引号**（这句注释本身就踩过一次）：JS 模板字符串用反引号
 				     定界，注释里的反引号会提前把它闭合，后面半截模板会当成 JS 执行 —— 症状是
 				     整页空白 + ReferenceError: row is not defined，而 new Function 语法检查照样通过
 				     （漏出来那截恰好是合法语句时）。门禁 ⑨ 现在断言模板内部没有第二个反引号。 -->
-				<div class="ops">
-					<!-- 「按需生成」这条注解进悬停提示（用户 2026-10-10 要求）：它是"什么时候会花代价"
-					     的备忘，不是每次都要读的信息 —— 挂在问号上，需要时悬停即可。
-					     这一行用 .ops-row.wide：控件列只有 ~178px，两颗并排按钮要约 200px，
-					     不放开列宽就会换行（"两个按钮并排"是用户明确要的形态）。 -->
-					<div class="ops-row wide">
-						<div class="ops-label">只读报告<help-note text="按需生成（不随页面加载）：一次点开即开始生成。生成期间桥被整座占满（单线程同步执行），别重复点。"></help-note></div>
-						<div class="ops-ctl">
-							<el-button :disabled="!hasPort()" @click="openReport('report')">场景池报告…</el-button>
-							<el-button :disabled="!hasPort()" @click="openReport('merge')">合并报告…</el-button>
+				<div class="l2-admin-tools">
+					<section class="l2-tool-card">
+						<h3>查看报告</h3>
+						<p>查看场景当前状态，或查看系统建议合并的相似场景。报告按需生成。</p>
+						<div class="l2-tool-actions">
+							<el-button :disabled="!hasPort()" @click="openReport('report')">场景概况</el-button>
+							<el-button :disabled="!hasPort()" @click="openReport('merge')">合并建议</el-button>
 						</div>
-					</div>
-					<div class="ops-row wide">
-						<div class="ops-label">播种</div>
-						<div class="ops-ctl">
-							<el-button :disabled="!hasPort()" @click="seedOpen = true">编辑场景映射…</el-button>
-						</div>
-						<div class="ops-note">把「旧名 → 稳定标签」映射写进 <code>l1/scenes.json</code>：预演只打印计划，执行会<b>先自动备份该文件</b>再写。</div>
-					</div>
+					</section>
+					<section class="l2-tool-card">
+						<h3>统一场景名称</h3>
+						<p>把几个历史名称归到同一个名称下。先预演查看变更，确认后保存；保存前会自动备份原设置。</p>
+						<el-button :disabled="!hasPort()" @click="seedOpen = true">编辑名称对应关系</el-button>
+					</section>
 				</div>
 
 				<!-- 契约三段（块数预算 / 恢复要先腾位 / 归档≠删除）是长解释，默认收起：
@@ -1230,32 +1218,30 @@
 			</template>
 		</el-dialog>
 
-		<!-- 播种（写 l1/scenes.json）：四列表格 + 预演/执行。进弹层后列宽终于够用 ——
-		     旧版在侧栏里只能把表头折成两行、输入框压到 ~54px（那正是"挤"的来源）。 -->
-		<el-dialog v-model="seedOpen" title="播种 —— 写 l1/scenes.json" width="1000px" top="6vh" class="viewer-dialog">
+			<!-- 映射编辑：每行把一个统一名称与历史名称对应起来。 -->
+			<el-dialog v-model="seedOpen" title="统一场景名称" width="1000px" top="6vh" class="viewer-dialog">
 			<div class="ops">
-				<div class="ops-row">
-					<div class="ops-label">场景映射</div>
-					<div class="ops-ctl">
+					<p class="scene-map-intro">每行填写一个现在要使用的名称，再列出它过去用过的名称。先检查变更，确认后保存；保存前会自动备份当前设置。</p>
+					<div class="scene-map-toolbar">
 						<el-button :disabled="!hasPort() || busy === 'seed'" @click="seedAddRow">添加一行</el-button>
-						<el-button :disabled="!hasPort() || busy === 'seed'" @click="seedRun(false)">预演</el-button>
-						<el-button type="primary" :disabled="!hasPort() || busy === 'seed' || !seedPreviewed" @click="seedRun(true)">执行（写盘）</el-button>
-						<span v-if="busy === 'seed'" class="hint">运行中…</span>
+						<div class="scene-map-actions">
+							<el-button :disabled="!hasPort() || busy === 'seed'" @click="seedRun(false)">预演变更</el-button>
+							<el-button type="primary" :disabled="!hasPort() || busy === 'seed' || !seedPreviewed" @click="seedRun(true)">保存名称设置</el-button>
+						</div>
 					</div>
-					<div class="ops-note">一行 = 一个场景（场景名必填，别名与备注可空）；预演只打印计划，执行会<b>先自动备份 l1/scenes.json</b> 再整节重写。</div>
-				</div>
+					<div v-if="busy === 'seed'" class="hint">正在处理场景名称…</div>
 				<el-table :data="seedRows" size="small" empty-text="还没有行">
-					<el-table-column label="场景名（稳定标签）" min-width="240">
+						<el-table-column label="统一名称" min-width="240">
 						<template #default="{ row }">
-							<el-input v-model="row.name" size="small" placeholder="场景名（稳定标签）" />
+								<el-input v-model="row.name" size="small" placeholder="填写统一名称" />
 						</template>
 					</el-table-column>
-					<el-table-column label="别名（逗号分隔）" min-width="340">
+						<el-table-column label="过去用过的名称（逗号分隔）" min-width="340">
 						<template #default="{ row }">
-							<el-input v-model="row.aliases" size="small" placeholder="旧名1, 旧名2" />
+								<el-input v-model="row.aliases" size="small" placeholder="旧名称 1, 旧名称 2" />
 						</template>
 					</el-table-column>
-					<el-table-column label="备注（可选）" min-width="240">
+						<el-table-column label="说明（可选）" min-width="240">
 						<template #default="{ row }">
 							<el-input v-model="row.note" size="small" placeholder="备注（可选）" />
 						</template>

@@ -773,6 +773,11 @@
 			},
 		},
 		mounted: function () {
+			var self = this;
+			V.registerRefreshHandler(function () {
+				self.autoLoad();
+				return self.loadOps();
+			});
 			this.autoLoad();
 			// 管理操作区独立于记录加载：即便分片读失败，提取模式 / 向量库 / 还原这些信息仍应可见
 			this.loadOps();
@@ -1598,7 +1603,6 @@
 			<notice :msg="loadNote"></notice>
 
 			<div class="toolbar">
-				<el-button @click="autoLoad(); loadOps()">重新加载</el-button>
 				<el-button @click="clearAll">清空</el-button>
 				<el-button @click="exportView">导出当前视图</el-button>
 			</div>

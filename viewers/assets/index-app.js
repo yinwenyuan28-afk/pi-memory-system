@@ -122,6 +122,8 @@
 		// 旧版的 init() 做三件事：mountChrome（已在 V.vue.mount 里做过）、bind()（Vue 接管，
 		// 不再需要手动挂事件）、load()。挂载后立刻取一次数。
 		mounted: function () {
+			var self = this;
+			V.registerRefreshHandler(function () { return self.loadAll(); });
 			this.loadAll();
 		},
 		computed: {
@@ -491,7 +493,6 @@
 			<p class="sub">L0–L3 记忆库的本地查看器。源码在插件仓库 <code>viewers/</code>，激活时按内容哈希同步到 <code>{profile}/memoryDB/viewers/</code>。</p>
 			<notice :msg="loadNote"></notice>
 			<div class="toolbar">
-				<el-button @click="loadAll">刷新摘要</el-button>
 				<el-button @click="showBridgeState">写盘状态</el-button>
 			</div>
 			<!-- 「写盘状态」的答案：点之前不占位（旧版 #hint 是 display:none 的空 div） -->

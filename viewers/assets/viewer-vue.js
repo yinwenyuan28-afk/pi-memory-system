@@ -32,6 +32,7 @@
 	"use strict";
 
 	var V = window.V;
+	var UI = window.ViewerI18n || { locale: "zh-CN", t: function (s) { return s; } };
 	if (!V) {
 		// viewer-core 没加载：只有把话说在页面上才查得动（控制台里的红字用户看不到）
 		document.body.insertAdjacentHTML(
@@ -51,10 +52,7 @@
 	var Vue = window.Vue;
 	var EP = window.ElementPlus;
 
-	// Element Plus 的暗色主题（theme-chalk/dark/css-vars.css）以 html.dark 为开关。
-	// 页面 HTML 里已经写了 class="dark"，这里再补一次：漏写一个 class 就让整页回到浅色，
-	// 而"某个页面忘了写"正是五份 HTML 最容易出现的分叉。
-	document.documentElement.classList.add("dark");
+	// The selected theme is persisted by viewer-core and shared across all pages.
 
 	// ── 小工具（各页此前各写一份，现在收在这里一处）──────────────────────────
 
@@ -290,6 +288,7 @@
 			fmtTime: V.fmtTime,
 			fmtDay: V.fmtDay,
 			fromNow: V.fromNow,
+			t: UI.t,
 		},
 	};
 
@@ -310,11 +309,12 @@
 		V.mountChrome({ active: opts.active });
 
 		var app = Vue.createApp(root);
-		app.use(EP, { locale: window.ElementPlusLocaleZhCn });
+		app.use(EP, UI.locale === "en" ? {} : { locale: window.ElementPlusLocaleZhCn });
 		Object.keys(COMPONENTS).forEach(function (name) {
 			app.component(name, COMPONENTS[name]);
 		});
 		app.config.globalProperties.$V = V;
+		app.config.globalProperties.$t = UI.t;
 
 		// 渲染期异常兜底：Vue 默认只把错误丢进控制台，页面看起来"半截渲染"却没有任何提示。
 		// 这一页的用户是排查记忆库的人，把错误直接摆在页面顶部比什么都强。
@@ -348,9 +348,9 @@
 	 * @returns Promise<boolean>（取消 = false）
 	 */
 	function confirmBox(message, title) {
-		return EP.ElMessageBox.confirm(message, title || "确认", {
-			confirmButtonText: "确定",
-			cancelButtonText: "取消",
+		return EP.ElMessageBox.confirm(UI.t(message), UI.t(title || "确认"), {
+			confirmButtonText: UI.t("确定"),
+			cancelButtonText: UI.t("取消"),
 			type: "warning",
 			// 危险动作的正文里有换行（代价说明），保留换行才读得懂
 			customClass: "viewer-confirm",
@@ -365,7 +365,7 @@
 
 	/** 轻提示（动作成功/失败的一句话）。 */
 	function toast(message, type) {
-		EP.ElMessage({ message: message, type: type || "info", duration: type === "error" ? 6000 : 2600, grouping: true });
+		EP.ElMessage({ message: UI.t(message), type: type || "info", duration: type === "error" ? 6000 : 2600, grouping: true });
 	}
 
 	V.vue = {

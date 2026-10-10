@@ -18,14 +18,16 @@
 
 	/** 页面清单（导航与相对链接的单源）。 */
 	var PAGES = [
-		{ file: "index.html", label: "总览" },
-		{ file: "records-viewer.html", label: "L1 原子记忆" },
-		{ file: "l2-viewer.html", label: "L2 场景" },
-		{ file: "l3-viewer.html", label: "L3 画像" },
+		{ file: "index.html", label: "总览", en: "Overview" },
+		{ file: "records-viewer.html", label: "L1 原子记忆", en: "L1 Records" },
+		{ file: "l2-viewer.html", label: "L2 场景", en: "L2 Scenes" },
+		{ file: "l3-viewer.html", label: "L3 画像", en: "L3 Profile" },
 		// 流水线页放在四页之后：它是**跨层**的运维视图（队列 + 三层子代理），
 		// 不属于某一层的数据，所以既不插在层与层之间，也不挤在最前面抢注意力。
-		{ file: "pipeline-viewer.html", label: "流水线" },
+		{ file: "pipeline-viewer.html", label: "流水线", en: "Pipeline" },
 	];
+
+	var UI = window.ViewerI18n || { locale: "zh-CN", t: function (s) { return s; } };
 
 	/** L1 记录类型（与 memory/l1/record-types.ts 的 L1_RECORD_TYPES 一致）。 */
 	var RECORD_TYPES = ["work_fact", "work_task", "work_method", "work_artifact"];
@@ -53,7 +55,7 @@
 	function fmtTime(v) {
 		if (!v) return "—";
 		var d = new Date(v);
-		return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString("zh-CN", { hour12: false });
+		return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString(UI.locale === "en" ? "en-US" : "zh-CN", { hour12: UI.locale !== "en" });
 	}
 
 	function fmtDay(v) {
@@ -66,6 +68,12 @@
 		var t = ts(v);
 		if (!t) return "—";
 		var diff = ((nowMs || Date.now()) - t) / 1000;
+		if (UI.locale === "en") {
+			if (diff < 60) return "just now";
+			if (diff < 3600) return Math.floor(diff / 60) + " min ago";
+			if (diff < 86400) return Math.floor(diff / 3600) + " hr ago";
+			return Math.floor(diff / 86400) + " days ago";
+		}
 		if (diff < 60) return "刚刚";
 		if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
 		if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
@@ -262,9 +270,17 @@
 
 	/** manifest 缓存（三页都要，避免各页各读一次）。 */
 	var manifestPromise = null;
+	var refreshHandler = null;
 	function loadManifest() {
 		if (!manifestPromise) manifestPromise = loadJson("viewer-manifest.json");
 		return manifestPromise;
+	}
+
+	/** Register the current page's data reload action for the shared top bar. */
+	function registerRefreshHandler(handler) {
+		refreshHandler = typeof handler === "function" ? handler : null;
+		var button = document.getElementById("refreshToggle");
+		if (button) button.disabled = !refreshHandler;
 	}
 
 	/**
@@ -281,27 +297,59 @@
 		var host = document.getElementById("nav");
 		if (!host) return;
 		var html =
-			'<span class="brand">记忆库查看器</span>' +
+			'<span class="brand">' + UI.t("记忆库查看器") + '</span>' +
 			PAGES.map(function (p) {
 				// 页内跳转必须带上 location.search：丢了 ?port= 页面就变只读，而且只在
 				// L2/L3/总览的"无写盘桥"文案里间接体现，不报错 —— 实测点一下导航就会中招。
 				return (
-					'<a class="item' + (p.file === opts.active ? " active" : "") + '" href="' + p.file + escapeHtml(location.search) + '">' + escapeHtml(p.label) + "</a>"
+					'<a class="item' + (p.file === opts.active ? " active" : "") + '" href="' + p.file + escapeHtml(location.search) + '">' + escapeHtml(UI.locale === "en" ? p.en : p.label) + "</a>"
 				);
 			}).join("") +
 			'<span class="spacer"></span>' +
-			'<span class="version" id="versionChip">读取版本…</span>';
+			'<span class="version" id="versionChip">' + UI.t("读取版本…") + '</span>' +
+			'<span class="nav-controls"><button type="button" class="nav-toggle nav-refresh" id="refreshToggle" disabled></button><button type="button" class="nav-toggle" id="themeToggle"></button><button type="button" class="nav-toggle" id="localeToggle"></button></span>';
 		host.innerHTML = html;
+		function refreshControls() {
+			var refresh = document.getElementById("refreshToggle");
+			var theme = document.getElementById("themeToggle");
+			var locale = document.getElementById("localeToggle");
+			if (!refresh || !theme || !locale) return;
+			refresh.textContent = UI.t("刷新");
+			refresh.title = UI.t("刷新当前页面数据");
+			refresh.setAttribute("aria-label", refresh.title);
+			refresh.disabled = !refreshHandler;
+			theme.textContent = UI.t(document.documentElement.classList.contains("dark") ? "浅色" : "深色");
+			theme.title = UI.t("切换主题");
+			theme.setAttribute("aria-label", theme.title);
+			locale.textContent = UI.locale === "en" ? "中文" : "English";
+			locale.title = UI.t("切换语言");
+			locale.setAttribute("aria-label", locale.title);
+		}
+		document.getElementById("refreshToggle").addEventListener("click", function () {
+			if (refreshHandler) refreshHandler();
+		});
+		document.getElementById("themeToggle").addEventListener("click", function () {
+			var dark = document.documentElement.classList.toggle("dark");
+			document.documentElement.classList.toggle("light", !dark);
+			document.documentElement.style.colorScheme = dark ? "dark" : "light";
+			try { localStorage.setItem("viewer-theme", dark ? "dark" : "light"); } catch (e) {}
+			refreshControls();
+		});
+		document.getElementById("localeToggle").addEventListener("click", function () {
+			UI.setLocale(UI.locale === "en" ? "zh-CN" : "en");
+			location.reload();
+		});
+		refreshControls();
 
 		var chip = document.getElementById("versionChip");
 		loadManifest().then(function (m) {
 			if (!m || !m.version) {
-				chip.textContent = location.protocol === "file:" ? "file:// 打开（未部署清单）" : "无版本清单";
+				chip.textContent = location.protocol === "file:" ? UI.t("file:// 打开（未部署清单）") : UI.t("无版本清单");
 				chip.classList.add("stale");
 				return;
 			}
 			chip.textContent = m.version + " · " + fmtTime(m.generatedAt);
-			chip.title = "部署自 " + (m.sourceRoot || "?") + "（共 " + (m.files ? m.files.length : 0) + " 个文件）";
+			chip.title = UI.t("部署自 ") + (m.sourceRoot || "?") + UI.t("（共 ") + (m.files ? m.files.length : 0) + UI.t(" 个文件）");
 		});
 
 		// 漂移检查（需要写盘桥：只有桥能读到仓库里的源码）
@@ -364,5 +412,6 @@
 		download: download,
 		note: note,
 		mountChrome: mountChrome,
+		registerRefreshHandler: registerRefreshHandler,
 	};
 })();

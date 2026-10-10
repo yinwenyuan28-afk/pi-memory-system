@@ -20,11 +20,11 @@
  *
  * ── 管理操作区（本页是全查看器唯一能改画像的地方，纪律写在代码附近）─────────
  *
- * 写动作全部经桥转发到 `scripts/l1-admin/*.mts`，且都遵循"预演 → 打字确认 → 执行"两步：
+	 * 写动作全部经桥转发到 `scripts/l1-admin/*.mts`。条目增删改遵循"预览 → 弹窗确认 → 执行"：
  *   · 条目增删改 → `USER-temp.md`（**提议稿**，不是 live）；要生效须再走"并入"；
  *   · 备份还原 → 目标也是 `USER-temp.md`（备份名不记当时捕的是哪份，统一落到 L3 唯一写目标）；
- *   · 并入 live → 全仓库唯一写 `USER.md` 的路径，服务端三道安全闸（陈旧 / 过半删除 / 清空）
- *     默认拒绝，页面只把拒绝原文回显，并把**对应的放行勾选框**在拒绝之后才显示（绝不预勾）。
+	 *   · 并入 live → 默认只追加新条目；显式完整替换时，服务端三道安全闸（陈旧 / 过半删除 / 清空）
+	 *     默认拒绝，页面只把拒绝原文回显，并把**对应的放行勾选框**在拒绝之后才显示（绝不预勾）。
  * 注：运行中的 pi 会话注入的是**冻结快照**，并入后要 `/reload` 或新开会话才读到新画像。
  *
  * ── Vue 版与旧版的差别（只列会影响行为的）──────────────────────────────────
@@ -63,9 +63,9 @@
 	/** 三份画像文件的固定口径（条目清单 / 预算条 / 差异都按这个顺序读）。 */
 	var FILE_KEYS = ["MEMORY", "USER", "temp"];
 	var FILE_META = {
-		MEMORY: { field: "MEMORY.md", label: "MEMORY.md", note: "由 core/store 维护（不是 L3 产物）", limitKey: "memoryCharLimit", budgetSuffix: "" },
-		USER: { field: "USER.md", label: "USER.md", note: "live 画像；L3 只读它", limitKey: "userCharLimit", budgetSuffix: "" },
-		temp: { field: "USER-temp.md", label: "USER-temp.md", note: "L3 提议稿；合并进 live 是人工动作", limitKey: "userCharLimit", budgetSuffix: "，提议稿" },
+		MEMORY: { field: "MEMORY.md", label: "MEMORY.md", note: "全局记忆", limitKey: "memoryCharLimit", budgetSuffix: "" },
+		USER: { field: "USER.md", label: "USER.md", note: "用户画像稳定层，注入的是该文件", limitKey: "userCharLimit", budgetSuffix: "" },
+		temp: { field: "USER-temp.md", label: "USER-temp.md", note: "用户画像临时层，需人工合并到稳定层", limitKey: "userCharLimit", budgetSuffix: "，提议稿" },
 	};
 
 	/** 并入区三道安全闸的文案（服务端按 ①陈旧 → ③清空 → ②过半 的顺序裁决；页面按下面的顺序陈列）。 */
@@ -126,18 +126,19 @@
 		var rm = Array.isArray(removed) ? removed : [];
 		var aT = typeof addedTotal === "number" ? addedTotal : a.length;
 		var rT = typeof removedTotal === "number" ? removedTotal : rm.length;
+		var en = window.ViewerI18n && window.ViewerI18n.locale === "en";
 		var html =
-			'<div class="chips"><span class="chip">会加 ' + aT + " 条</span>" +
-			'<span class="chip">会删 ' + rT + " 条</span></div>";
+			'<div class="chips"><span class="chip">' + (en ? "Adds " + aT + " entries" : "会加 " + aT + " 条") + "</span>" +
+			'<span class="chip">' + (en ? "Removes " + rT + " entries" : "会删 " + rT + " 条") + "</span></div>";
 		if (a.length || rm.length) {
 			html += '<ul class="diff-list">';
 			html += a.map(function (t) { return '<li class="add">' + V.escapeHtml(t) + "</li>"; }).join("");
-			if (aT > a.length) html += '<li class="more">另有 ' + (aT - a.length) + " 条未列出</li>";
+			if (aT > a.length) html += '<li class="more">' + (en ? (aT - a.length) + " more not shown" : "另有 " + (aT - a.length) + " 条未列出") + "</li>";
 			html += rm.map(function (t) { return '<li class="del">' + V.escapeHtml(t) + "</li>"; }).join("");
-			if (rT > rm.length) html += '<li class="more">另有 ' + (rT - rm.length) + " 条未列出</li>";
+			if (rT > rm.length) html += '<li class="more">' + (en ? (rT - rm.length) + " more not shown" : "另有 " + (rT - rm.length) + " 条未列出") + "</li>";
 			html += "</ul>";
 		} else {
-			html += '<div class="hint">条目没有差异（可能只改了行尾 / 结尾换行）。</div>';
+			html += '<div class="hint">' + (en ? "No entry changes (only line endings or the final newline may differ)." : "条目没有差异（可能只改了行尾 / 结尾换行）。") + "</div>";
 		}
 		return html;
 	}
@@ -145,13 +146,6 @@
 	/** V.note 的等价物：包一层提示条（并入区的输出块里会连着出现两条，所以拼在同一个字符串里）。 */
 	function noticeHtml(html, level) {
 		return '<div class="notice' + (level ? " " + level : "") + '">' + html + "</div>";
-	}
-
-	/** 条目写动作的确认词（先预演、再原样输入、才启用「执行」）。 */
-	function editToken(action) {
-		if (action === "delete") return "DELETE";
-		if (action === "update") return "UPDATE";
-		return "ADD";
 	}
 
 	/** 把拒绝原文映射到它触发的安全闸（服务端按 ①陈旧 → ③清空 → ②过半 的顺序裁决）。 */
@@ -169,7 +163,7 @@
 	 * @prop label   左侧文案（含条目数）
 	 * @prop entries 条目数组（used 由 entryBudget 现算，不接受页面传进来的数字）
 	 * @prop limit   上限（来自 /api/limits）
-	 * @prop note    右侧下方的口径说明（文件职责的一句话）
+	 * @prop note    文件用途说明，收在标签旁的 tooltip 中
 	 */
 	var BudgetBar = {
 		name: "BudgetBar",
@@ -187,9 +181,8 @@
 		},
 		template: /* html */ `
 			<div class="budget">
-				<div class="meta"><span>{{ label }}</span><span>{{ used.toLocaleString() }} / {{ limit.toLocaleString() }} 字符（{{ pct }}%）</span></div>
+				<div class="meta"><span>{{ label }}<help-note v-if="note" :text="note"></help-note></span><span>{{ used.toLocaleString() }} / {{ limit.toLocaleString() }} 字符（{{ pct }}%）</span></div>
 				<div class="track"><i :class="{ over: over }" :style="{ width: pct + '%' }"></i></div>
-				<div class="hint" v-if="note">{{ note }}</div>
 			</div>
 		`,
 	};
@@ -223,10 +216,7 @@
 
 				/** 条目写动作的分步状态：action ∈ add/update/delete；target 是 update/delete 的定位片段 */
 				editOp: { action: "add", target: null, previewed: false },
-				/** 确认词的**显示**（旧版初值是 HTML 里的占位 "—"，选过条目 / 点过「改回」才写上真词） */
-				editHintToken: "—",
 				editContent: "",
-				editConfirm: "",
 				editOut: { html: "", level: "" },
 
 				/** 还原中的备份文件与放行状态（gateEmpty = 服务端报"空备份会清空"这道闸） */
@@ -237,6 +227,7 @@
 
 				/** 并入状态：revealed = 服务端拒绝暴露出的安全闸（放行勾选框按它出现）；gates = 已勾选放行项 */
 				mergeOp: { previewed: false, revealed: {}, gates: {} },
+				mergeStrategy: "add",
 				mergeConfirm: "",
 				mergeOut: "",
 
@@ -329,21 +320,22 @@
 			},
 
 			editTitle: function () {
-				if (this.editOp.action === "delete") return "删除条目（写 USER-temp.md）";
-				if (this.editOp.action === "update") return "改写条目（写 USER-temp.md）";
-				return "加一条（写 USER-temp.md）";
+				if (this.editOp.action === "delete") return "删除临时画像条目";
+				if (this.editOp.action === "update") return "改写临时画像条目";
+				return "新增临时画像条目";
 			},
-			/** 要比对的确认词（由当前动作**现算**；屏幕上的那个是 editHintToken，两者分工与旧版一致） */
-			editTokenText: function () {
-				return editToken(this.editOp.action);
+			applyEditLabel: function () {
+				if (this.editOp.action === "delete") return "从临时层删除";
+				if (this.editOp.action === "update") return "保存修改到临时层";
+				return "添加到临时层";
 			},
 			contentNote: function () {
 				// 首次取数完成前后文案不同（旧版静态 HTML 是"≤ 单条上限。"，取到阈值后才写具体数）
 				return this.loaded ? "必须单行、不含 §、" + this.entryCharLimit + " 字符以内。" : "必须单行、不含 §、≤ 单条上限。";
 			},
-			/** 未预演前「执行」恒禁用：`previewed` 记录"本动作是否已成功预演过"，仅靠 token 不够。 */
+			/** 未成功预览前，执行按钮保持禁用。 */
 			canApplyEdit: function () {
-				return this.hasPort() && !this.busy && this.editOp.previewed && this.editConfirm === this.editTokenText;
+				return this.hasPort() && !this.busy && this.editOp.previewed;
 			},
 			canApplyRestore: function () {
 				// 空备份清空提议稿被拒后，必须先勾选放行（gateOk）才允许执行。
@@ -358,7 +350,16 @@
 			canApplyMerge: function () {
 				var self = this;
 				var gatesOk = this.revealedGates.every(function (k) { return !!self.mergeOp.gates[k]; });
-				return this.hasPort() && !this.busy && this.mergeOp.previewed && this.mergeConfirm === "MERGE" && gatesOk;
+				return this.hasPort() && !this.busy && this.mergeOp.previewed && this.mergeConfirm === this.mergeConfirmToken && gatesOk;
+			},
+			mergeConfirmToken: function () {
+				return this.mergeStrategy === "replace" ? "REPLACE" : "MERGE";
+			},
+			mergeStrategyOptions: function () {
+				return [
+					{ value: "add", label: "只添加新条目" },
+					{ value: "replace", label: "完整替换（会删除旧条目）" },
+				];
 			},
 
 			/** 游标侧栏 */
@@ -422,6 +423,8 @@
 		mounted: function () {
 			// 旧版的 init() 做三件事：mountChrome（已在 V.vue.mount 里做过）、bind()（Vue 接管，
 			// 不再需要事件委托）、autoLoad()。挂载后立刻取一次数 —— 漏了这步页面就永远是空态。
+			var self = this;
+			V.registerRefreshHandler(function () { return self.loadAll(); });
 			this.loadAll();
 		},
 		methods: {
@@ -495,22 +498,25 @@
 			 */
 			stageEdit: function (action, text) {
 				this.editOp = { action: action, target: text || null, previewed: false };
-				this.editHintToken = editToken(action);
 				this.editContent = action === "update" ? text : "";
-				this.editConfirm = "";
 				this.editOut = {
 					html: "已选：<b>" + (action === "delete" ? "删除" : "改写") + "</b> 该条目。先点「预演」看后果。",
 					level: "",
 				};
 			},
 
-			/** 改回「加一条」（清掉定位片段与本次预演状态） */
+			/** 清除已选条目并回到新增模式。 */
 			resetEdit: function () {
 				this.editOp = { action: "add", target: null, previewed: false };
-				this.editHintToken = editToken("add");
 				this.editContent = "";
-				this.editConfirm = "";
-				this.editOut = { html: "已切回「加一条」：填正文后点「预演」。", level: "" };
+				this.editOut = { html: "已切换到新增模式。填写内容后可预览变更。", level: "" };
+			},
+
+			/** 预览通过后若正文改变，要求重新预览当前内容。 */
+			invalidateEditPreview: function () {
+				if (!this.editOp.previewed) return;
+				this.editOp.previewed = false;
+				this.editOut = { html: "内容已更改，请重新预览。", level: "warn" };
 			},
 
 			/** 条目写请求体：add/update 带 content，update/delete 带 target（与 /api/l3/edit 入参逐字对齐）。 */
@@ -552,30 +558,40 @@
 				});
 			},
 
-			/** 执行：写入提议稿（写前服务端自己会留档一份） */
+			/** 二次确认后写入临时画像（写前服务端自己会留档一份）。 */
 			applyEdit: function () {
 				var self = this;
 				if (!this.canApplyEdit) return;
-				this.busy = "edit";
-				this.editOut = { html: "写入中…", level: "" };
-				V.bridge(EP.edit, { method: "POST", body: JSON.stringify(this.entryEditBody(true)) }).then(function (r) {
+				var action = this.editOp.action;
+				var confirmMessages = {
+					add: "将把这条内容添加到 USER-temp.md。稳定画像不会因此改变。要继续吗？",
+					update: "将用新内容替换 USER-temp.md 中选中的条目。稳定画像不会因此改变。要继续吗？",
+					delete: "将从 USER-temp.md 删除选中的条目。稳定画像不会因此改变。要继续吗？",
+				};
+				this.busy = "confirm-edit";
+				V.vue.confirm(confirmMessages[action], "确认此操作").then(function (yes) {
 					self.busy = "";
-					var d = r.data || {};
-					if (r.ok && d.success) {
-						self.editOut = {
-							html:
-								"已写入 <code>" + self.esc(d.targetFile || "USER-temp.md") + "</code>（提议稿）：用量 <b>" +
-								self.esc(String(d.usage || "")) + "</b>。" + self.esc(d.note || "") +
-								" 要进入注入画像，还需到下面「并入区」并入。",
-							level: "",
-						};
-						self.editOp.previewed = false;
-						self.editConfirm = "";
-						self.reloadAfterWrite();
-					} else {
-						self.editOp.previewed = false;
-						self.editOut = { html: "执行失败：" + self.esc(d.error || "HTTP " + r.status), level: "err" };
-					}
+					if (!yes || !self.canApplyEdit) return;
+					self.busy = "edit";
+					self.editOut = { html: "写入中…", level: "" };
+					return V.bridge(EP.edit, { method: "POST", body: JSON.stringify(self.entryEditBody(true)) }).then(function (r) {
+						self.busy = "";
+						var d = r.data || {};
+						if (r.ok && d.success) {
+							var resultMessage = action === "delete" ? "已从临时画像删除所选条目。" : action === "update" ? "已更新临时画像。" : "已添加到临时画像。";
+							self.editOut = {
+								html:
+									resultMessage + " 当前用量 <b>" + self.esc(String(d.usage || "")) + "</b>。" +
+									"稳定画像不会自动改变；要应用这些修改，请在下方合并到稳定画像。",
+								level: "",
+							};
+							self.editOp.previewed = false;
+							self.reloadAfterWrite();
+						} else {
+							self.editOp.previewed = false;
+							self.editOut = { html: "执行失败：" + self.esc(d.error || "HTTP " + r.status), level: "err" };
+						}
+					});
 				});
 			},
 
@@ -685,7 +701,7 @@
 					});
 			},
 
-			// ── 并入区：预演 → 三道闸放行 → MERGE → 执行 ─────────────────────
+			// ── 并入区：预演追加 / 显式替换 → 必要的安全闸放行 → 输入确认词 → 执行 ──
 
 			/** 勾选 / 取消某道闸：变化即重跑预演（服务端只认它自己那次的裁决） */
 			onGateChange: function () {
@@ -695,25 +711,33 @@
 			mergeBody: function (apply) {
 				return {
 					apply: apply,
-					confirm: apply ? "MERGE" : undefined,
+					strategy: this.mergeStrategy,
+					confirm: apply ? this.mergeConfirmToken : undefined,
 					allowStale: !!this.mergeOp.gates.stale,
 					allowMassRemoval: !!this.mergeOp.gates.mass,
 					allowEmpty: !!this.mergeOp.gates.empty,
 				};
 			},
 
-			/** 本地估算的并入差异（并入源恒为提议稿、目标恒为 live —— 与页面上那段差异同一口径） */
+			/** 本地估算的并入差异；追加模式的移除数固定为 0，替换模式才计算 live 独有条目。 */
 			localMergeDiff: function () {
 				var live = this.userEntries;
 				var temp = this.tempEntries;
 				return {
 					added: temp.filter(function (e) { return live.indexOf(e) < 0; }),
-					removed: live.filter(function (e) { return temp.indexOf(e) < 0; }),
+					removed: this.mergeStrategy === "replace" ? live.filter(function (e) { return temp.indexOf(e) < 0; }) : [],
 				};
+			},
+
+			onMergeStrategyChange: function () {
+				this.mergeOp = { previewed: false, revealed: {}, gates: {} };
+				this.mergeConfirm = "";
+				this.mergeOut = "";
 			},
 
 			previewMerge: function () {
 				var self = this;
+				this.mergeConfirm = "";
 				this.busy = "merge";
 				this.mergeOut = noticeHtml("预演中…", "");
 				V.bridge(EP.merge, { method: "POST", body: JSON.stringify(this.mergeBody(false)) }).then(function (r) {
@@ -728,9 +752,11 @@
 						self.mergeOp = { previewed: true, revealed: {}, gates: {} };
 						self.mergeOut =
 							noticeHtml(
-								"预演通过（未落盘）：<code>" + self.esc(d.file || "USER.md") + "</code> " +
-									d.beforeCount + " → " + d.afterCount + " 条，" + self.esc(String(d.beforeChars)) + " → " +
-									self.esc(String(d.afterChars)) + " 字符。",
+								self.t(this.mergeStrategy === "replace" ? "替换预演通过（未落盘）：" : "追加预演通过（未落盘）：") +
+								"<code>" + self.esc(d.file || "USER.md") + "</code> " +
+									(window.ViewerI18n && window.ViewerI18n.locale === "en"
+										? d.beforeCount + " → " + d.afterCount + " entries, " + self.esc(String(d.beforeChars)) + " → " + self.esc(String(d.afterChars)) + " characters."
+										: d.beforeCount + " → " + d.afterCount + " 条，" + self.esc(String(d.beforeChars)) + " → " + self.esc(String(d.afterChars)) + " 字符。"),
 								"",
 							) +
 							diffHtml(d.added, d.removed, d.addedTotal, d.removedTotal) +
@@ -743,7 +769,7 @@
 						if (gate) self.mergeOp.revealed[gate] = true;
 						// CLI 包装在拒绝时只透出 {success:false,error}（viewer-cli 的 fail 不带差异字段），
 						// 所以这里用本页已载入的内容补一份**同口径**估算（并入源恒为 temp、目标恒为 live，
-						// 与上面「提议稿与 live 的差异」那段一致），让"会删几条"始终看得见。
+						// 与所选策略的差异口径一致，让用户始终能看到影响范围。
 						var local = self.localMergeDiff();
 						self.mergeOut =
 							noticeHtml("预演被拒：" + self.esc(msg), "err") +
@@ -765,9 +791,10 @@
 					if (r.ok && d.ok) {
 						self.mergeOut =
 							noticeHtml(
-								"已写入 live <code>" + self.esc(d.file || "USER.md") + "</code>：" +
-									d.beforeCount + " → " + d.afterCount + " 条。" +
-									(d.backupFile ? "写前备份 <code>" + self.esc(d.backupFile) + "</code>。" : "（live 原本不存在，未产生备份。）"),
+								self.t(this.mergeStrategy === "replace" ? "已完整替换 live " : "已追加到 live ") + "<code>" + self.esc(d.file || "USER.md") + "</code>: " +
+									(window.ViewerI18n && window.ViewerI18n.locale === "en"
+										? d.beforeCount + " → " + d.afterCount + " entries. " + (d.backupFile ? "Backup: <code>" + self.esc(d.backupFile) + "</code>." : "No backup was created because USER.md did not exist.")
+										: d.beforeCount + " → " + d.afterCount + " 条。" + (d.backupFile ? "写前备份 <code>" + self.esc(d.backupFile) + "</code>。" : "（live 原本不存在，未产生备份。）")),
 								"",
 							) +
 							noticeHtml(
@@ -795,9 +822,6 @@
 			     侧栏【怎么读这页】里已经写过一遍，页头不再重复。 -->
 			<p class="sub">游标与触发进度 · 三份「§ 分隔条目」文件的字符预算与自检 · 提议稿与 live 的差异 · 画像备份。</p>
 			<notice :msg="loadNote"></notice>
-			<div class="toolbar">
-				<el-button @click="loadAll">重新加载</el-button>
-			</div>
 		</header>
 
 		<main>
@@ -807,10 +831,7 @@
 				<el-collapse v-model="helpOpen">
 					<el-collapse-item name="help" title="三份文件的分工 · 预算口径 · 触发分级 · 单条契约">
 						<div class="hint">
-							<p><b>三份文件的分工</b>：<code>MEMORY.md</code> 由 <code>core/store</code> 维护（不是 L3 产物）；
-							<code>USER.md</code> 是 live 画像，<b>L3 自 2026-09-28 起只读它</b>；
-							<code>USER-temp.md</code> 是 L3 的提议稿，合并进 live 是<b>人工动作</b> ——
-							所以「temp 独有」那一段就是待你决定要不要合入的条目。</p>
+							<p>文件名旁的问号说明每份文件的用途。「临时层独有」表示只在临时画像中出现、尚未写入稳定层的内容。</p>
 							<p><b>预算是字符不是字节</b>：<code>entryBudget = 条目正文 + 分隔符（\\n§\\n 记 3 字符）</code>。
 							中文一个字 3 字节，用 <code>ls</code> 的字节数看会误判成严重超限（实测 USER.md 磁盘 4745 字节 vs 预算 1921/2200）。</p>
 							<p><b>触发分级</b>：P1 显式请求 / P2 冷启动 / P2.5 恢复 / P3 首次场景 / P4 记忆阈值（累计新增记忆到阈值）。
@@ -879,14 +900,14 @@
 						<notice :msg="entryWarnMsg"></notice>
 						<div v-for="g in fileGroups" :key="g.key">
 							<h2><code>{{ g.label }}</code> —— {{ g.list.length }} 条<chip v-if="g.issues.length" kind="err" :label="g.issues.length + ' 项异常'"></chip><chip v-if="!g.list.length" label="空"></chip></h2>
-							<div v-if="!g.list.length" class="hint">（空文件或不存在）{{ g.note }}</div>
+							<div v-if="!g.list.length" class="hint">（空文件或不存在）<help-note :text="g.note"></help-note></div>
 							<template v-else>
 								<!-- MEMORY 组只读：写动作恒定落到 USER-temp.md，给它按钮就是给一个必然写错地方的按钮 -->
 								<div class="entry" v-for="(e, i) in g.list" :key="i">
 									<span class="idx">{{ i + 1 }}.</span>{{ e }}<chip :label="e.length + ' 字符'"></chip>
 									<div v-if="!g.readonly" class="cell-actions">
-										<el-button :disabled="!hasPort()" @click="stageEdit('update', e)">改写</el-button>
-										<el-button type="danger" :disabled="!hasPort()" @click="stageEdit('delete', e)">删除</el-button>
+										<el-button :disabled="!hasPort() || !!busy" @click="stageEdit('update', e)">改写</el-button>
+										<el-button type="danger" :disabled="!hasPort() || !!busy" @click="stageEdit('delete', e)">删除</el-button>
 									</div>
 								</div>
 							</template>
@@ -951,51 +972,53 @@
 				<h2>管理操作区</h2>
 				<div v-if="!hasPort()" class="hint"><b>无写盘桥，管理操作全部禁用</b>：请用带 <code>?port=</code> 的地址打开（见页首提示）。这些按钮都要经桥转发到 <code>scripts/l1-admin/*.mts</code>，没有桥就只是调一个不存在的端口。</div>
 				<div class="ops">
-					<h3 class="sub">{{ editTitle }}</h3>
-					<div class="ops-row">
-						<div class="ops-label">正文<help-note :text="contentNote"></help-note></div>
-						<div class="ops-ctl">
-							<el-input v-model="editContent" style="width:100%" placeholder="一条单行规则，不含 §，≤500 字符" :disabled="!hasPort()"></el-input>
+					<div class="l3-edit-zone">
+						<h3>{{ editTitle }}</h3>
+						<div v-if="editOp.action !== 'add'" class="ops-row">
+							<div class="ops-label">选中的条目</div>
+							<div class="ops-ctl">
+								<span class="confirm-token">{{ editOp.target }}</span>
+								<el-button :disabled="!hasPort() || !!busy" @click="resetEdit">取消选择，改为新增</el-button>
+							</div>
 						</div>
-					</div>
-					<div class="ops-row">
-						<div class="ops-label">定位<help-note text="改写 / 删除时这里是定位片段（取自已选条目原文）。"></help-note></div>
-						<div class="ops-ctl">
-							<span v-if="editOp.target" class="confirm-token">{{ editOp.target }}</span>
-							<span v-else class="confirm-token">—（加一条不需要定位）</span>
-							<el-button :disabled="!hasPort()" @click="resetEdit">改回「加一条」</el-button>
+						<div v-if="editOp.action !== 'delete'" class="ops-row">
+							<div class="ops-label">内容<help-note :text="contentNote"></help-note></div>
+							<div class="ops-ctl">
+								<el-input class="edit-content-input" v-model="editContent" @input="invalidateEditPreview" style="width:100%" placeholder="一条单行规则，不含 §，≤500 字符" :disabled="!hasPort() || !!busy"></el-input>
+							</div>
 						</div>
-					</div>
-					<div class="ops-row">
-						<div class="ops-label">确认</div>
-						<div class="ops-ctl">
-								<span>输入 <span class="confirm-token">{{ editHintToken }}</span> 启用「执行」</span>
-							<el-input v-model="editConfirm" style="width:200px" autocomplete="off" :disabled="!hasPort()"></el-input>
-							<!-- 预演 = 只读动作（不落盘）走默认档；type="primary"（墨色描边）给"点了会写入内容"的执行。
-							     语义见 viewer-theme.css 的「动作语言」一节：danger 只给"让既有内容消失或被替换"的动作。 -->
-							<el-button :disabled="!hasPort() || !!busy" @click="previewEdit">预演</el-button>
-							<el-button type="primary" :disabled="!canApplyEdit" @click="applyEdit">执行</el-button>
+						<div class="ops-row wide">
+							<div class="ops-ctl edit-actions">
+								<el-button :disabled="!hasPort() || !!busy" @click="previewEdit">预览操作结果</el-button>
+								<el-button :type="editOp.action === 'delete' ? 'danger' : 'primary'" :disabled="!canApplyEdit" @click="applyEdit">{{ applyEditLabel }}</el-button>
+							</div>
+							<div v-if="!editOp.previewed" class="ops-note">先预览结果；确认后再执行。执行前会再次询问你。</div>
 						</div>
-						<div class="ops-note">先「预演」看用量与后果，再按提示输入确认词启用「执行」。</div>
+						<notice v-if="editOut.html" :msg="editOut"></notice>
 					</div>
-					<notice v-if="editOut.html" :msg="editOut"></notice>
 
-					<div class="danger-zone">
-						<h3>并入区 · 把提议稿并入 live USER.md</h3>
-						<div class="hint">这是<b>全仓库唯一会写 live <code>USER.md</code></b> 的动作。写前会先把 live 现况留档一份备份，因此可回退。三道安全闸（提议稿比 live 旧 / 会删掉 live 过半条目 / 提议稿为空）默认拒绝，拒绝理由原文会显示在下面，要放行必须逐条显式勾选。</div>
-						<!-- 用 .ops-ctl 而不是 .toolbar：形态就是"一行操作控件"，而 .ops-ctl 自带那套按钮语言
-						     （文字动作 / 描边），.toolbar 是内容区工具条的样式，会在这里变成实心砖块。 -->
-						<div class="ops-ctl">
-							<el-button :disabled="!hasPort() || !!busy" @click="previewMerge">预演并入</el-button>
-							<span>输入 <span class="confirm-token">MERGE</span> 启用「执行并入」</span>
-							<el-input v-model="mergeConfirm" style="width:160px" autocomplete="off" placeholder="MERGE" :disabled="!hasPort()"></el-input>
-							<el-button type="primary" :disabled="!canApplyMerge" @click="applyMerge">执行并入</el-button>
+					<div class="danger-zone merge-zone">
+						<h3>合并临时画像到稳定画像</h3>
+						<p class="merge-summary">默认只把 <code>USER-temp.md</code> 中尚不存在的条目追加到 <code>USER.md</code>，保留现有条目。完整替换会删除临时稿里没有的旧条目；只有确实要整体改写时才选择。执行前会自动备份。</p>
+						<div class="merge-strategy">
+							<span class="merge-strategy-label">合并方式</span>
+							<seg v-model="mergeStrategy" :options="mergeStrategyOptions" :disabled="!hasPort() || !!busy" @change="onMergeStrategyChange"></seg>
 						</div>
-						<div v-if="revealedGates.length">
-							<div class="notice warn">服务端拒绝了这次并入。要放行请<b>逐条显式勾选</b>（默认不勾）：</div>
-							<el-checkbox v-for="k in revealedGates" :key="k" v-model="mergeOp.gates[k]" :disabled="!hasPort()" @change="onGateChange">{{ gateLabels[k] }}</el-checkbox>
+						<div class="merge-actions">
+							<div v-if="mergeOp.previewed" class="merge-confirm">
+								<label for="merge-confirm-input">检查差异后，输入 <span class="confirm-token">{{ mergeConfirmToken }}</span> {{ mergeStrategy === 'replace' ? '确认完整替换' : '确认追加' }}</label>
+								<div class="merge-confirm-controls">
+									<el-input id="merge-confirm-input" v-model="mergeConfirm" autocomplete="off" :placeholder="'输入 ' + mergeConfirmToken" :disabled="!hasPort() || !!busy"></el-input>
+									<el-button type="primary" :disabled="!canApplyMerge" @click="applyMerge">{{ mergeStrategy === 'replace' ? '确认完整替换' : '确认追加到稳定画像' }}</el-button>
+								</div>
+							</div>
+							<el-button class="merge-preview-button" :disabled="!hasPort() || !!busy" @click="previewMerge">{{ mergeStrategy === 'replace' ? '预览替换结果' : '预览追加结果' }}</el-button>
 						</div>
-						<div v-if="mergeOut" v-html="mergeOut"></div>
+						<div v-if="revealedGates.length" class="merge-gates">
+							<div class="notice warn">完整替换触发安全检查。请查看原因，确认确实要删除旧条目后再勾选：</div>
+							<el-checkbox v-for="k in revealedGates" :key="k" v-model="mergeOp.gates[k]" :disabled="!hasPort() || !!busy" @change="onGateChange">{{ gateLabels[k] }}</el-checkbox>
+						</div>
+						<div v-if="mergeOut" class="merge-output" v-html="mergeOut"></div>
 					</div>
 				</div>
 

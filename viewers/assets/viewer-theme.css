@@ -27,7 +27,7 @@
  * 3. **一层只有一条滚动轴**：页面纵向 / 侧栏自身 / 表格与 JSON 内部，全部细滚动条；
  *    卡片正文不带滚动条（截断预览，全文在弹层）。
  * 4. **数字一律等宽 + tabular-nums**；字号只走 --t-* 六级。
- * 5. **控件尺寸只有一档**：31px / --t-sm，紧凑档 25px 只留给卡片脚与播种表行内按钮。
+ * 5. **控件尺寸只有一档**：31px / --t-sm，紧凑档 25px 只留给卡片脚与名称映射表行内按钮。
  *    实现方式是覆盖 EP 的 `--el-component-size`，而不是给每个组件写尺寸。
  * 6. **说明文字的三种去处，按"它是什么"选容器**（2026-10-10 定，用户按此逐条收过一轮）：
  *    · **留在页面上**：当前状态（加载了几个分片 / 对账一致 / 跑了但没提交）、失败原因、
@@ -39,8 +39,7 @@
  *    一句话：**代价留明面，口径进问号，方法论进折叠**。
  *    反例（别这么干）：把"执行会先自动备份"塞进问号 —— 那是安全信息；把状态码藏起来 —— 那是状态。
  *
- * 主题基线：`color-scheme: dark` + `<html class="dark">`（EP 暗色 css-vars 的开关）是原生控件
- * 与 Element Plus 同时变暗的前提，两者缺一个都会看到浅色控件。
+ * 主题由 `<html class="dark|light">` 控制：color-scheme、页面令牌与 Element Plus 变量同步切换。
  */
 
 /* ── 设计令牌（与旧版同名，页面与 JS 里的直引处不用改） ─────────────────────── */
@@ -99,6 +98,24 @@
 	--r-pill: 999px;
 
 	--nav-h: 46px;
+}
+
+/* Light palette mirrors the dark tokens so every viewer component follows one switch. */
+html.light {
+	color-scheme: light;
+	--bg: #f4f6f8;
+	--panel: #ffffff;
+	--panel2: #edf1f5;
+	--panel3: #e2e8ef;
+	--border: #cbd4de;
+	--border-soft: #dce3ea;
+	--text: #202a35;
+	--muted: #586575;
+	--faint: #738091;
+	--ink: #354454;
+	--focus: #476987;
+	--sc-thumb: #bac5d0;
+	--sc-thumb-hover: #9aa8b7;
 }
 
 /* ── 滚动条：细 + 暗色（契约 3） ────────────────────────────────────────────── */
@@ -162,7 +179,7 @@ b, strong { color: var(--text); font-weight: 600; }
  * 只做"把 EP 的语义令牌接到本仓库调色板"这一件事。EP 的组件在暗色下全部读这些变量，
  * 于是不用逐个组件覆写外观 —— 这也是引入组件库真正省下来的那部分工作。
  */
-html.dark {
+html.dark, html.light {
 	/* 背景三级：页面 < 悬浮/面板 < 选中（与旧版 --bg/--panel/--panel2/--panel3 同序） */
 	--el-bg-color: var(--panel);
 	--el-bg-color-page: var(--bg);
@@ -230,6 +247,12 @@ html.dark {
 	--el-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 	--el-box-shadow-light: 0 6px 18px rgba(0, 0, 0, 0.35);
 	--el-box-shadow-lighter: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+html.light {
+	--el-mask-color: rgba(28, 38, 50, 0.42);
+	--el-box-shadow: 0 10px 30px rgba(30, 45, 60, 0.14);
+	--el-box-shadow-light: 0 6px 18px rgba(30, 45, 60, 0.1);
+	--el-box-shadow-lighter: 0 3px 10px rgba(30, 45, 60, 0.08);
 }
 
 /* ── Element Plus 组件的外观修正（少而必要） ─────────────────────────────────
@@ -705,6 +728,7 @@ h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-w
 
 /* ── 预算条（L3 字符用量 / 块数上限） ─────────────────────────────────────── */
 .budget { margin: 8px 0 4px; }
+.budget + .budget { margin-top: 16px; }
 .budget .track { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
 .budget .track > i { display: block; height: 100%; background: var(--ok); transition: width 160ms ease-out; }
 .budget .track > i.over { background: var(--danger); }
@@ -719,6 +743,53 @@ h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-w
 .entry .tag { font-size: var(--t-xs); color: var(--muted); margin-left: 6px; }
 .entry .tag.added { color: var(--ok); }
 .entry .chip { margin-left: 6px; }
+
+/* L2 游标：把机器字段名收为轻标签，值在同一列对齐展示。 */
+.cursor-facts {
+	display: grid;
+	max-width: 760px;
+	margin-top: 6px;
+	border-top: 1px solid var(--border-soft);
+}
+.cursor-fact {
+	display: grid;
+	grid-template-columns: minmax(124px, 168px) minmax(0, 1fr);
+	align-items: baseline;
+	gap: 14px;
+	padding: 8px 4px;
+	border-bottom: 1px solid var(--border-soft);
+}
+.cursor-label { color: var(--muted); font-size: var(--t-xs); }
+.cursor-value { min-width: 0; color: var(--text); font-size: var(--t-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.cursor-id { color: var(--ink); font-family: var(--mono); font-size: var(--t-xs); }
+@media (max-width: 600px) {
+	.cursor-fact { grid-template-columns: minmax(100px, 124px) minmax(0, 1fr); gap: 10px; }
+}
+
+/* L2 管理：报告与名称维护各自成组，入口和解释都留在同一张卡片里。 */
+.l2-admin-tools { display: grid; gap: 10px; margin-top: 12px; }
+.l2-tool-card {
+	min-width: 0;
+	padding: 12px;
+	border: 1px solid var(--border-soft);
+	border-radius: var(--r-md);
+	background: var(--panel);
+}
+.l2-tool-card h3 { margin: 0 0 4px; color: var(--text); font-size: var(--t-sm); font-weight: 650; }
+.l2-tool-card p { max-width: 58ch; margin: 0 0 10px; color: var(--muted); font-size: var(--t-xs); line-height: 1.55; }
+.l2-tool-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.l2-tool-card .el-button { max-width: 100%; margin: 0; white-space: normal; }
+.l2-tool-actions .el-button { width: 100%; min-width: 0; }
+.scene-map-intro { max-width: 78ch; margin: 0 0 14px; color: var(--muted); font-size: var(--t-sm); line-height: 1.6; }
+.scene-map-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.scene-map-actions { display: flex; align-items: center; gap: 8px; }
+.scene-map-actions .el-button + .el-button { margin-left: 0; }
+@media (max-width: 600px) {
+	.l2-tool-actions { grid-template-columns: 1fr; }
+	.scene-map-toolbar { align-items: stretch; flex-direction: column; }
+	.scene-map-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.scene-map-actions .el-button { min-width: 0; white-space: normal; }
+}
 
 /* ── 管理操作面板（.ops* / 危险区 / 打字确认 / 差异清单）─────────────────────
  *
@@ -735,6 +806,16 @@ h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-w
    下拉 660px）。aside 是 overflow:auto，溢出表现为侧栏横向滚动条 + 控件被裁。按钮不在此列 ——
    不允许把按钮压扁换行。 */
 .ops-ctl .el-input, .ops-ctl .el-select, .ops-ctl .el-input-number { min-width: 0; max-width: 100%; }
+.edit-content-input { width: min(100%, 900px) !important; }
+.ops-row.wide > .ops-ctl.edit-actions {
+	width: min(calc(100% - 126px), 900px);
+	margin-left: 126px;
+	justify-content: flex-end;
+	flex-wrap: nowrap;
+	gap: 10px;
+	padding-top: 8px;
+}
+.ops-ctl.edit-actions .el-button { min-width: 136px; min-height: 38px; white-space: nowrap; }
 /* 说明跨满整行，而不是只占右侧控件列（那里只有 ~153px，一句"写信号只是入队请求…"要折 6 行）。
    颜色用 --muted：--faint 在 11px 上只有 3.41:1，达不到小字号 4.5:1 的下限。 */
 .ops-note { color: var(--muted); font-size: var(--t-xs); line-height: 1.55; }
@@ -752,10 +833,38 @@ h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-w
 
 /* 危险区：只换描边与标题色，不加底色（契约 1）。标签折到控件上方 —— 这块被 12px 内边距再吃掉
    一圈，控件列只剩 ~141px，备份下拉只能显示到「backfill-project-」（5 个同名前缀的目录分不开）。 */
-.danger-zone { border: 1px dashed var(--border); border-radius: var(--r-lg); padding: 10px 12px; }
-.danger-zone > h3 { margin: 0 0 8px; font-size: var(--t-sm); color: var(--danger); font-weight: 600; }
+.l3-edit-zone {
+	border: 1px solid var(--border);
+	border-left: 3px solid var(--border);
+	border-radius: var(--r-lg);
+	padding: 14px 16px;
+}
+.l3-edit-zone > h3 { margin: 0 0 12px; font-size: var(--t-md); color: var(--text); font-weight: 650; }
+.danger-zone { border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: var(--r-lg); padding: 14px 16px; }
+.danger-zone > h3 { margin: 0 0 6px; font-size: var(--t-md); color: var(--text); font-weight: 650; }
 .danger-zone .ops-row { grid-template-columns: 1fr; }
 .danger-zone .ops-row > .ops-label { padding-top: 0; }
+.merge-zone { margin-top: 18px; }
+.merge-summary { max-width: 78ch; margin: 0; color: var(--muted); font-size: var(--t-sm); line-height: 1.6; }
+.merge-strategy { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.merge-strategy-label { color: var(--muted); font-size: var(--t-sm); font-weight: 600; }
+.merge-actions { display: flex; align-items: flex-end; flex-wrap: wrap; justify-content: space-between; gap: 12px 16px; margin-top: 12px; }
+.merge-confirm { display: grid; gap: 6px; min-width: 270px; padding-left: 14px; border-left: 1px solid var(--border); }
+.merge-confirm > label { color: var(--muted); font-size: var(--t-xs); line-height: 1.5; }
+.merge-confirm-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.merge-confirm-controls .el-input { width: 170px; }
+.merge-preview-button { flex: 0 0 auto; margin-left: auto; min-width: 154px; min-height: 38px; }
+.merge-gates { display: grid; gap: 5px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.merge-gates .notice { margin: 0 0 3px; }
+.merge-output { margin-top: 12px; }
+
+@media (max-width: 600px) {
+	.ops-row.wide > .ops-ctl.edit-actions { width: 100%; margin-left: 0; }
+	.ops-ctl.edit-actions .el-button { min-width: 0; flex: 1 1 0; }
+	.merge-actions { align-items: stretch; }
+	.merge-confirm { min-width: 0; width: 100%; padding-left: 0; border-left: 0; }
+	.merge-preview-button { margin-left: auto; }
+}
 
 /* 打字确认：要你打的字面量用等宽原样显示，减少"打错了"这种无谓失败 */
 .confirm-token {
@@ -847,3 +956,14 @@ label.check { display: inline-flex; align-items: center; gap: 6px; cursor: point
    38px = --t-sm(13px) 的单行 + 单元格内边距 + 一点余量，与动作胶囊（~23px）同处一行不挤。 */
 .fixed-rows .el-table__cell { height: 38px; }
 
+/* Shared chrome controls */
+.nav-controls { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.nav-toggle {
+	font: inherit; font-size: var(--t-xs); color: var(--text); background: var(--panel2);
+	border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px 8px; cursor: pointer;
+}
+.nav-refresh { font-weight: 600; }
+.nav-refresh:disabled { opacity: 0.55; cursor: default; }
+.nav-toggle:hover { background: var(--panel3); }
+html.light .card:hover { border-color: #9eacba; background: #f8fafc; }
+html.light ::selection { background: #c9d9e8; color: #202a35; }
