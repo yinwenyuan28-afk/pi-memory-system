@@ -93,7 +93,7 @@ npm run viewer                                   # 一键：同步最新页面 �
 # 等价于：node --experimental-strip-types scripts/l1-admin/viewer.mts
 ```
 
-Windows 也可以直接双击 `scripts/l1-admin/启动查看器.cmd`。启动器会做三件每次都得记得做、忘了就出问题的事：
+Windows 也可以直接双击 `viewers/启动查看器.cmd`。启动器会做三件每次都得记得做、忘了就出问题的事：
 
 1. **先同步最新页面**（调用与激活时同一套部署逻辑，内容没变就零写入）—— 源码改过但还没重启 pi 会话时，不至于看到旧页面；
 2. **自动避让占用端口**（从 5174 起往上找空闲端口，不再因为 5174 被占就直接退出）；
@@ -133,11 +133,11 @@ profile 根画像文件的目录列举；③ 版本/漂移检查；④ 全部写
 - 桥的根路径 `/` 会 **302 到带 `?port=` 的总览页**（就地返回 `index.html` 会让相对引用的 `assets/*` 全 404）；
 - 真丢了 query 时，页面顶部会给出提示并告诉你补什么，而不是只闷着降级。
 
-顺带一提：**改了查看器源码后要重新部署才生效**（部署发生在 pi 会话激活 / `/reload` 时，或 `npm run viewer` 启动时）—— 否则页面右上角会标黄显示"源码已更新未部署"。
+使用 `npm run viewer` 启动时会监听仓库 `viewers/` 源码：保存后自动增量部署，已打开的查看器页面会在约 2 秒内自动重载。**自动重载可能丢失页面里尚未提交的输入**。直接运行桥脚本或仅运行 Pi 扩展时仍按原有方式部署；扩展会话激活 / `/reload` 时同步一次。
 
 
 
-**它为什么不会像以前那样落后**：源码在插件仓库的 [`viewers/`](viewers/)（进 git、随包发布），扩展激活时由 `memory/viewers/deploy.ts` 按**内容哈希**逐文件比对，只把变了的原子写到 `{profile}/memoryDB/viewers/`，并写 `viewer-manifest.json`（版本 = 包版本 + 内容哈希前 8 位）。页面右上角显示已部署版本；当源码改过但还没重新部署时，经桥打开会标黄提示「源码已更新未部署」。此前它是 profile 里手维护的单个 HTML，不在 git、也没有任何代码生成它 —— 于是场景池、L2 归档、type 收束、`taskState` 四次 schema 变更它全都没跟上，页头却还写着「与 quality.ts 1:1」。
+**它为什么不会像以前那样落后**：源码在插件仓库的 [`viewers/`](viewers/)（进 git、随包发布），由 `memory/viewers/deploy.ts` 按**内容哈希**逐文件比对，只把变了的原子写到 `{profile}/memoryDB/viewers/`，并写 `viewer-manifest.json`（版本 = 包版本 + 内容哈希前 8 位）。`npm run viewer` 运行期间还会监听源码变化并自动部署；页面每 2 秒检查部署版本，发现更新自动重载。扩展激活时也会同步一次。此前它是 profile 里手维护的单个 HTML，不在 git、也没有任何代码生成它 —— 于是场景池、L2 归档、type 收束、`taskState` 四次 schema 变更它全都没跟上，页头却还写着「与 quality.ts 1:1」。
 质量分与源码的一致性不再靠注释声明：`scripts/verify-viewer-quality-parity.ts` 把 JS 移植版与 `memory/l1/quality.ts` 喂同一批夹具逐例断言数值相等（含活跃日/日历两种时钟、`judgePrune` 六种 reason、保护带 P75）；`scripts/verify-viewer-deploy.ts` 守住部署机制本身（幂等、增量、退役、不碰用户文件），并做无浏览器也能跑的静态检查（JS 语法、HTML 引用的资源存在、页面调用的 `/api/*` 端点在桥里已声明，以及 ⑯ 设计契约）。
 
 **技术栈：Vue 3 + Element Plus（内置文件，无构建步骤）**。五个页面都是 Vue 应用，外壳控件（按钮 / 输入框 / 下拉 / 表格 / 弹层 / 分页 / 折叠面板 / 分段切换）交给 Element Plus，领域形状（胶囊、度量 token、卡片、条形图、时间线、预算条）仍由本仓库的 CSS 表达 —— 分工与理由写在 [`viewers/assets/viewer-vue.js`](viewers/assets/viewer-vue.js) 与 [`viewers/assets/viewer-theme.css`](viewers/assets/viewer-theme.css) 的文件头。库文件是**仓库内的普通文件**（[`viewers/assets/vendor/`](viewers/assets/vendor/)，Vue 3.5 + EP 2.14 ≈ 1.6 MB），因此照样走"内容哈希逐文件同步"那条部署链路，不需要给部署器加任何分支；也正因为没有 `node_modules`/`dist`，上一版 Vue 原型（`vue-viewer/`，已退役）那种"源码在仓库、构建产物没人管"的失效方式不会重演。**代价**：升级第三方库要手工重下 + 重跑门禁，步骤见 [`viewers/assets/vendor/README.md`](viewers/assets/vendor/README.md)。脚本加载顺序是硬约束（Vue → Element Plus → locale → viewer-core → viewer-vue → 页面脚本），顺序错页面直接白屏，`verify-viewer-deploy.ts` 的 ⑪ 节逐页断言。

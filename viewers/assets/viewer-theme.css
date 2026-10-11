@@ -354,6 +354,20 @@ html.light {
 .el-table__inner-wrapper::before { background-color: var(--border-soft); }
 .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell { background: var(--panel); }
 
+/* Pipeline queue/history tables: align headings, values, and empty state to one left edge. */
+.job-table th.el-table__cell > .cell {
+	text-align: left;
+	font-weight: 600;
+}
+.job-table td.el-table__cell > .cell { text-align: left; }
+.job-table .el-table__empty-block {
+	justify-content: flex-start;
+	box-sizing: border-box;
+	padding-left: 12px;
+	text-align: left;
+}
+.job-table .el-table__empty-text { width: 100%; text-align: left; }
+
 /* ④ 弹层：面板底 + 描边；正文可能很长，交给 .viewer-dialog 的 body 自己滚（契约 3） */
 .el-dialog { --el-dialog-bg-color: var(--panel); border: 1px solid var(--border); padding: 0; }
 .el-dialog__header { padding: 16px 18px 6px; margin: 0; }
@@ -478,15 +492,61 @@ html.light {
 }
 .nav .version.stale { color: var(--warn); border-color: var(--warn); }
 
+/* English labels are often longer than their Chinese equivalents. Let the shared
+   chrome grow and wrap instead of clipping page links or squeezing controls. */
+html[lang="en"] .nav {
+	height: auto;
+	min-height: var(--nav-h);
+	flex-wrap: wrap;
+	row-gap: 4px;
+	padding-top: 6px;
+	padding-bottom: 6px;
+}
+html[lang="en"] .nav .spacer { flex: 1 1 12px; min-width: 0; }
+html[lang="en"] .nav .version { max-width: min(100%, 36ch); overflow-wrap: anywhere; }
+html[lang="en"] .nav-controls { flex: 0 0 auto; }
+html[lang="en"] .stat > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+html[lang="en"] .notice,
+html[lang="en"] .hint,
+html[lang="en"] .el-alert,
+html[lang="en"] .el-collapse-item__header { min-width: 0; overflow-wrap: anywhere; }
+html[lang="en"] .notice,
+html[lang="en"] .hint { max-width: 100%; }
+html[lang="en"] .toolbar > .el-input,
+html[lang="en"] .toolbar > .el-select { min-width: 0; max-width: 100%; }
+html[lang="en"] .el-button {
+	height: auto;
+	min-height: var(--el-component-size);
+	min-width: 0;
+	max-width: 100%;
+	white-space: normal;
+}
+html[lang="en"] .el-button > span { min-width: 0; overflow-wrap: anywhere; }
+html[lang="en"] .ops-ctl.edit-actions .el-button { min-width: 0; white-space: normal; }
+html[lang="en"] .record-modal-footer > .el-button { height: auto; min-height: 40px; }
+html[lang="en"] .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+html[lang="en"] .el-table { max-width: 100%; }
+html[lang="en"] .el-table .cell { overflow-wrap: anywhere; }
+html[lang="en"] .el-input__wrapper,
+html[lang="en"] .el-select__wrapper { min-width: 0; }
+html[lang="en"] .viewer-dialog { max-width: calc(100vw - 24px); }
+html[lang="en"] .ops-row > .ops-ctl,
+html[lang="en"] .merge-actions,
+html[lang="en"] .merge-confirm-controls { min-width: 0; }
+
 /* ── 页头 ─────────────────────────────────────────────────────────────────── */
 header.page { padding: 16px 20px 0; }
 header.page h1 { margin: 0 0 5px; font-size: var(--t-xl); font-weight: 600; letter-spacing: -0.01em; }
 header.page .sub { margin: 0 0 12px; color: var(--muted); font-size: var(--t-sm); }
+.index-load-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.index-load-row > .notice { flex: 1 1 auto; min-width: 0; }
+.index-load-row > .el-button { flex: 0 0 auto; margin-left: 0; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .toolbar + .toolbar { margin-top: 8px; }
 .content > .toolbar { margin-bottom: 12px; }
 .toolbar .el-input, .toolbar .el-select { flex: 0 0 auto; }
 .toolbar > .grow { flex: 1 1 300px; max-width: 460px; }
+.records-filter-toolbar > .el-button { flex: 0 0 auto; margin-left: 0; }
 
 /* ── 主布局：左栏吸顶滚动 / 右栏随页面滚动（契约 3） ─────────────────────── */
 main { display: grid; grid-template-columns: 336px 1fr; align-items: start; }
@@ -876,6 +936,7 @@ h3.sub { margin: 12px 0 6px; font-size: var(--t-sm); color: var(--muted); font-w
 @media (max-width: 600px) {
 	.ops-row.wide > .ops-ctl.edit-actions { width: 100%; margin-left: 0; }
 	.ops-ctl.edit-actions .el-button { min-width: 0; flex: 1 1 0; }
+	.task-state-reason { flex-basis: 100%; max-width: none; }
 	.merge-actions { align-items: stretch; }
 	.merge-confirm { min-width: 0; width: 100%; padding-left: 0; border-left: 0; }
 	.merge-preview-button { margin-left: auto; }
@@ -912,6 +973,22 @@ label.check { display: inline-flex; align-items: center; gap: 6px; cursor: point
  * 放在这里而不是页面行内样式，是因为它是**弹层的结构约定**（L2/L3 的弹层同样按这个形状排）。 */
 .edit-zone { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
 .edit-zone > h3.sub { margin-top: 0; }
+.task-state-editor { display: grid; gap: 8px; padding: 2px 0 12px; margin-bottom: 4px; border-bottom: 1px solid var(--border-soft); }
+.task-state-heading,
+.record-detail-collapse .el-collapse-item__header { color: var(--muted); font-size: var(--t-sm); font-weight: 600; }
+.task-state-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.task-state-select { width: 150px; }
+.task-state-reason { flex: 1 1 220px; max-width: 340px; }
+.task-state-preview { color: var(--muted); font-size: var(--t-sm); }
+.task-state-editor .notice { margin: 0; }
+.record-detail-collapse { margin-top: 4px; }
+.record-modal-footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 14px; }
+.record-modal-footer > .el-button + .el-button { margin-left: 0; }
+.record-modal-footer > .el-button { min-width: 120px; height: 40px; padding: 0 16px; border-radius: var(--r-md); font-size: var(--t-sm); font-weight: 600; }
+
+@media (max-width: 600px) {
+	.record-modal-footer { gap: 10px; }
+}
 
 /* ── 提示条 / 日志折叠块 ─────────────────────────────────────────────────── */
 .notice {

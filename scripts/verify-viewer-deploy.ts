@@ -422,7 +422,7 @@ try {
 		}
 		// 一键启动器必须在场：它是唯一对用户的入口
 		ok("⑮ 一键启动器 viewer.mts 在场", clis.includes("viewer.mts"));
-		ok("⑮ Windows 双击入口 启动查看器.cmd 在场", existsSync(join(adminDir, "启动查看器.cmd")));
+		ok("⑮ Windows 双击入口 viewers/启动查看器.cmd 在场", existsSync(join(REPO_VIEWERS, "启动查看器.cmd")));
 	}
 } finally {
 	try {

@@ -49,6 +49,7 @@
 	"use strict";
 
 	var V = window.V;
+	var isEnglish = window.ViewerI18n && window.ViewerI18n.locale === "en";
 
 	/** 端点字面量集中一处：静态校验按字面量核对桥里是否声明（gate ⑬），拼串会漏检。 */
 	var EP = {
@@ -105,16 +106,16 @@
 	function inspectEntries(entries, entryCharLimit) {
 		var issues = [];
 		if (entries.length > 0 && entries[0].indexOf("§") === 0) {
-			issues.push({ level: "warn", text: "首个条目以 § 开头 —— 文件开头多了一个分隔符，那段 §（连同换行）已被并进第一条正文。" });
+			issues.push({ level: "warn", text: isEnglish ? "The first entry starts with §. An extra separator is at the start of the file, and the § plus its line break became part of the first entry." : "首个条目以 § 开头 —— 文件开头多了一个分隔符，那段 §（连同换行）已被并进第一条正文。" });
 		}
 		entries.forEach(function (e, i) {
-			if (/\r?\n/.test(e)) issues.push({ level: "warn", text: "第 " + (i + 1) + " 条含换行 —— 条目必须是单行（单条契约）。" });
-			if (e.length > entryCharLimit) issues.push({ level: "warn", text: "第 " + (i + 1) + " 条 " + e.length + " 字符，超过单条上限 " + entryCharLimit + "，l3_edit 会拒绝写入。" });
+			if (/\r?\n/.test(e)) issues.push({ level: "warn", text: isEnglish ? "Entry " + (i + 1) + " contains a line break. Each entry must be a single line." : "第 " + (i + 1) + " 条含换行 —— 条目必须是单行（单条契约）。" });
+			if (e.length > entryCharLimit) issues.push({ level: "warn", text: isEnglish ? "Entry " + (i + 1) + " has " + e.length + " characters, above the per-entry limit of " + entryCharLimit + "; l3_edit will reject it." : "第 " + (i + 1) + " 条 " + e.length + " 字符，超过单条上限 " + entryCharLimit + "，l3_edit 会拒绝写入。" });
 		});
 		var seen = new Map();
 		entries.forEach(function (e, i) {
 			var prev = seen.get(e);
-			if (prev !== undefined) issues.push({ level: "warn", text: "第 " + (prev + 1) + " 条与第 " + (i + 1) + " 条完全重复。" });
+			if (prev !== undefined) issues.push({ level: "warn", text: isEnglish ? "Entries " + (prev + 1) + " and " + (i + 1) + " are exact duplicates." : "第 " + (prev + 1) + " 条与第 " + (i + 1) + " 条完全重复。" });
 			else seen.set(e, i);
 		});
 		return issues;
@@ -194,6 +195,7 @@
 		mixins: [V.vue.pageMixin],
 		data: function () {
 			return {
+				isEnglish: isEnglish,
 				/** l3/cursor.json（null = 没读到；与"读到了但某个字段为空"分开表达） */
 				cursor: null,
 				/** l3/pending-trigger.json 的**文件内容**（不是待消费信号列表；见 fetchAll 里的注释） */
@@ -261,7 +263,7 @@
 						list: list,
 						readonly: k === "MEMORY",
 						limit: typeof limits[meta.limitKey] === "number" ? limits[meta.limitKey] : 2200,
-						budgetLabel: meta.label + "（" + list.length + " 条" + meta.budgetSuffix + "）",
+						budgetLabel: isEnglish ? meta.label + " (" + list.length + (meta.budgetSuffix ? " draft entries" : " entries") + ")" : meta.label + "（" + list.length + " 条" + meta.budgetSuffix + "）",
 						issues: inspectEntries(list, self.entryCharLimit),
 					};
 				});
@@ -282,11 +284,13 @@
 				return this.allIssues.map(function (i) { return { level: i.level, html: self.esc(i.text) }; });
 			},
 			noIssuesMsg: function () {
-				return { html: "三份文件逐条自检无异常。", level: "" };
+				return { html: isEnglish ? "All entries in the three files passed validation." : "三份文件逐条自检无异常。", level: "" };
 			},
 			profileFilesMsg: function () {
 				return {
-					html:
+					html: isEnglish
+						? "<b>Profile files unavailable</b>: <code>MEMORY.md</code>, <code>USER.md</code>, and <code>USER-temp.md</code> are in the profile root (one level above <code>memoryDB</code>), while the viewer bridge only mounts <code>memoryDB</code>. Open the page through the bridge; its allowlisted <code>/api/profile-files</code> endpoint reads these files. Counts below are unavailable."
+						:
 						"<b>读不到画像文件</b>：<code>MEMORY.md</code> / <code>USER.md</code> / <code>USER-temp.md</code> " +
 						"位于 profile <b>根</b>目录（<code>memoryDB</code> 的上一级），而写盘桥只挂载 <code>memoryDB</code>。" +
 						"请用桥打开 —— 端点 <code>/api/profile-files</code> 会按白名单读取它们；下面的数字因此不可信。",
@@ -307,11 +311,13 @@
 			/** 逐条清单的折叠标题（全页唯一一份，动作在行上） */
 			entriesTitle: function () {
 				var g = this.fileGroups;
+				if (isEnglish) return "Show " + (g[0].list.length + g[1].list.length + g[2].list.length) + " entries (MEMORY " + g[0].list.length + " · USER " + g[1].list.length + " · temp " + g[2].list.length + "; edit or delete entries inline)";
 				return "展开 " + (g[0].list.length + g[1].list.length + g[2].list.length) +
 					" 条（MEMORY " + g[0].list.length + " · USER " + g[1].list.length +
 					" · temp " + g[2].list.length + "，改写 / 删除在行上）";
 			},
 			backupsTitle: function () {
+				if (isEnglish) return this.backups.length ? "Show " + this.backups.length + " backups (preview or restore inline)" : "No backups found (or the viewer bridge is unavailable)";
 				return this.backups.length ? "展开 " + this.backups.length + " 份（预览 / 还原在行上）" : "没有备份（或未用写盘桥）";
 			},
 			/** 备份按时间倒序展示（最新的在最上面） */
@@ -330,6 +336,7 @@
 				return "添加到临时层";
 			},
 			contentNote: function () {
+				if (isEnglish) return this.loaded ? "One line, no §, up to " + this.entryCharLimit + " characters." : "One line, no §, within the per-entry limit.";
 				// 首次取数完成前后文案不同（旧版静态 HTML 是"≤ 单条上限。"，取到阈值后才写具体数）
 				return this.loaded ? "必须单行、不含 §、" + this.entryCharLimit + " 字符以内。" : "必须单行、不含 §、≤ 单条上限。";
 			},
@@ -381,16 +388,16 @@
 				var c = this.cursor || {};
 				var self = this;
 				return [
-					{ label: "最近画像更新", value: self.esc(V.fmtTime(c.lastPersonaUpdate)) },
-					{ label: "最近触发", value: self.esc(V.fmtTime(c.lastTriggeredAt)) },
-					{ label: "最近提交", value: self.esc(V.fmtTime(c.lastCommittedAt)) },
+					{ label: isEnglish ? "Last profile update" : "最近画像更新", value: self.esc(V.fmtTime(c.lastPersonaUpdate)) },
+					{ label: isEnglish ? "Last triggered" : "最近触发", value: self.esc(V.fmtTime(c.lastTriggeredAt)) },
+					{ label: isEnglish ? "Last committed" : "最近提交", value: self.esc(V.fmtTime(c.lastCommittedAt)) },
 				];
 			},
 			noCursorMsg: function () {
-				return { html: "没有 <code>l3/cursor.json</code>（L3 从未运行过？）。", level: "warn" };
+				return { html: isEnglish ? "<code>l3/cursor.json</code> is missing. Has L3 ever run?" : "没有 <code>l3/cursor.json</code>（L3 从未运行过？）。", level: "warn" };
 			},
 			pendingMsg: function () {
-				return { html: "存在 <code>pending-trigger.json</code>：<code>" + this.esc(JSON.stringify(this.pending)) + "</code>", level: "warn" };
+				return { html: isEnglish ? "<code>pending-trigger.json</code> exists: <code>" + this.esc(JSON.stringify(this.pending)) + "</code>" : "存在 <code>pending-trigger.json</code>：<code>" + this.esc(JSON.stringify(this.pending)) + "</code>", level: "warn" };
 			},
 			/** 最近一次触发晚于最近一次提交 —— 两个字段分开记就是为了让这种情况可见 */
 			ranWithoutCommit: function () {
@@ -398,16 +405,18 @@
 				return !!(c && c.lastTriggeredAt && c.lastCommittedAt && V.ts(c.lastTriggeredAt) > V.ts(c.lastCommittedAt));
 			},
 			staleTriggerMsg: function () {
-				return { html: "最近一次触发晚于最近一次提交 —— 也就是「跑了但没提交」。这两个字段分开记就是为了让这种情况可见。", level: "" };
+				return { html: isEnglish ? "The latest trigger is newer than the latest commit: L3 ran but did not commit. These timestamps are tracked separately to make this visible." : "最近一次触发晚于最近一次提交 —— 也就是「跑了但没提交」。这两个字段分开记就是为了让这种情况可见。", level: "" };
 			},
 			missingBackupMsg: function () {
-				return { html: "读不到这份备份（静态路径 404）。", level: "warn" };
+				return { html: isEnglish ? "This backup could not be read (static path returned 404)." : "读不到这份备份（静态路径 404）。", level: "warn" };
 			},
 
 			/** 条目清单上方那句醒目提示（改的是提议稿，不是注入画像） */
 			entryWarnMsg: function () {
 				return {
-					html:
+					html: isEnglish
+						? "Edits and additions are written to <code>USER-temp.md</code> (<b>the draft</b>) and do <b>not</b> immediately change the profile used for injection. They take effect only after you merge them into live <code>USER.md</code>. The live lists below are read-only; editing or deleting a USER entry changes the draft."
+						:
 						"改写 / 删除 / 新增都落在 <code>USER-temp.md</code>（<b>提议稿</b>），<b>不会</b>立刻改变注入画像 —— " +
 						"只有到「并入区」把它写进 live <code>USER.md</code> 之后才生效。" +
 						"下面 live 列表本身只读（MEMORY 与 USER 都不给按钮）；对 USER 条目点改写 / 删除，改的同样是提议稿。",
@@ -441,11 +450,13 @@
 						var missing = Object.keys(self.files).filter(function (k) {
 							return self.files[k].raw === null;
 						});
-						self.setNote(
-							"已加载游标、三份画像文件与 " + self.backups.length + " 个备份。" +
+						self.setNote(isEnglish
+							? "Loaded the cursor, three profile files, and " + self.backups.length + " backups." +
+								(missing.length ? " <b>Could not read: " + missing.map(function (k) { return self.files[k].label; }).join("/") + "</b>" : "") +
+								(self.limits ? " Limits come from source constants exposed by /api/limits." : " <b>Viewer bridge unavailable: limits and backup list are unavailable.</b>")
+							: "已加载游标、三份画像文件与 " + self.backups.length + " 个备份。" +
 								(missing.length ? " <b>没读到：" + missing.map(function (k) { return self.files[k].label; }).join("/") + "</b>" : "") +
-								(self.limits ? " 阈值来自 /api/limits（源码常量）。" : " <b>无写盘桥：阈值与备份清单不可用</b>。"),
-						);
+								(self.limits ? " 阈值来自 /api/limits（源码常量）。" : " <b>无写盘桥：阈值与备份清单不可用</b>。"));
 					})
 					.catch(function (e) {
 						self.setNote("加载失败：" + self.esc(e && e.message ? e.message : String(e)), "err");
@@ -456,7 +467,7 @@
 			reloadAfterWrite: function () {
 				var self = this;
 				return this.fetchAll().then(function () {
-					self.setNote("已重载（" + self.backups.length + " 个备份 / 提议稿 " + self.tempEntries.length + " 条）。", "");
+					self.setNote(isEnglish ? "Reloaded (" + self.backups.length + " backups / " + self.tempEntries.length + " draft entries)." : "已重载（" + self.backups.length + " 个备份 / 提议稿 " + self.tempEntries.length + " 条）。", "");
 				});
 			},
 
@@ -829,8 +840,8 @@
 				<h2>怎么读这页</h2>
 				<!-- 说明默认收起：它长 4 段，常开会把下面的游标与预算挤出首屏 -->
 				<el-collapse v-model="helpOpen">
-					<el-collapse-item name="help" title="三份文件的分工 · 预算口径 · 触发分级 · 单条契约">
-						<div class="hint">
+					<el-collapse-item name="help" :title="isEnglish ? 'File roles · character budget · trigger levels · entry rules' : '三份文件的分工 · 预算口径 · 触发分级 · 单条契约'">
+						<div class="hint" v-if="!isEnglish">
 							<p>文件名旁的问号说明每份文件的用途。「临时层独有」表示只在临时画像中出现、尚未写入稳定层的内容。</p>
 							<p><b>预算是字符不是字节</b>：<code>entryBudget = 条目正文 + 分隔符（\\n§\\n 记 3 字符）</code>。
 							中文一个字 3 字节，用 <code>ls</code> 的字节数看会误判成严重超限（实测 USER.md 磁盘 4745 字节 vs 预算 1921/2200）。</p>
@@ -838,6 +849,12 @@
 							<code>lastTriggeredAt</code> 与 <code>lastCommittedAt</code> 分开记，是为了让「跑了但没提交」可见。</p>
 							<p><b>单条契约</b>：每条必须单行、不含 <code>§</code>。首条若以 <code>§</code> 开头，说明文件开头多了一个分隔符，
 							那个 <code>§</code> 会被并进正文 —— 本页会把它标成异常。</p>
+						</div>
+						<div class="hint" v-else>
+							<p>The question mark beside each file name explains its purpose. “Only in temp” means those entries have not yet been added to the stable profile.</p>
+							<p><b>The budget counts characters, not bytes</b>: <code>entryBudget = entry text + separators</code> (each <code>\n§\n</code> separator counts as 3 characters). Chinese characters may use 3 bytes each, so file size can make a profile look over budget when it is not. For example, USER.md can be 4,745 bytes on disk while using only 1,921 of 2,200 budget characters.</p>
+							<p><b>Trigger levels</b>: P1 explicit request / P2 cold start / P2.5 recovery / P3 first scene / P4 memory threshold. <code>lastTriggeredAt</code> and <code>lastCommittedAt</code> are tracked separately so a run without a commit remains visible.</p>
+							<p><b>Entry rules</b>: each entry must be one line and cannot contain <code>§</code>. If the first entry starts with <code>§</code>, an extra separator was added at the start of the file and became part of that entry; this page flags it.</p>
 						</div>
 					</el-collapse-item>
 				</el-collapse>
@@ -848,7 +865,7 @@
 				<div v-if="!loaded" class="hint">加载中…</div>
 				<template v-else-if="cursor">
 					<stat-list :rows="cursorRows"></stat-list>
-					<div v-if="interval === null" class="hint">无写盘桥：读不到 <code>L3_INTERVAL</code>，无法显示 P4 触发进度。</div>
+					<div v-if="interval === null" class="hint">{{ isEnglish ? "No viewer bridge: L3_INTERVAL is unavailable, so P4 trigger progress cannot be shown." : "无写盘桥：读不到 L3_INTERVAL，无法显示 P4 触发进度。" }}</div>
 					<div v-else class="budget">
 						<div class="meta"><span>P4 记忆阈值进度</span><span>{{ sinceText }} / {{ interval }}</span></div>
 						<div class="track"><i :style="{ width: p4Pct + '%' }"></i></div>
@@ -999,7 +1016,8 @@
 
 					<div class="danger-zone merge-zone">
 						<h3>合并临时画像到稳定画像</h3>
-						<p class="merge-summary">默认只把 <code>USER-temp.md</code> 中尚不存在的条目追加到 <code>USER.md</code>，保留现有条目。完整替换会删除临时稿里没有的旧条目；只有确实要整体改写时才选择。执行前会自动备份。</p>
+				<p v-if="!isEnglish" class="merge-summary">默认只把 <code>USER-temp.md</code> 中尚不存在的条目追加到 <code>USER.md</code>，保留现有条目。完整替换会删除临时稿里没有的旧条目；只有确实要整体改写时才选择。执行前会自动备份。</p>
+				<p v-else class="merge-summary">By default, only entries from <code>USER-temp.md</code> that are not already in <code>USER.md</code> are added; existing entries are preserved. Full replacement deletes live entries that are missing from the draft, so use it only when you intend to replace the whole profile. A backup is created before writing.</p>
 						<div class="merge-strategy">
 							<span class="merge-strategy-label">合并方式</span>
 							<seg v-model="mergeStrategy" :options="mergeStrategyOptions" :disabled="!hasPort() || !!busy" @change="onMergeStrategyChange"></seg>
@@ -1025,9 +1043,10 @@
 				<!-- 触发区（请求 L3 重算）已搬到「流水线」页（pipeline-viewer.html）：
 				     三层的同名动作 + 队列上下文合成了一张表，这一页只剩会改画像文件的写动作。
 				     按钮搬走了要留一句指引 —— 凭空消失而不说去哪了是最糟的失效方式。 -->
-				<p class="hint">「请求 L3 重算」在顶部
+				<p v-if="!isEnglish" class="hint">「请求 L3 重算」在顶部
 					<a :href="pipelineHref">流水线页</a>
 					（那里还有队列与三层子代理的在跑 / 停止）。</p>
+				<p v-else class="hint">To request an L3 run, open the <a :href="pipelineHref">Pipeline page</a>. The queue and running subagents for all three layers are managed there.</p>
 			</section>
 		</main>
 		`,

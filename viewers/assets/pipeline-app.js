@@ -30,31 +30,32 @@
 	"use strict";
 
 	var V = window.V;
+	var isEnglish = window.ViewerI18n && window.ViewerI18n.locale === "en";
 
 	/** 三层的展示口径（id 与 jobs.sqlite 的 type / 运行记录的 layer 一致）。 */
 	var LAYERS = [
-		{ id: "l1", name: "L1 提取", agent: "l1-extractor", what: "从 L0 会话分片提取原子记忆" },
-		{ id: "l2", name: "L2 组织", agent: "l2-scene-organizer", what: "把新记录并进场景块" },
-		{ id: "l3", name: "L3 画像", agent: "l3-persona-generator", what: "重算 USER.md / MEMORY.md 画像" },
+		{ id: "l1", name: isEnglish ? "L1 extraction" : "L1 提取", agent: "l1-extractor", what: isEnglish ? "Extract atomic memories from L0 conversation shards" : "从 L0 会话分片提取原子记忆" },
+		{ id: "l2", name: isEnglish ? "L2 organization" : "L2 组织", agent: "l2-scene-organizer", what: isEnglish ? "Organize new records into scene blocks" : "把新记录并进场景块" },
+		{ id: "l3", name: isEnglish ? "L3 profile" : "L3 画像", agent: "l3-persona-generator", what: isEnglish ? "Rebuild the USER.md / MEMORY.md profiles" : "重算 USER.md / MEMORY.md 画像" },
 	];
 
 	/** 五个状态（jobs.sqlite 的 status 闭集）→ 中文标签 + 形状编码 class（.chip.st-*）。 */
 	var STATUS = {
-		queued: { label: "排队", cls: "st-queued" },
-		running: { label: "在跑", cls: "st-running" },
-		done: { label: "完成", cls: "st-done" },
-		skipped: { label: "跳过", cls: "st-skipped" },
-		failed: { label: "失败", cls: "st-failed" },
+		queued: { label: isEnglish ? "Queued" : "排队", cls: "st-queued" },
+		running: { label: isEnglish ? "Running" : "在跑", cls: "st-running" },
+		done: { label: isEnglish ? "Completed" : "完成", cls: "st-done" },
+		skipped: { label: isEnglish ? "Skipped" : "跳过", cls: "st-skipped" },
+		failed: { label: isEnglish ? "Failed" : "失败", cls: "st-failed" },
 	};
 
 	/** 来源（谁把它排进队列的）；口径见 jobs-db.ts 的 PipelineJobSource 注释。 */
 	var SOURCE = {
-		interval: "周期到点",
-		manual: "手动命令",
-		l1_commit: "L1 提交",
-		drain: "收尾续排",
-		trigger: "门控触发",
-		signal: "显式信号",
+		interval: isEnglish ? "Scheduled" : "周期到点",
+		manual: isEnglish ? "Manual command" : "手动命令",
+		l1_commit: isEnglish ? "L1 submission" : "L1 提交",
+		drain: isEnglish ? "L1 follow-up" : "收尾续排",
+		trigger: isEnglish ? "Gated trigger" : "门控触发",
+		signal: isEnglish ? "Explicit signal" : "显式信号",
 	};
 
 	/** 端点字面量集中一处：静态校验按字面量核对桥里是否声明（gate ⑬），拼串会漏检。 */
@@ -67,8 +68,9 @@
 	};
 
 	/** 写动作共用的那句原话：触发是入队请求，不是执行（后半句由 /api/trigger 的语义决定）。 */
-	var TRIGGER_CAVEAT =
-		"它<b>只负责入队，不是立即执行</b>：需要 pi 会话活着，并在下一轮结束（<code>agent_settled</code>）时由主进程消费。";
+	var TRIGGER_CAVEAT = isEnglish
+		? " It <b>only queues the request; it does not run immediately</b>. The pi session must be active so the main process can consume it after the next turn (<code>agent_settled</code>)."
+		: "它<b>只负责入队，不是立即执行</b>：需要 pi 会话活着，并在下一轮结束（<code>agent_settled</code>）时由主进程消费。";
 
 	// ── 作业行的共用口径（队列表与最近结束表是同一套渲染，只差数据源）─────────────
 
@@ -122,8 +124,8 @@
 		mixins: [{ methods: JOB_METHODS }],
 		props: { rows: { type: Array, default: function () { return []; } } },
 		template:
-			'<el-table :data="rows" size="small" empty-text="没有记录">' +
-			'<el-table-column label="job" width="70" align="right" class-name="mono">' +
+			'<el-table class="job-table" :data="rows" size="small" empty-text="没有记录">' +
+			'<el-table-column label="job" width="70" class-name="mono">' +
 			'<template #default="{ row }">{{ row.id }}</template></el-table-column>' +
 			'<el-table-column label="层" width="100">' +
 			'<template #default="{ row }">{{ layerName(row.type) }}</template></el-table-column>' +
@@ -135,7 +137,7 @@
 			'<el-table-column label="入队" width="112">' +
 			'<template #default="{ row }"><span :title="fmtTime(row.createdAt)">{{ fromNow(row.createdAt) }}</span></template>' +
 			"</el-table-column>" +
-			'<el-table-column label="耗时" width="100" align="right" class-name="mono">' +
+			'<el-table-column label="' + (isEnglish ? "Duration" : "耗时") + '" width="100" class-name="mono">' +
 			'<template #default="{ row }"><span :title="durTitle(row)">{{ durText(row) }}</span></template>' +
 			"</el-table-column>" +
 			'<el-table-column label="说明" min-width="220">' +
@@ -156,6 +158,7 @@
 		mixins: [V.vue.pageMixin, { methods: JOB_METHODS }],
 		data: function () {
 			return {
+				isEnglish: isEnglish,
 				/** /api/pipeline/jobs 的 data（null = 读不到；读不到与"队列空"必须分开表达） */
 				jobs: null,
 				jobsError: "",
@@ -204,11 +207,11 @@
 			statRows: function () {
 				var c = this.counts;
 				return [
-					{ label: "排队中", value: c.queued || 0 },
-					{ label: "在跑", value: c.running || 0 },
-					{ label: "已完成", value: c.done || 0 },
-					{ label: "已跳过", value: c.skipped || 0 },
-					{ label: "已失败", value: c.failed || 0 },
+					{ label: isEnglish ? "Queued" : "排队中", value: c.queued || 0 },
+					{ label: isEnglish ? "Running" : "在跑", value: c.running || 0 },
+					{ label: isEnglish ? "Completed" : "已完成", value: c.done || 0 },
+					{ label: isEnglish ? "Skipped" : "已跳过", value: c.skipped || 0 },
+					{ label: isEnglish ? "Failed" : "已失败", value: c.failed || 0 },
 				];
 			},
 			/** 侧栏概览脚注：数据新鲜度 + 两条"当下为真"的计数 */
@@ -219,12 +222,10 @@
 				var last = this.recent[0];
 				return [
 					this.jobs.exists === false
-						? "jobs.sqlite 还不存在：这个 profile 从未跑过流水线。"
-						: "共 " + (c.total || 0) + " 条" +
-							(last
-								? " · 最近结束 job " + this.esc(String(last.id)) + "（" + this.esc(V.fromNow(last.finishedAt || last.createdAt)) + "）"
-								: ""),
-					"待消费信号 " + this.signalCount + " / 3 层 · 运行记录 " + this.runs.length + " 条",
+						? (isEnglish ? "jobs.sqlite does not exist yet; this profile has never run the pipeline." : "jobs.sqlite 还不存在：这个 profile 从未跑过流水线。")
+						: isEnglish ? "" + (c.total || 0) + " jobs" + (last ? " · latest finished job " + this.esc(String(last.id)) + " (" + this.esc(V.fromNow(last.finishedAt || last.createdAt)) + ")" : "")
+							: "共 " + (c.total || 0) + " 条" + (last ? " · 最近结束 job " + this.esc(String(last.id)) + "（" + this.esc(V.fromNow(last.finishedAt || last.createdAt)) + "）" : ""),
+					isEnglish ? "Pending signals " + this.signalCount + " / 3 layers · " + this.runs.length + " run records" : "待消费信号 " + this.signalCount + " / 3 层 · 运行记录 " + this.runs.length + " 条",
 				];
 			},
 			/** 三层子代理表：每层一行（信号 / 运行 / 最近结束 / 动作） */
@@ -256,6 +257,12 @@
 				return this.running.concat(this.queued);
 			},
 			queueNoteHtml: function () {
+				if (isEnglish) {
+					if (!this.jobs) return "Queue unavailable: " + this.esc(this.jobsError || "Loading…");
+					if (this.running.length) return "Only one job can run at a time. <b>" + this.running.length + "</b> running job(s) occupy the worker; <b>" + this.queued.length + "</b> queued. Jobs run in claim order, with L3 always last.";
+					if (this.queued.length) return "No job is running. <b>" + this.queued.length + "</b> job(s) are waiting in claim order, with L3 always last.";
+					return "Queue is empty: no jobs are queued or running.";
+				}
 				if (!this.jobs) return "读不到队列：" + this.esc(this.jobsError || "加载中…");
 				if (this.running.length) {
 					return "认领是<b>单飞</b>的：<b>" + this.running.length + "</b> 条在跑占着执行位，队列里 <b>" +
@@ -273,10 +280,10 @@
 				});
 			},
 			recentTitle: function () {
-				if (!this.recent.length) return "最近结束：没有记录";
+				if (!this.recent.length) return isEnglish ? "Recently finished: no records" : "最近结束：没有记录";
 				var c = this.counts;
 				var finished = Math.max(0, (c.total || 0) - (c.queued || 0) - (c.running || 0));
-				return "最近结束 " + this.recent.length + " 条（全部已结束 " + finished + " 条）";
+				return isEnglish ? "Recently finished " + this.recent.length + " (" + finished + " finished in total)" : "最近结束 " + this.recent.length + " 条（全部已结束 " + finished + " 条）";
 			},
 		},
 		methods: {
@@ -304,16 +311,13 @@
 			 */
 			loadAll: function () {
 				var self = this;
-				this.setNote("加载中…");
+				this.setNote(isEnglish ? "Loading…" : "加载中…");
 				if (!this.hasPort()) {
 					this.jobs = null;
 					this.jobsError = "无写盘桥";
 					this.pending = null;
 					this.runs = [];
-					this.setNote(
-						"无写盘桥：队列、信号与运行记录全部来自 <code>/api/*</code>，请用带 <code>?port=</code> 的地址打开本页。",
-						"warn",
-					);
+					this.setNote(isEnglish ? "Viewer bridge unavailable: queue, signals, and run history come from <code>/api/*</code>. Open this page with a <code>?port=</code> URL." : "无写盘桥：队列、信号与运行记录全部来自 <code>/api/*</code>，请用带 <code>?port=</code> 的地址打开本页。", "warn");
 					return Promise.resolve();
 				}
 				return Promise.all([V.bridge(EP.jobs), V.bridge(EP.pending), V.bridge(EP.runs)]).then(function (r) {
@@ -325,14 +329,12 @@
 
 					var failed = r.filter(function (x) { return !x.ok; }).length;
 					var c = self.jobs ? self.jobs.counts || {} : null;
-					self.setNote(
-						(c
-							? "队列共 " + (c.total || 0) + " 条：排队 " + (c.queued || 0) + " · 在跑 " + (c.running || 0)
-							: "队列：读不到（" + self.esc(self.jobsError) + "）") +
-							" ｜ 待消费信号 " + self.signalCount + " 层 ｜ 运行记录 " + self.runs.length + " 条" +
-							(failed ? " ｜ <b>" + failed + " 个端点没读到</b>，各格已写出原因" : ""),
-						failed ? "warn" : "",
-					);
+					self.setNote(isEnglish
+						? (c ? "Queue: " + (c.total || 0) + " · waiting: " + (c.queued || 0) + " · running: " + (c.running || 0) : "Queue unavailable (" + self.esc(self.jobsError) + ")") +
+							" · Pending signals: " + self.signalCount + " / 3 · Run records: " + self.runs.length + (failed ? " · <b>" + failed + " endpoint(s) unavailable</b>; see each section for details." : "")
+						: (c ? "队列共 " + (c.total || 0) + " 条：排队 " + (c.queued || 0) + " · 在跑 " + (c.running || 0) : "队列：读不到（" + self.esc(self.jobsError) + "）") +
+							" ｜ 待消费信号 " + self.signalCount + " 层 ｜ 运行记录 " + self.runs.length + " 条" + (failed ? " ｜ <b>" + failed + " 个端点没读到</b>，各格已写出原因" : ""),
+						failed ? "warn" : "");
 				});
 			},
 
@@ -352,8 +354,8 @@
 					var ok = r.ok && d.success !== false;
 					self.setOps(
 						ok
-							? "已把 <b>" + self.esc(self.layerName(layer)) + "</b> 的请求写入待消费信号。" + TRIGGER_CAVEAT
-							: "入队失败：" + self.esc(self.bridgeError(r)),
+						? (isEnglish ? "Queued a request for <b>" + self.esc(self.layerName(layer)) + "</b>." : "已把 <b>" + self.esc(self.layerName(layer)) + "</b> 的请求写入待消费信号。") + TRIGGER_CAVEAT
+							: (isEnglish ? "Could not queue request: " : "入队失败：") + self.esc(self.bridgeError(r)),
 						ok ? "" : "err",
 						d,
 					);
@@ -369,9 +371,10 @@
 				if (!this.hasPort() || !run || this.busy) return;
 				return V.vue
 					.confirm(
-						"停止 " + this.layerName(layer) + " 子代理？\n\njob " + run.jobId + " · pid " + run.pid + " · " + (run.agent || "?") +
-							"\n\n立即且不可逆：先拦信号、再杀进程树；本批未提交 ⇒ 游标不推进，下一轮整批重做。",
-						"停止子代理",
+						isEnglish ? "Stop the " + this.layerName(layer) + " subagent?\n\nJob " + run.jobId + " · PID " + run.pid + " · " + (run.agent || "?") +
+							"\n\nThis is immediate and irreversible: the signal is blocked, then the process tree is terminated. If this batch was not committed, the cursor will not advance and the full batch will run again next time."
+							: "停止 " + this.layerName(layer) + " 子代理？\n\njob " + run.jobId + " · pid " + run.pid + " · " + (run.agent || "?") + "\n\n立即且不可逆：先拦信号、再杀进程树；本批未提交 ⇒ 游标不推进，下一轮整批重做。",
+						isEnglish ? "Stop subagent" : "停止子代理",
 					)
 					.then(function (yes) {
 						if (!yes) return null;
@@ -384,15 +387,15 @@
 							var d = r.data || {};
 							var ok = r.ok && d.success !== false;
 							if (!ok) {
-								self.setOps("停止失败：" + self.esc(self.bridgeError(r)), "err", d);
+								self.setOps((isEnglish ? "Could not stop subagent: " : "停止失败：") + self.esc(self.bridgeError(r)), "err", d);
 							} else if (d.stopped === false) {
 								// 不是错误：没有在跑的子代理是常态。但要说出来，否则"点了没反应"就是新的静默失效
-								self.setOps("没有停到东西：" + self.esc(String(d.note || "该层没有在跑的子代理")), "warn", d);
+								self.setOps((isEnglish ? "Nothing was stopped: " : "没有停到东西：") + self.esc(String(d.note || (isEnglish ? "no subagent is running for this layer" : "该层没有在跑的子代理"))), "warn", d);
 							} else {
 								self.setOps(
-									self.esc(String(d.note || "已停掉子代理。")) +
+									self.esc(String(d.note || (isEnglish ? "Subagent stopped." : "已停掉子代理。"))) +
 										(d.killConfirmed === false
-											? "<br>未能确认进程已死：该层已被<b>持有</b>（确认停止前不接受新任务）。"
+											? (isEnglish ? "<br>Could not verify process exit. This layer is <b>locked</b>; new jobs are blocked until termination is confirmed." : "<br>未能确认进程已死：该层已被<b>持有</b>（确认停止前不接受新任务）。")
 											: ""),
 									d.killConfirmed === false ? "warn" : "",
 									d,
@@ -420,8 +423,8 @@
 
 				<h2>说明</h2>
 				<el-collapse v-model="helpOpen">
-					<el-collapse-item name="help" title="队列是什么 · 五个状态 · 来源 · 请求入队 / 停止的代价">
-						<div class="hint">
+					<el-collapse-item name="help" :title="isEnglish ? 'How the queue works · five statuses · sources · effects of queueing or stopping' : '队列是什么 · 五个状态 · 来源 · 请求入队 / 停止的代价'">
+						<div class="hint" v-if="!isEnglish">
 							<p><b>队列</b>：<code>memoryDB/pipeline/jobs.sqlite</code> 是三层<b>共用的一条队列</b>
 							（主进程 worker 认领、子代理提交时自己标 done）。认领是<b>单飞</b>的 —— 任何时刻最多一条在跑，
 							所以 <code>queued</code> 里排第一个的就是下一个。</p>
@@ -437,6 +440,13 @@
 							已有同层排队 / 在跑时，队列去重会让这次请求不新增任务。</p>
 							<p><b>停止子代理</b>立即且不可逆：先拦信号再杀进程树；本批未提交 ⇒ 游标不推进，下一轮整批重做。
 							按钮只在确实有运行记录时可用（没有在跑的子代理时它是装饰，所以禁用）。</p>
+						</div>
+						<div class="hint" v-else>
+							<p><b>Queue</b>: <code>memoryDB/pipeline/jobs.sqlite</code> is shared by all three layers. The main-process worker claims jobs; subagents mark their own jobs complete. Only one job runs at a time, so the first item in <code>queued</code> runs next.</p>
+							<p><b>Status</b>: <span class="chip st-queued">Queued</span> waiting to be claimed · <span class="chip st-running">Running</span> claimed and active · <span class="chip st-done">Completed</span> submitted successfully · <span class="chip st-skipped">Skipped</span> a gate failed after claim, so no work was done · <span class="chip st-failed">Failed</span> timed out or errored; see Details.</p>
+							<p><b>Sources</b>: scheduled · manual command · L1 submission (queues L2) · L1 follow-up (L0 still has work) · gated trigger or explicit signal (the two L3 trigger paths).</p>
+							<p><b>Queue request</b> writes a pending signal; it does <b>not</b> run immediately. The pi session must be active; the main process consumes the signal after the next turn (<code>agent_settled</code>). If pi is closed, the signal waits on disk. Duplicate requests are ignored while the same layer is queued or running.</p>
+							<p><b>Stop subagent</b> is immediate and irreversible: the signal is blocked, then the process tree is terminated. If the current batch was not committed, the cursor does not advance and the full batch runs again next time. The button is enabled only when a process is actually running.</p>
 						</div>
 					</el-collapse-item>
 				</el-collapse>

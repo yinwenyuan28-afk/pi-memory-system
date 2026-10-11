@@ -50,11 +50,11 @@
 		"切换主题": "Toggle theme", "切换语言": "Switch language", "刷新当前页面数据": "Refresh page data",
 		"file:// 打开（未部署清单）": "Opened via file:// (manifest unavailable)", "无版本清单": "No version manifest",
 		"部署自 ": "Deployed from ", "（共 ": " (", " 个文件）": " files)",
-		"源码已更新未部署": "Source updated; deployment pending", "确认": "Confirm", "确定": "Confirm", "取消": "Cancel",
+		"源码已更新未部署": "Source updated; deployment pending", "源码版本 ": "Source version ", "，已部署 ": "; deployed ", "；运行 npm run viewer 自动部署；否则重启会话或 /reload 触发部署": "; run npm run viewer to deploy automatically, or restart the session / run /reload to deploy", "确认": "Confirm", "确定": "Confirm", "取消": "Cancel",
 		"加载中…": "Loading…", "加载中": "Loading", "刷新摘要": "Refresh summary", "重新加载": "Reload",
-		"清空": "Clear", "导出当前视图": "Export current view", "写盘状态": "Write access",
+		"清空": "Clear", "导出当前视图": "Export current view", "导出筛选结果": "Export filtered results", "导出当前筛选命中的全部记录（不限当前页）": "Export all records matching the current filters (not just this page)", "写盘状态": "Write access",
 		"页面": "Pages", "怎么用": "How to use", "筛选": "Filters", "操作": "Actions", "统计": "Statistics", "说明": "Help",
-		"全部质量": "All quality levels", "全部日期": "All dates", "隐藏已删除": "Hide deleted", "仅看已删除": "Show deleted only",
+		"全部质量": "All quality levels", "全部日期": "All dates", "全部记录": "All records", "隐藏已删除": "Hide deleted", "仅看已删除": "Show deleted only",
 		"搜索 content / 场景 / 项目 / id / cwd …": "Search content / scene / project / id / cwd …",
 		"类型 · 任务状态": "Type · Task status", "场景（按 scene_id 解析到池中 canonical 名）": "Scene (canonical name resolved from scene_id)",
 		"项目（metadata.project）": "Project (metadata.project)", "写回需要写盘桥：请用带": "Write access requires the viewer bridge. Open this page with",
@@ -101,7 +101,7 @@
 		"注意这个地址上": "This address has ", "没有鉴权": "no authentication",
 		" —— 同网段任何设备都能读写，只在可信网络里用。": ". Any device on the same network can read and write, so use it only on a trusted network.",
 		"右上角显示已部署版本；": "The deployed version appears at the top right. ",
-		"若源码改过但还没部署，会标黄提示「源码已更新未部署」。": "If source has changed but has not been deployed, a yellow notice says “Source updated; deployment pending.”",
+		"若源码改过但还没部署，会标黄提示「源码已更新未部署」。": "If source has changed but has not been deployed, a yellow notice says “Source updated; deployment pending.” With npm run viewer, changes are deployed automatically.",
 		"任务状态按 ": "Task status is counted from ", " 统计（缺字段 = 待办）。这只是": " (a missing field means Open). This is only a sample from the ",
 		"的抽样，全库分布见 L1 页。": " shard; see the L1 page for the full distribution.", "读不到最新分片。": "Latest shard unavailable.",
 		/* L1 records */
@@ -126,12 +126,16 @@
 		"无匹配结果": "No matching results", "试试放宽筛选或清空搜索。": "Try broadening the filters or clearing the search.",
 		"还没有数据": "No data yet", "点上方“重新加载”从写盘桥取数。": "Select “Reload” above to load data from the viewer bridge.",
 		"没有丢弃留痕 l1/value-check-log.jsonl 不存在或为空。": "No drop log: l1/value-check-log.jsonl is missing or empty.",
-		"编辑（会写盘）": "Edit (writes to disk)", "任务状态": "Task status", "写入中…": "Writing…",
-		"改这里就就地改写该条（保留 id / 正文 / 向量），并写 metadata.taskStateChange 审计。": "This updates the record in place (preserving its ID, content, and vector) and writes a metadata.taskStateChange audit entry.",
+		"编辑（会写盘）": "Edit (writes to disk)", "修改此记录": "Edit this record", "任务状态": "Task status", "保存中…": "Saving…", "确认修改": "Confirm change",
+		"原因（可选）": "Reason (optional)", "待确认：": "Pending: ", "修改状态后，点击弹窗底部的“确认修改”才会保存。": "After changing the status, click “Confirm change” at the bottom of the dialog to save.",
+		"当前为只读模式，请通过查看器启动器打开后再修改。": "This page is read-only. Open it with the viewer launcher to make changes.",
+		"任务状态已更新。": "Task status updated.", "正文或选项已更改，请重新预览后再确认。": "The content or options changed. Preview again before confirming.", "保存失败：": "Save failed: ",
 		"只读：": "Read-only: ", "需带 ?port= 打开才能写盘。": "Open the page with ?port= to enable writes.",
-		"作废某条请用右下“删除（墓碑）” —— 与 l1_fix 的 tombstone 是同一个写盘动作，这里不再重复入口。": "Use “Delete (tombstone)” at the bottom right to invalidate a record. It is the same write action as l1_fix, so it is not duplicated here.",
-		"新正文": "New content", "证据": "Evidence", "原因 / 优先级": "Reason / priority", "预演（只报闸门裁决）": "Preview (show safety-gate decisions)",
-		"执行（写盘）": "Apply (write to disk)", "删除（墓碑）": "Delete (tombstone)", "关闭": "Close",
+		"修正正文": "Correct content", "（只读）": " (read-only)", "先填写修正后的正文和依据，再预览结果；确认无误后才会保存。修正说明会附在正文后。作废记录请使用右下角的“删除（墓碑）”。": "Enter the corrected content and supporting evidence, then preview it. Save only after reviewing the result. A correction note is added to the content. Use “Delete (tombstone)” at the bottom right to invalidate a record.",
+		"修正后的正文": "Corrected content", "至少 10 个字符。": "At least 10 characters.", "依据 *": "Evidence *", "必填，至少 20 个字符；需能复核修正依据。": "Required, at least 20 characters, and must support verification.",
+		"填写可复核的依据（至少 20 个字符）": "Enter verifiable evidence (at least 20 characters)", "原因 / 优先级": "Reason / priority", "优先级（0–100）": "Priority (0–100)",
+		"允许修正高价值记录": "Allow correction of high-value records", "只绕过高价值保护检查，其他检查仍会执行。": "Only bypasses the high-value protection check. All other checks still apply.", "预览修改结果": "Preview changes", "确认并保存": "Confirm and save",
+		"删除（墓碑）": "Delete (tombstone)", "关闭": "Close",
 		"清空选择": "Clear selection", "全选当前筛选": "Select all filtered", "标为待办": "Mark open", "标为完成": "Mark done", "标为废弃": "Mark dropped",
 		"清空搜索": "Clear search", "导出选中": "Export selected", "确认执行": "Confirm and apply", "危险区": "Danger zone",
 		"整库还原": "Restore entire database", "打字确认": "Type to confirm", "执行还原": "Restore",
@@ -450,7 +454,106 @@
 		"在地址后补 <code>?port=&lt;端口&gt;</code>（端口就是地址栏里那个）即可恢复；": "Add <code>?port=&lt;port&gt;</code> to the URL (use the port shown in the address bar) to restore access; ",
 		"或者直接用 <code>npm run viewer</code> / 桥启动时打印的那个带 <code>?port=</code> 的地址打开。": "or open the URL with <code>?port=</code> printed by <code>npm run viewer</code> when the bridge starts.",
 	};
+	// Labels generated from API results and less common controls are kept here too,
+	// so all five pages use the same translation path.
+	Object.assign(translations, {
+		"汇总中…": "Summarizing…", "取数失败": "Could not load data", "写盘": "Write access", "当前已带 ?port=": "Viewer bridge connected (?port=)",
+		"当前未带 ?port=，只能只读浏览。运行 ": "No ?port= parameter; viewing is read-only. Run ", "再打开它打印的地址即可写盘。": " and open the URL it prints to enable writes.",
+		"现在能不能写": "Write access", "画像文件读到了没有": "Profile files loaded", "这一层现在健不健康": "Layer status", "进度/备份": "Progress / backups",
+		"索引缺块": "Blocks missing from index", "未入索引块": "Blocks missing from index", "无写盘桥：列不了分片目录": "Viewer bridge unavailable: shard folders cannot be listed",
+		"无写盘桥：无法核对「索引 ↔ 磁盘」。": "Viewer bridge unavailable: cannot compare the index with files on disk.", "拿不到活跃会话日": "Active session days unavailable",
+		"活跃会话日": "Active session days", "最新分片": "Latest shard", "最近分片": "Recent shards", "分片数": "Shards", "总行数（含墓碑）": "Total records (including tombstones)",
+		"画像备份数": "Profile backups", "文件是空的": "File is empty", "归档块": "Archived blocks", "live 成员总数": "Live members", "live 块（索引）": "Live blocks (index)", "账本条目": "Ledger events", "成员": "Members",
+		"live 块（磁盘）": "Live blocks (disk)", "归档成员总数": "Archived members", "对账问题": "Reconciliation issues", "L2 场景层 /": "L2 Scene Layer /",
+		"P4 进度": "P4 progress", "USER-temp 待合入条目": "USER-temp entries pending merge", "USER.md 条目 / 预算": "USER.md entries / budget", "个 id": " IDs",
+		"个 · 未入索引块": " · blocks missing from index", "项摘要取数失败：": "Could not load summary: ", "已删除": "Deleted", "未删除": "Active", "已合并": "Merged", "已合并 →": "Merged into →",
+		"存活": "Active", "非任务记录": "Non-task record", "work_task · 待办": "work_task · Open", "热度": "Activity", "来自 ": "From ", " 个分片 · 来源：": " shards · source: ",
+		" 个分组已对上 ": " groups match ", "；长期闲置且低价值 ": "; long-idle and low-value: ", " 条失败（只有 work_task 承载任务状态）": " failed (only work_task records have task status)",
+		" 条为「": " records are marked “", " 条（judgePrune 判定可删）—— 改筛选条件可退出此视图": " records eligible for removal by judgePrune. Change the filters to leave this view.",
+		" 条（value-check 判 drop 的记录从不写进库，这里是它们唯一的留痕）": " records rejected by value-check. They are never stored elsewhere, so this is their only trace.",
+		"条（类型 + 任务状态 + 场景 + 项目 + 质量 + 日期 联合筛选）": " records match the combined type, task status, scene, project, quality, and date filters.",
+		"个（源：hit-stats.json 侧车，可能滞后于 l0）": " (source: hit-stats.json sidecar; may lag behind L0)", "个（源：l0/conversations，权威）": " (source: l0/conversations; authoritative)",
+		"条，已向量化": " records vectorized", "候选 ": "Candidates ", "已标记 ": "Marked ", "已选 ": "Selected ", "成功/失败": "Succeeded / failed",
+		"执行中…": "Applying…", "正在保存…": "Saving…", "正在删除…": "Deleting…", "正在删除": "Deleting", "正在标记": "Updating", "值未变": "No change",
+		"删除失败：": "Delete failed: ", "批量删除失败：": "Bulk delete failed: ", "批量标记失败：": "Bulk update failed: ", "批量标记失败：HTTP": "Bulk update failed: HTTP",
+		"执行失败：": "Apply failed: ", "失败：": "Failed: ", "预演被拒：": "Preview rejected: ", "已写入并回读确认": "Written and verified", "已标记 <b>": "Marked <b>",
+		"当前这一份渲染结果": "the current view", "只在本页预览标记": "Mark in this view only", "只想看一眼有哪些状态": "Show the available task statuses",
+		"更新时间 ↑": "Updated ↑", "更新时间 ↓": "Updated ↓", "质量分 ↑": "Quality ↑", "质量分 ↓": "Quality ↓", "优先级 ↑": "Priority ↑", "优先级 ↓": "Priority ↓",
+		"每页 60": "60 per page", "每页 120": "120 per page", "每页 240": "240 per page", "追加序": "Append order", "显示": "Show", "没有留痕": "No drop records",
+		"时间": "Time", "动作": "Action", "记录 id": "Record ID", "类型": "Type", "场景": "Scene", "丢弃理由": "Drop reason", "原始记录（JSON）": "Original record (JSON)",
+		"必填，至少 20 个字符；需能复核修正依据。": "Required. Enter at least 20 characters so the evidence can be reviewed.", "只绕过高价值保护检查，其他检查仍会执行。": "Only bypasses the high-value protection check. All other checks still apply.",
+		"（没有备份）": "(No backups)", "(无备份)": "(No backups)", "确定真实删除（就地标记 deleted:true）？\nID:": "Permanently delete these records (mark deleted:true in place)?\nIDs:",
+		"\n\n会自动备份，可用 rollback 还原。": "\n\nA backup will be created automatically and can be restored with rollback.", "块数预算 / 恢复要先腾位 / 归档 ≠ 删除": "Block limit · make room before restoring · archive is not delete",
+		"权威源是哪些 / 索引为什么是派生 / 归档 ≠ 删除": "Sources of truth · why the index is derived · archive is not delete", "无 cursor.json": "No cursor.json", "块文件": "Block file",
+		"成员": "Members", "操作": "Actions", "无 META": "No META", "已归档": "Archived", "所属块": "Block", "文件读不到": "File unavailable", "正文兜底": "Content fallback",
+		"正文里没有": "Not in content", "成员来源：索引（侧车缺本条）": "Member source: index (missing from sidecar)", "填写统一名称": "Enter the name to use",
+		"归档原因（必填，写入账本）": "Archive reason (required; added to ledger)", "恢复原因（可选，写入账本）": "Restore reason (optional; added to ledger)", "暂无数据": "No data", "场景池报告": "Scene-pool report", "合并报告（场景池）": "Scene merge report",
+		"队列是什么 · 五个状态 · 来源 · 请求入队 / 停止的代价": "Queue · five statuses · sources · cost of queueing or stopping", "没有记录": "No records", "层": "Layer", "来源": "Source", "状态": "Status", "入队": "Queued", "耗时": "Duration", "说明": "Details",
+		"正在跑": "Running", "最近结束": "Recently finished", "没有已结束记录": "No finished jobs", "待消费信号": "Pending signal", "请求入队": "Queue request", "停止子代理": "Stop subagent", "没有在跑的子代理": "No subagent is running", "来自 /api/subagent-runs": "Source: /api/subagent-runs",
+		"L1 提交": "L1 submission", "收尾续排": "Follow-up after L1", "门控触发": "Gated trigger", "显式信号": "Explicit signal", "L1 提取": "L1 extraction", "L2 组织": "L2 organization", "L3 画像": "L3 profile",
+		"从 L0 会话分片提取原子记忆": "Extract atomic memories from L0 conversation shards", "把新记录并进场景块": "Organize new records into scene blocks", "重算 USER.md / MEMORY.md 画像": "Rebuild the USER.md / MEMORY.md profiles",
+		"秒": "sec", " 分 ": " min ", " 时 ": " hr", "停掉 job ": "Stop job ", "（pid ": " (PID ", "）": ")", "待消费 · ": "Pending · ",
+		"管理操作区加载中…": "Loading management actions…", "读不到向量库状态": "Vector store status unavailable", "概览 · 质量标签 · 质量分直方图 · 淘汰候选 · 来源分片": "Overview · quality labels · quality histogram · prune candidates · source shards",
+		"L1 记录 id": "L1 record ID", "搜索块名 / summary / 成员 id …": "Search block name / summary / member ID …", "水位用于「有哪些 L1 记录还没进任何场景块」的判定（见下方未归属统计）。": "The cursor identifies L1 records that have not been added to a scene block. See the unassigned-record count below.",
+		"会加": "Added", "会删": "Removed", "条目没有差异（可能只改了行尾 / 结尾换行）。": "No entry changes (only line endings may differ).", "并入中…": "Merging…", "还原中…": "Restoring…",
+		"展开 ": "Show ", " 项异常": " issues", " 字符": " characters", "修改后用量 ": "Usage after changes ", "当前用量 ": "Current usage ", "写前备份 ": "Backup before writing: ",
+		"条完全重复。": " entries are duplicates.", "条含换行 —— 条目必须是单行（单条契约）。": " entries contain line breaks; each entry must be a single line.", "最近提交": "Last committed", "最近画像更新": "Last profile update", "最近触发": "Last triggered",
+		"明显缺参数": "Missing required fields", "能被这页看到、且真的会出问题": "Visible here and needs attention", "阈值来自 /api/limits（源码常量）。": "Thresholds come from /api/limits (source constants).", "服务端刚拒绝过": "Recently rejected by the server",
+		"要上 live 还要走「并入区」。": "To update the live profile, use the Merge section.", "队列：读不到（": "Queue unavailable (", "条：排队": " queued", "查看器「流水线」页的停止按钮": "the Stop button on the Pipeline page",
+		"查看器「流水线」页的请求入队按钮": "the Queue request button on the Pipeline page", "认领是": "Claiming is ", "条在跑占着执行位，队列里 ": " running and using the worker; ", "条按序等待（L3 永远最后）。": " queued in order (L3 always runs last).",
+		"条按认领顺序等着（L3 永远最后）。": " waiting in claim order (L3 always runs last).", " 的请求写入待消费信号。": " request was written as a pending signal.", "已把 ": "Queued ", "没有停到东西：": "Nothing was stopped: ", "已停掉子代理。": "Subagent stopped.",
+		"停止失败：": "Could not stop subagent: ", "入队失败：": "Could not queue request: ", "未能确认进程已死：该层已被": "Could not verify that the process exited. This layer is now ", "持有": "locked", "确认停止前不接受新任务。": " and will not accept new jobs until termination is confirmed.",
+		"已失败": "Failed", "已跳过": "Skipped", "最近结束 job": "Most recently finished job", "· 在跑": "· Running", "· 最近结束 job": "· Most recently finished job", "立即且不可逆：": "Immediate and irreversible: ",
+		"先拦信号再杀进程树；": "block the signal, then terminate the process tree; ", "载入中": "Loading", "请求中…": "Requesting…", "停止中…": "Stopping…", "重新加载记录。": "Records reloaded.",
+		"点上方“重新加载”从写盘桥取数。": "Select “Reload” above to load data from the viewer bridge.", "画像文件": "Profile files", "字符以内。": " characters or fewer.", "字符，超过单条上限": " characters, over the per-entry limit",
+		"必须单行、不含 §、": "Must be one line and cannot contain §; ", "必须单行、不含 §、≤ 单条上限。": "Must be one line, cannot contain §, and stay within the per-entry limit.", "正文为空，没有可写入的内容。": "The content is empty; there is nothing to write.",
+		"打开": "Open", "候选：": "Candidate: ", "最近一次触发晚于最近一次提交 —— 也就是「跑了但没提交」。这两个字段分开记就是为了让这种情况可见。": "The last trigger is newer than the last commit, which means a run was not committed. These timestamps are kept separately to make that visible.",
+		"附加一条": "Add entry", "预览追加结果": "Preview additions", "预览替换结果": "Preview replacement", "确认追加": "Confirm addition", "确认替换": "Confirm replacement",
+		"确认完整替换": "Confirm full replacement", "一条单行规则，不含 §，≤500 字符": "One rule per line, no §, up to 500 characters", "L1 原子记忆": "L1 Records", "L2 场景": "L2 Scenes", "L3 画像": "L3 Profile", "流水线": "Pipeline"
+	});
+	Object.assign(translations, {
+		"读不到": "Unavailable", "未知错误": "Unknown error", "加载失败：": "Load failed: ", "读取失败": "Read failed", "读取中…": "Loading…",
+		"已完成": "Done", "已废弃": "Dropped", "待办": "Open", "全部日期": "All dates", "隐藏已删除": "Hide deleted", "导出当前筛选命中的全部记录（不限当前页）": "Export all matching records (not just this page)",
+		"当前筛选：仅该状态": "Current filter: this status only", "加入批量选择": "Add to bulk selection", "审计：": "Audit: ", "缺省即待办": "Defaults to Open", "淘汰候选：": "Prune candidate: ", "不淘汰：": "Not eligible for pruning: ",
+		"质量分 ": "Quality score ", " —— 热度，按天数衰减": " — activity that decays over time", "无项目": "No project", "metadata.project 为空": "metadata.project is empty", "优先级（0–100）": "Priority (0–100)",
+		"整库还原（L1）· 危险区": "Restore entire L1 database · Danger zone", "逐字输入所选备份目录名": "Type the selected backup folder name exactly", "（只读）": " (read-only)",
+		"dry-run 不含 IO 级校验（分片能否写入只有实写时才知道）。": "Dry runs do not check disk I/O. Whether a shard is writable can only be confirmed by applying the change.",
+		"无写盘桥：管理动作全部禁用，只能看。带 ": "Viewer bridge unavailable: management actions are disabled. Open this page with ", " 打开即可用。": " to enable them.",
+		"整库还原会用备份「": "This will restore the entire database from backup “", "」替换当前 L1 全部记录（不是单条撤销）。\n\n继续？": "”, replacing all current L1 records. This does not undo a single record.\n\nContinue?",
+		"块数预算 / 恢复要先腾位 / 归档 ≠ 删除": "Block limit · make room before restoring · archive is not delete", "权威源是哪些 / 索引为什么是派生 / 归档 ≠ 删除": "Sources of truth · why the index is derived · archive is not delete",
+		"恢复要先腾位": "Make room before restoring", "归档 = 有记账的删除": "Archive is a logged removal", "live 块上限 ": "Live block limit: ", "未知（无桥时读不到 ": "Unknown (unavailable without the viewer bridge: ",
+		"当前 live 块 ": "Current live blocks: ", "，空位 ": ", available slots: ", "归档（预演）": "Preview archive", "恢复（预演）": "Preview restore", "暂无数据": "No data",
+		"正文（": "Content (", " 字符）": " characters)", "成员清单（": "Member list (", "过去用过的名称（逗号分隔）": "Previous names (comma-separated)", "备注（可选）": "Notes (optional)",
+		"已重载（": "Reloaded (", " 个备份 / 提议稿 ": " backups / draft ", " 条）。": " entries).", "· 提议稿 mtime": "· Draft modified",
+		"上面的差异是按本页当前已载入的 live / 提议稿估算的（服务端在给出自己的差异之前就拒绝了）。": "The differences above are estimated from the live file and draft loaded on this page. The server rejected the request before returning its own comparison.",
+		"P1 显式请求 / P2 冷启动 / P2.5 恢复 / P3 首次场景 / P4 记忆阈值（累计新增记忆到阈值）。lastTriggeredAt 与 lastCommittedAt 分开记，是为了让「跑了但没提交」可见。": "P1 explicit request / P2 cold start / P2.5 recovery / P3 first scene / P4 memory threshold (cumulative new memories reach the limit). lastTriggeredAt and lastCommittedAt are separate so uncommitted runs remain visible.",
+		"预算按 entryBudget 计（条目正文 + 分隔符），不是文件字节数：中文 1 字符 = 3 字节，用 ls 的字节数看会误判成严重超限。": "The budget uses entryBudget (entry text plus separators), not file size in bytes. Chinese characters use three bytes each, so byte counts can make a file appear far over budget.",
+		"temp 独有 ": "Only in draft ", "live 独有 ": "Only in live ", "展开 ": "Show ", " 项异常": " issues", " 字符": " characters", "输入 ": "Type ",
+		"没有记录": "No records", "层": "Layer", "入队": "Queued", "耗时": "Duration", "待消费信号": "Pending signal", "正在跑": "Running", "来自 /api/subagent-runs": "Source: /api/subagent-runs", "没有已结束记录": "No completed jobs", "动作": "Actions",
+		"待消费 · ": "Pending · ", "停掉 job ": "Stop job ", "（pid ": " (PID ", "没有在跑的子代理": "No subagent is running", "周期到点": "Scheduled", "手动命令": "Manual command", "收尾续排": "Follow-up after L1", "门控触发": "Gated trigger", "显式信号": "Explicit signal",
+		"L1 提交": "L1 submission", "L1 提取": "L1 extraction", "L2 组织": "L2 organization", "L3 画像": "L3 profile", "从 L0 会话分片提取原子记忆": "Extract atomic memories from L0 conversation shards", "把新记录并进场景块": "Organize new records into scene blocks", "重算 USER.md / MEMORY.md 画像": "Rebuild the USER.md / MEMORY.md profiles",
+		"秒": "sec", " 分 ": " min ", " 时 ": " hr", "管理操作区加载中…": "Loading management actions…", "读不到向量库状态": "Vector store status unavailable",
+		"概览 · 质量标签 · 质量分直方图 · 淘汰候选 · 来源分片": "Overview · quality labels · quality histogram · prune candidates · source shards", "L1 记录 id": "L1 record ID",
+		"水位用于「有哪些 L1 记录还没进任何场景块」的判定（见下方未归属统计）。": "The cursor identifies L1 records that have not been added to a scene block. See the unassigned-record count below.",
+		"会加": "Added", "会删": "Removed", "条目没有差异（可能只改了行尾 / 结尾换行）。": "No entry changes (only line endings may differ).", "并入中…": "Merging…", "还原中…": "Restoring…",
+		"修改后用量 ": "Usage after changes ", "当前用量 ": "Current usage ", "写前备份 ": "Backup before writing: ", "条完全重复。": " entries are duplicates.", "条含换行 —— 条目必须是单行（单条契约）。": " entries contain line breaks; each entry must be a single line.",
+		"最近提交": "Last committed", "最近画像更新": "Last profile update", "最近触发": "Last triggered", "明显缺参数": "Missing required fields", "能被这页看到、且真的会出问题": "Visible here and needs attention",
+		"阈值来自 /api/limits（源码常量）。": "Thresholds come from /api/limits (source constants).", "服务端刚拒绝过": "Recently rejected by the server", "要上 live 还要走「并入区」。": "To update the live profile, use the Merge section.",
+		"查看器「流水线」页的停止按钮": "the Stop button on the Pipeline page", "查看器「流水线」页的请求入队按钮": "the Queue request button on the Pipeline page", "认领是": "Claiming is ",
+		"条在跑占着执行位，队列里 ": " running and using the worker; ", "条按序等待（L3 永远最后）。": " queued in order (L3 always runs last).", "条按认领顺序等着（L3 永远最后）。": " waiting in claim order (L3 always runs last).",
+		" 的请求写入待消费信号。": " request was written as a pending signal.", "已把 ": "Queued ", "没有停到东西：": "Nothing was stopped: ", "停止失败：": "Could not stop subagent: ", "入队失败：": "Could not queue request: ",
+		"未能确认进程已死：该层已被": "Could not verify that the process exited. This layer is now ", "持有": "locked", "确认停止前不接受新任务。": " and will not accept new jobs until termination is confirmed.",
+		"已失败": "Failed", "已跳过": "Skipped", "最近结束 job": "Most recently finished job", "· 在跑": "· Running", "· 最近结束 job": "· Most recently finished job", "立即且不可逆：": "Immediate and irreversible: ",
+		"先拦信号再杀进程树；": "block the signal, then terminate the process tree; ", "重新加载记录。": "Records reloaded.", "点上方“重新加载”从写盘桥取数。": "Select “Reload” above to load data from the viewer bridge.",
+		"画像文件": "Profile files", "字符以内。": " characters or fewer.", "字符，超过单条上限": " characters, over the per-entry limit", "必须单行、不含 §、": "Must be one line and cannot contain §; ",
+		"必须单行、不含 §、≤ 单条上限。": "Must be one line, cannot contain §, and stay within the per-entry limit.", "最近一次触发晚于最近一次提交 —— 也就是「跑了但没提交」。这两个字段分开记就是为了让这种情况可见。": "The last trigger is newer than the last commit, which means a run was not committed. These timestamps are kept separately to make that visible.",
+		"切换主题": "Toggle theme", "切换语言": "Switch language", "刷新当前页面数据": "Refresh page data", "导出筛选结果": "Export filtered results", "导出当前视图": "Export current view",
+		"已选": "Selected", "这条记录不成立": "This record is invalid", "记录不成立（查重覆盖 / 纠错作废）—— 与任务状态是两根独立的轴": "This record is invalid (duplicate or corrected); this is separate from its task status",
+		"收起": "Collapse", "展开": "Expand", "全部质量": "All quality levels", "内容": "Content", "导出选中": "Export selected", "清空选择": "Clear selection"
+	});
 	var translationKeys = Object.keys(translations).sort(function (a, b) { return b.length - a.length; });
+	function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+	var translationPattern = new RegExp(translationKeys.filter(function (key) { return key.length >= 4; }).map(escapeRegExp).join("|"), "g");
 	var locale = "zh-CN";
 	try {
 		locale = localStorage.getItem("viewer-locale") === "en" ? "en" : "zh-CN";
@@ -461,13 +564,24 @@
 		// translation table for every Vue/Element Plus update.
 		if (typeof text !== "string" || !/[\u3400-\u9fff]/.test(text)) return text;
 		if (translations[text]) return translations[text];
-		var result = text;
-		translationKeys.forEach(function (key) {
-			if (key.length >= 4 && result.indexOf(key) >= 0) {
-				result = result.split(key).join(translations[key]);
-			}
-		});
-		return result;
+		var result = text.replace(translationPattern, function (key) { return translations[key]; });
+		result = result
+			.replace(/展开\s*(\d[\d,]*)\s*条/g, "Show $1 entries")
+			.replace(/(\d[\d,]*)\s*个\s*分片/g, "$1 shards")
+			.replace(/(\d[\d,]*)\s*个\s*块/g, "$1 blocks")
+			.replace(/(\d[\d,]*)\s*个\s*备份/g, "$1 backups")
+			.replace(/(\d[\d,]*)\s*项/g, "$1 items")
+			.replace(/(\d[\d,]*)\s*字符/g, "$1 characters")
+			.replace(/(\d[\d,]*)\s*秒/g, "$1 sec")
+			.replace(/(\d[\d,]*)\s*分/g, "$1 min")
+			.replace(/(\d[\d,]*)\s*时/g, "$1 hr")
+			.replace(/^成员\s+(\d[\d,]*)$/, "Members $1")
+			.replace(/^成员清单（\s*(\d[\d,]*)\s*）$/, "Member list ($1)")
+			.replace(/^正文（\s*(\d[\d,]*)\s*字符）$/, "Content ($1 characters)")
+			.replace(/^(热|温|冷|新|噪|待观察)(?=\s|$)/, function (label) { return translations[label] || label; });
+		// Never leave a half-translated sentence in the UI. Dynamic/rich text that
+		// needs context is localized at its source; unknown strings stay Chinese.
+		return /[\u3400-\u9fff]/.test(result) ? text : result;
 	}
 	function setLocale(value) {
 		locale = value === "en" ? "en" : "zh-CN";

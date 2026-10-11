@@ -276,6 +276,24 @@
 		return manifestPromise;
 	}
 
+	/** 在专用查看器桥下检查部署版本；新版写入清单后自动重载页面。 */
+	function watchForViewerUpdates(version) {
+		if (!isHttp() || !version || window.__viewerUpdateWatchStarted) return;
+		window.__viewerUpdateWatchStarted = true;
+		var checking = false;
+		setInterval(function () {
+			if (checking || document.visibilityState === "hidden") return;
+			checking = true;
+			loadJson("viewer-manifest.json?check=" + Date.now()).then(function (manifest) {
+				if (manifest && manifest.version && manifest.version !== version) location.reload();
+			}).catch(function () {
+				/* 暂时不可读时保留当前页面；下一轮继续检查。 */
+			}).finally(function () {
+				checking = false;
+			});
+		}, 2000);
+	}
+
 	/** Register the current page's data reload action for the shared top bar. */
 	function registerRefreshHandler(handler) {
 		refreshHandler = typeof handler === "function" ? handler : null;
@@ -350,6 +368,7 @@
 			}
 			chip.textContent = m.version + " · " + fmtTime(m.generatedAt);
 			chip.title = UI.t("部署自 ") + (m.sourceRoot || "?") + UI.t("（共 ") + (m.files ? m.files.length : 0) + UI.t(" 个文件）");
+			watchForViewerUpdates(m.version);
 		});
 
 		// 漂移检查（需要写盘桥：只有桥能读到仓库里的源码）
@@ -358,8 +377,8 @@
 				if (!r.ok || !r.data || !r.data.sourceVersion) return;
 				if (r.data.drifted) {
 					chip.classList.add("stale");
-					chip.textContent += " ⚠ 源码已更新未部署";
-					chip.title = "源码版本 " + r.data.sourceVersion + "，已部署 " + r.data.deployedVersion + "；重启会话或 /reload 触发部署";
+					chip.textContent += " ⚠ " + UI.t("源码已更新未部署");
+					chip.title = UI.t("源码版本 ") + r.data.sourceVersion + UI.t("，已部署 ") + r.data.deployedVersion + UI.t("；运行 npm run viewer 自动部署；否则重启会话或 /reload 触发部署");
 				}
 			});
 		}

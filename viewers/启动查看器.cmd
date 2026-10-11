@@ -15,7 +15,7 @@ rem  processes) or by pressing Ctrl+C.
 rem ============================================================================
 chcp 65001 >nul
 setlocal
-cd /d "%~dp0..\.."
+cd /d "%~dp0.."
 
 where node >nul 2>nul
 if errorlevel 1 (

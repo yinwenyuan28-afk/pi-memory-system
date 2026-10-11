@@ -1,7 +1,7 @@
 // viewer.mts —— 记忆库查看器的一键启动（同步最新页面 → 起写盘桥 → 开浏览器）
 //
 // 为什么要有它：直接跑 `viewer-bridge.mjs` 还差三件事 ——
-//   ① 查看器源码改了但还没部署（要重启 pi 会话才会同步），不检查就会看到旧页面；
+//   ① 查看器源码改了但还没部署（启动后会自动监听并同步），直接跑桥会看到旧页面；
 //   ② 5174 被占时桥直接退出，得自己找空闲端口；
 //   ③ 还得手动复制终端里的地址去浏览器。
 // 这三件事都是"每次都要做、忘了就出问题"的机械步骤，所以收进一个入口。
@@ -9,7 +9,7 @@
 // 用法：
 //   node --experimental-strip-types scripts/l1-admin/viewer.mts [--profile <dir>] [--port <n>] [--no-open] [--no-sync]
 //                                                              [--lan] [--host <addr>]
-//   （Windows 也可直接双击 scripts/l1-admin/启动查看器.cmd，参数照传：`启动查看器.cmd --lan`）
+//   （Windows 也可直接双击 viewers/启动查看器.cmd，参数照传：`启动查看器.cmd --lan`）
 //
 // `--lan` = 让桥**额外**监听本机局域网网卡（环回保留），好让别的设备打开同一个查看器调试；
 // `--host <addr>` 指定确切地址。地址探测规则与桥共用 `lan-addresses.mjs`（一份规则、两个消费者）——
@@ -22,14 +22,14 @@
 // 退出行为：Ctrl+C 会先把桥子进程停掉再退。Windows 上 Ctrl+C 其实会同时打到整个进程组，
 // 但显式 kill 一次能确保不留孤儿进程占着端口（实测被占过一次，之后每次都要手动 taskkill）。
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { argv } from "node:process";
 import { ProfileManager } from "../../memory/core/profile.ts";
 import { resolveAgentDir } from "../../util/agent-dir.ts";
-import { deployViewers } from "../../memory/viewers/deploy.ts";
+import { deployViewers, VIEWER_SOURCE_DIR } from "../../memory/viewers/deploy.ts";
 import { MEMORY_DB_DIR } from "../../memory/paths.ts";
 import { lanAddresses } from "./lan-addresses.mjs";
 
@@ -151,6 +151,37 @@ if (noSync) {
 	}
 }
 
+// 启动后监听仓库源码；只在收到变更事件后调用部署器，避免重复写版本清单。
+let sourceWatcher: FSWatcher | null = null;
+let deployTimer: ReturnType<typeof setTimeout> | null = null;
+if (!noSync) {
+	try {
+		sourceWatcher = watch(VIEWER_SOURCE_DIR, { recursive: true }, (_event, filename) => {
+			if (deployTimer) clearTimeout(deployTimer);
+			deployTimer = setTimeout(() => {
+				deployTimer = null;
+				try {
+					const r = deployViewers(profilePath);
+					if (r.errors.length > 0) {
+						console.error(`[热更新] 部署 ${r.version || "失败"}，有 ${r.errors.length} 项错误；页面继续使用当前可用版本：`);
+						for (const error of r.errors) console.error(`     · ${error}`);
+					} else if (r.written.length > 0 || r.retired.length > 0) {
+						console.log(`[热更新] 已部署 ${r.version}（写入 ${r.written.length} 个文件）${filename ? `；触发文件：${filename}` : ""}。打开的页面将在约 2 秒内自动重载。`);
+					}
+				} catch (error) {
+					console.error(`[热更新] 部署失败，页面继续使用当前可用版本：${error instanceof Error ? error.message : String(error)}`);
+				}
+			}, 300);
+		});
+		sourceWatcher.on("error", (error) => {
+			console.error(`[热更新] 源码监听发生错误，后续变更可能不会自动部署：${error.message}`);
+		});
+		console.log(`① 热更新监听已启动：${VIEWER_SOURCE_DIR}`);
+	} catch (error) {
+		console.error(`[热更新] 无法监听源码目录，自动部署不可用：${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
 // ② 选端口
 let port: number;
 try {
@@ -179,6 +210,10 @@ function shutdown(): void {
 	if (exiting) return;
 	exiting = true;
 	console.log("\n正在停止写盘桥…");
+	if (deployTimer) clearTimeout(deployTimer);
+	deployTimer = null;
+	if (sourceWatcher) sourceWatcher.close();
+	sourceWatcher = null;
 	try {
 		if (child.exitCode === null && !child.killed) child.kill();
 	} catch {

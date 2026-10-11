@@ -24,7 +24,7 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 | `l3-merge.mts` | **把提议稿并入 live `USER.md`**（全仓库唯一写 live 画像的路径） | 默认只追加新条目并保留旧条目；`--replace` 才完整替换，替换模式的三道闸默认拒绝；实写分别确认 `MERGE` / `REPLACE` |
 | `viewer-cli.mts` | 上面那批包装的**共用骨架**（参数解析 / JSON 出口 / 哨兵收尾 / `run()`）；不是可执行入口 | — |
 | `viewer.mts` | **一键启动查看器**：同步最新页面 → 起桥 → 开浏览器（自动避让占用端口） | 只绑 `127.0.0.1`；`--no-open` / `--no-sync` 可关掉两件事 |
-| `启动查看器.cmd` | 上面的 Windows 双击入口（内容纯 ASCII，中文由 node 打印） | 同上 |
+| `viewers/启动查看器.cmd` | 上面的 Windows 双击入口（内容纯 ASCII，中文由 node 打印） | 同上 |
 | `viewer-bridge.mjs` | **查看器写盘桥**：静态托管 `memoryDB` + 写盘端点 + 目录列举 + 诊断 | 只绑 `127.0.0.1`；写端点默认 dry-run，破坏性动作另有 `confirm` 副验 |
 | `pipeline-jobs.mts` | **只读转储 `pipeline/jobs.sqlite`**（排队 / 在跑 / 最近结束；「流水线」页的取数口） | 只读（`node:sqlite` 的 `readOnly` 打开）；库不存在时报 `exists:false`，**不顺手建库** |
 | `viewer-status.mts` | 查看器版本与漂移诊断（源码内容版本 vs 已部署版本） | 只读 |
@@ -54,7 +54,7 @@ L1 原子记忆（`{profile}/memoryDB/l1/records/*.jsonl`）的日常管理工�
 ```bash
 # 一键（推荐）：同步页面 + 起桥 + 开浏览器
 npm run viewer                       # 或 node --experimental-strip-types scripts/l1-admin/viewer.mts
-# Windows 双击：scripts\l1-admin\启动查看器.cmd
+# Windows 双击：viewers\启动查看器.cmd
 
 # 只起桥（自己控制端口、不自动开浏览器）
 node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>] [--lan] [--host <addr>]
@@ -63,7 +63,11 @@ node scripts/l1-admin/viewer-bridge.mjs [--port 5174] [--profile <dir>] [--lan] 
 npm run viewer -- --lan                    # 或 启动查看器.cmd --lan
 ```
 
-`viewer.mts` 的三件事，都是"每次都要做、忘了就出问题"的机械步骤：
+`viewer.mts` 除了启动时部署、选端口、打开页面，还会在运行期间监听仓库 `viewers/` 源码：
+保存源码后自动增量部署，已打开页面每 2 秒检查版本并自动重载。**重载可能丢失尚未提交的表单输入**。
+`--no-sync` 会跳过启动部署和热更新监听。直接运行 `viewer-bridge.mjs` 不会启动源码监听。
+
+启动时的三件事，都是"每次都要做、忘了就出问题"的机械步骤：
 ① 调 `deployViewers` 同步最新页面（幂等，内容没变零写入）；② 从 5174 起探测空闲端口（**5174 被占时
 不再直接退出**——实测被占过一次，之后每次都要手动 `taskkill`）；③ 打开浏览器到 `viewers/index.html`。
 profile 用扩展的 `ProfileManager` 解析（读宿主 `settings.json` 的 `memorySystem.activeProfile`），

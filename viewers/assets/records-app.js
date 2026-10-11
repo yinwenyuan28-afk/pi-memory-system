@@ -35,6 +35,7 @@
 
 	var V = window.V;
 	var VQ = window.VQ;
+	var isEnglish = window.ViewerI18n && window.ViewerI18n.locale === "en";
 
 	/** 类型轴上的**虚拟值**：work_task 之外的全部记录（真 type 里没有 `!` 前缀，不会撞车）。 */
 	var NON_TASK = "!non-task";
@@ -216,6 +217,7 @@
 		mixins: [V.vue.pageMixin],
 		data: function () {
 			return {
+				isEnglish: isEnglish,
 				// —— 数据 ——
 				/** 已加质量分与场景/项目解析的记录（加载时算一次，避免每次筛选重算） */
 				rows: [],
@@ -270,6 +272,8 @@
 				/** 当前打开的详情记录（null = 未打开）；直接持有对象，不用下标 */
 				modalRow: null,
 				modalOpen: false,
+				/** 详情弹层里的高级信息默认收起；每次打开都从清爽状态开始。 */
+				modalDetailsOpen: [],
 				/** 整库还原的弹层（危险区默认不占侧栏，点入口按钮才打开） */
 				dangerOpen: false,
 
@@ -286,6 +290,8 @@
 
 				// —— 详情弹层内的写动作 ——
 				taskReason: "",
+				taskStateDraft: "open",
+				taskStateNotice: { html: "", level: "" },
 				taskBusy: false,
 				fix: { content: "", evidence: "", reason: "", priority: null, force: false },
 				fixVerdict: { html: "", level: "" },
@@ -327,6 +333,11 @@
 			};
 		},
 		computed: {
+			/** 弹窗底部的统一确认按钮：只在有可提交的修改时启用。 */
+			modalHasPendingChanges: function () {
+				var stateChanged = this.modalRow && this.modalRow.isTask && this.taskStateDraft !== this.modalRow.taskState;
+				return Boolean(stateChanged || this.fixApplyReady);
+			},
 			/** 存活记录（侧栏统计与质量分布都用它，与 quality.ts 口径一致） */
 			alive: function () {
 				return this.rows.filter(function (r) {
@@ -506,9 +517,14 @@
 			/** 结果计数（旧版 #resultMeta 的等价物） */
 			resultMeta: function () {
 				if (this.pruneOnly) {
+					if (isEnglish) return "Prune candidates: " + this.filteredRows.length + " records (eligible according to judgePrune). Change the filters to leave this view.";
 					return "淘汰候选 " + this.filteredRows.length + " 条（judgePrune 判定可删）—— 改筛选条件可退出此视图";
 				}
 				var n = this.filteredRows.length;
+				if (isEnglish) {
+					var enTail = this.pageSize && n > this.pageSize ? " Page " + this.page + "; " + this.pageSize + " per page." : "";
+					return "Showing " + n + " of " + this.rows.length + " records matching the selected type, task status, scene, project, quality, and date filters." + enTail;
+				}
 				var tail = this.pageSize && n > this.pageSize ? "，当前第 " + this.page + " 页（每页 " + this.pageSize + "）" : "";
 				return "显示 " + n + " / " + this.rows.length + " 条（类型 + 任务状态 + 场景 + 项目 + 质量 + 日期 联合筛选）" + tail;
 			},
@@ -616,6 +632,7 @@
 			 */
 			sceneNote: function () {
 				var s = this.sceneOptions;
+				if (isEnglish) return "<b>" + this.esc(String(s.known)) + "</b> groups match <code>scenes.json</code>. <b>" + this.esc(String(s.unclassified)) + "</b> records use scene names that are not in the pool (historical snapshots marked “Unclassified”). These names appear only on records; they are not valid groups.";
 				return (
 					"池中 <b>" + this.esc(String(s.known)) + "</b> 个分组已对上 <code>scenes.json</code>；<b>" +
 					this.esc(String(s.unclassified)) +
@@ -715,6 +732,7 @@
 				);
 			},
 			embedTitle: function () {
+				if (isEnglish) return "Backfill adds only missing vectors. Rebuild clears the vector store before recomputing everything; if it fails midway, the store remains empty until rebuilt. Both are long-running tasks: the bridge is synchronous and unavailable while they run.";
 				return (
 					"回填只补缺失向量；重建会先清空向量库再全量重算（中途失败 = 库空，需打字确认）。" +
 					"两者都是长任务：桥单线程同步执行，跑起来后整座桥都不响应。"
@@ -881,15 +899,10 @@
 				// 展开把手：只切换二级的显隐，**不动筛选**（"只想看一眼有哪些状态"不该换掉当前视图）
 				this.filters.branchOpen = !this.filters.branchOpen;
 			},
-			/** 两个"隐藏/仅看已删除"互斥（旧版在各自的 change 里对拆） */
-			onHideDeleted: function (v) {
-				this.filters.hideDeleted = v;
-				if (v) this.filters.onlyDeleted = false;
-				this.onFilterChange();
-			},
-			onOnlyDeleted: function (v) {
-				this.filters.onlyDeleted = v;
-				if (v) this.filters.hideDeleted = false;
+			/** 删除记录筛选是单选：全部、隐藏已删除、仅看已删除。 */
+			onDeletedFilterChange: function (value) {
+				this.filters.hideDeleted = value === "hide";
+				this.filters.onlyDeleted = value === "only";
 				this.onFilterChange();
 			},
 
@@ -1075,11 +1088,12 @@
 					.then(function (records) {
 						self.rows = self.enrichAll(records);
 						self.page = 1;
-						var srcLabel =
-							self.source === "bridge" ? "写盘桥（全部分片）" : "静态探测（最近 90 天；更早的分片需要写盘桥）";
+						var srcLabel = self.source === "bridge" ? "写盘桥（全部分片）" : "静态探测（最近 90 天；更早的分片需要写盘桥）";
 						// 页头只报**别处没有的**：总/存活/已删除、场景池、丢弃留痕都在侧栏【统计】组里，
 						// 「显示 X / Y」由结果计数行负责（它还会跟着筛选变）。
-						self.setNote("来自 <b>" + self.files.length + "</b> 个分片 · 来源：" + srcLabel);
+						self.setNote(isEnglish
+							? "Loaded <b>" + self.files.length + "</b> shards · Source: " + (self.source === "bridge" ? "viewer bridge (all shards)" : "static scan (last 90 days; older shards require the viewer bridge)")
+							: "来自 <b>" + self.files.length + "</b> 个分片 · 来源：" + srcLabel);
 						return true;
 					})
 					.catch(function (e) {
@@ -1093,18 +1107,7 @@
 					});
 			},
 
-			/** 清空（只清内存，不动盘） */
-			clearAll: function () {
-				this.rows = [];
-				this.files = [];
-				this.drops = [];
-				this.source = "";
-				this.selected = new Set();
-				this.pendingTombstone = null;
-				this.setNote("已清空。点「重新加载」取回数据。");
-			},
-
-			/** 导出当前视图（筛选结果**全集**，不是当前页） */
+			/** 导出当前筛选命中的全部记录（不受当前分页限制）。 */
 			exportView: function () {
 				V.download(
 					"l1-records-" + new Date().toISOString().slice(0, 10) + ".json",
@@ -1221,7 +1224,10 @@
 			openModal: function (r) {
 				this.modalRow = r;
 				this.taskReason = "";
+				this.taskStateDraft = r.taskState || "open";
+				this.taskStateNotice = { html: "", level: "" };
 				this.taskBusy = false;
+				this.modalDetailsOpen = [];
 				this.fix = {
 					content: r.content || "",
 					evidence: "",
@@ -1239,27 +1245,58 @@
 				this.fixApplyReady = false;
 			},
 
-			/**
-			 * 任务状态：**换值即写**（`l1_task_state` 同一实现：就地改写 + 写锁 +
-			 * `metadata.taskStateChange` 审计）。值没变就不写（下拉在某些浏览器上会派发 change）。
-			 */
+			/** 下拉只修改待保存值；实际写盘由弹窗底部的统一确认按钮触发。 */
 			onTaskStateChange: function (target) {
-				var self = this;
+				this.taskStateDraft = target;
+				this.taskStateNotice = { html: "", level: "" };
+			},
+			confirmModalChanges: function () {
 				var row = this.modalRow;
-				if (!row || !this.hasPort()) return;
-				if (target === row.taskState) return;
+				var self = this;
+				if (!row || !this.hasPort() || this.taskBusy || !this.modalHasPendingChanges) return;
+
+				var stateChanged = row.isTask && this.taskStateDraft !== row.taskState;
+				var target = this.taskStateDraft;
+				var reason = this.taskReason.trim();
+				var applyFix = this.fixApplyReady;
+				var activeStage = stateChanged ? "task" : "fix";
 				this.taskBusy = true;
-				this.applyTaskState(row, target, this.taskReason.trim()).then(function () {
-					// 成功时 applyTaskState 已把 row.taskState 改掉并关了弹层；这里只处理失败：
-					// 把下拉拨回真实值，免得控件显示的状态和盘上的不一致。
-					self.taskBusy = false;
-				});
+
+				var chain = Promise.resolve(true);
+				if (stateChanged) {
+					this.taskStateNotice = { html: "正在保存…", level: "" };
+					chain = chain.then(function () {
+						return self.applyTaskState(row, target, reason);
+					});
+				}
+				if (applyFix) {
+					chain = chain.then(function (ok) {
+						if (!ok) return false;
+						activeStage = "fix";
+						return self.applyFix();
+					});
+				}
+				return chain
+					.then(function (ok) {
+						self.taskBusy = false;
+						return ok;
+					})
+					.catch(function (err) {
+						self.taskBusy = false;
+						var message = V.escapeHtml(String((err && err.message) || err || "未知错误"));
+						if (activeStage === "fix") {
+							self.fixApplyReady = true;
+							self.fixVerdict = { html: "执行失败：" + message, level: "err" };
+						} else {
+							self.taskStateNotice = { html: "保存失败：" + message, level: "err" };
+						}
+						return false;
+					});
 			},
 
 			/** 真实写盘：任务状态切换（单条） */
 			applyTaskState: function (row, target, reason) {
 				var self = this;
-				this.setNote("正在标记…");
 				return V.bridge(EP.taskState, {
 					method: "POST",
 					body: JSON.stringify({ ids: [row.id], state: target, reason: reason || undefined }),
@@ -1267,8 +1304,8 @@
 					if (!r.ok || !r.data || r.data.success === false) {
 						var err =
 							(r.data && (r.data.error || (r.data.results && r.data.results[0] && r.data.results[0].error))) || "未知错误";
-						self.setNote("标记失败：" + V.escapeHtml(String(err)), "err");
-						return;
+						self.taskStateNotice = { html: "保存失败：" + V.escapeHtml(String(err)), level: "err" };
+						return false;
 					}
 					// 就地改写 → 本地同步（真实落盘已由 CLI 完成，这里只是让页面立刻反映）
 					row.taskState = target;
@@ -1279,8 +1316,9 @@
 						by: "user",
 						reason: reason || undefined,
 					};
-					self.setNote("已标记为「" + V.TASK_STATE_LABELS[target] + "」（就地改写 + 写锁，审计写入 metadata.taskStateChange）");
-					self.closeModal();
+					self.taskStateDraft = target;
+					self.taskStateNotice = { html: "任务状态已更新。", level: "" };
+					return true;
 				});
 			},
 
@@ -1353,12 +1391,19 @@
 			previewFix: function () {
 				var self = this;
 				if (!this.hasPort()) return;
+				if (this.modalDetailsOpen.indexOf("fix") < 0) this.modalDetailsOpen = this.modalDetailsOpen.concat("fix");
+				var previewBody = this.fixBody(false);
+				var previewSnapshot = JSON.stringify(previewBody);
 				this.fixApplyReady = false;
 				this.fixVerdict = { html: "预演中…", level: "" };
-				V.bridge(EP.fix, { method: "POST", body: JSON.stringify(this.fixBody(false)) }).then(function (r) {
+				V.bridge(EP.fix, { method: "POST", body: previewSnapshot }).then(function (r) {
 					var d = r.data || {};
 					if (!r.ok || d.success === false) {
 						self.fixVerdict = { html: "预演被拒：" + V.escapeHtml(String(d.error || "未知错误")), level: "err" };
+						return;
+					}
+					if (JSON.stringify(self.fixBody(false)) !== previewSnapshot) {
+						self.fixVerdict = { html: "正文或选项已更改，请重新预览后再确认。", level: "" };
 						return;
 					}
 					self.fixVerdict = {
@@ -1370,6 +1415,11 @@
 					};
 					self.fixApplyReady = true;
 				});
+			},
+			invalidateFixPreview: function () {
+				if (!this.fixApplyReady) return;
+				this.fixApplyReady = false;
+				this.fixVerdict = { html: "正文或选项已更改，请重新预览后再确认。", level: "" };
 			},
 
 			/** l1_fix 的**执行**：与预演同一份表单值，额外带 apply:true */
@@ -1384,7 +1434,7 @@
 					if (!r.ok || d.success === false) {
 						self.fixVerdict = { html: "执行失败：" + V.escapeHtml(String(d.error || "未知错误")), level: "err" };
 						self.fixApplyReady = true;
-						return;
+						return false;
 					}
 					// 正文被服务端就地改写（含追加的审计标注），本地那份内容已不可信 —— 重读取回真身
 					self.closeModal();
@@ -1393,6 +1443,7 @@
 							"<br>正文由服务端改写，页面重新加载以取回真实内容。",
 					);
 					self.autoLoad();
+					return true;
 				});
 			},
 
@@ -1494,8 +1545,8 @@
 					self.ops.embedVerdict = {
 						ok: true,
 						text:
-							"预演通过（dry-run，未写盘）。" +
-							(s ? "总 " + s.totalRecords + " 条，已向量化 " + s.vectorizedCount + "，缺 " + s.unVectorizedCount + "。" : "") +
+							(isEnglish ? "Preview passed (dry run; nothing was written). " : "预演通过（dry-run，未写盘）。") +
+							(s ? (isEnglish ? "Total: " + s.totalRecords + "; vectorized: " + s.vectorizedCount + "; missing: " + s.unVectorizedCount + "." : "总 " + s.totalRecords + " 条，已向量化 " + s.vectorizedCount + "，缺 " + s.unVectorizedCount + "。") : "") +
 							" " + V.escapeHtml(d.note || ""),
 					};
 				});
@@ -1511,7 +1562,7 @@
 				this.ops.busy = "embedding";
 				this.ops.embedVerdict = {
 					ok: true,
-					text: (op === "rebuild" ? "重建" : "回填") + "执行中…桥在此期间不响应任何请求。",
+					text: isEnglish ? (op === "rebuild" ? "Rebuild" : "Backfill") + " running… the bridge will not respond to requests until it finishes." : (op === "rebuild" ? "重建" : "回填") + "执行中…桥在此期间不响应任何请求。",
 				};
 				V.bridge(EP.embedding, { method: "POST", body: JSON.stringify(body) }).then(function (r) {
 					self.ops.busy = "";
@@ -1602,11 +1653,7 @@
 			<p class="sub">记录库 · 质量分 · 淘汰候选 · 任务状态 · 场景 / 项目归属。</p>
 			<notice :msg="loadNote"></notice>
 
-			<div class="toolbar">
-				<el-button @click="clearAll">清空</el-button>
-				<el-button @click="exportView">导出当前视图</el-button>
-			</div>
-			<div class="toolbar">
+			<div class="toolbar records-filter-toolbar">
 				<el-input class="grow" v-model="qInput" clearable placeholder="搜索 content / 场景 / 项目 / id / cwd …" @input="onSearchInput" @clear="onSearchInput"></el-input>
 				<el-select v-model="filters.quality" style="width:118px" @change="onFilterChange">
 					<el-option value="" label="全部质量"></el-option>
@@ -1619,8 +1666,12 @@
 				<el-select v-model="filters.sort" style="width:132px" @change="onFilterChange">
 					<el-option v-for="s in sorts" :key="s.value" :value="s.value" :label="s.label"></el-option>
 				</el-select>
-				<el-checkbox :model-value="filters.hideDeleted" @update:model-value="onHideDeleted">隐藏已删除</el-checkbox>
-				<el-checkbox :model-value="filters.onlyDeleted" @update:model-value="onOnlyDeleted">仅看已删除</el-checkbox>
+				<el-select :model-value="filters.onlyDeleted ? 'only' : filters.hideDeleted ? 'hide' : 'all'" style="width:140px" @change="onDeletedFilterChange">
+					<el-option value="all" label="全部记录"></el-option>
+					<el-option value="hide" label="隐藏已删除"></el-option>
+					<el-option value="only" label="仅看已删除"></el-option>
+				</el-select>
+				<el-button @click="exportView" title="导出当前筛选命中的全部记录（不限当前页）">导出筛选结果</el-button>
 			</div>
 		</header>
 
@@ -1700,10 +1751,10 @@
 					<div class="ops-row ops-card embedding-row" :class="{ busy: ops.busy === 'embedding' }" :title="embedTitle">
 						<div class="ops-label">向量库</div>
 						<div class="ops-ctl vector-ops-ctl">
-							<div class="vector-ops-status">
+					<div class="vector-ops-status">
 								<template v-if="ops.embedding">
-									<metric :value="'向量 ' + ops.embedding.vectorizedCount + '/' + ops.embedding.totalRecords" tip="已向量化 / 总记录"></metric>
-									<metric :value="'缺 ' + ops.embedding.unVectorizedCount" tip="未向量化条数"></metric>
+								<metric :value="isEnglish ? 'Vectors ' + ops.embedding.vectorizedCount + '/' + ops.embedding.totalRecords : '向量 ' + ops.embedding.vectorizedCount + '/' + ops.embedding.totalRecords" :tip="isEnglish ? 'Vectorized / total records' : '已向量化 / 总记录'"></metric>
+								<metric :value="isEnglish ? 'Missing ' + ops.embedding.unVectorizedCount : '缺 ' + ops.embedding.unVectorizedCount" :tip="isEnglish ? 'Records without vectors' : '未向量化条数'"></metric>
 								</template>
 								<span v-else class="hint">{{ ops.embeddingError || (ops.loaded ? "读不到向量库状态" : "读取中…") }}</span>
 							</div>
@@ -1740,9 +1791,10 @@
 					</div>
 				</div>
 				<!-- 搬走的两个动作留一句指引：按钮凭空消失而不说去哪了，是这一版最不想要的失效方式 -->
-				<p class="hint pipeline-ops-hint">管理队列与子代理，请前往顶部的
+				<p v-if="!isEnglish" class="hint pipeline-ops-hint">管理队列与子代理，请前往顶部的
 					<a href="pipeline-viewer.html" @click.prevent="gotoPipeline">流水线页</a>
 					。</p>
+				<p v-else class="hint pipeline-ops-hint">Manage the queue and subagents on the <a href="pipeline-viewer.html" @click.prevent="gotoPipeline">Pipeline page</a>.</p>
 
 				<h2>统计</h2>
 				<el-collapse v-model="statsOpen">
@@ -1767,8 +1819,8 @@
 
 				<h2>说明</h2>
 				<el-collapse v-model="helpOpen">
-					<el-collapse-item name="help" title="价值校验留痕 / 两根独立的轴 / 场景名以池为准 / 质量分 ≠ 能不能删 / 衰减时钟">
-						<div class="hint">
+					<el-collapse-item name="help" :title="isEnglish ? 'Value-check audit trail / independent status axes / scene names use the pool / quality is not deletability / decay clock' : '价值校验留痕 / 两根独立的轴 / 场景名以池为准 / 质量分 ≠ 能不能删 / 衰减时钟'">
+						<div class="hint" v-if="!isEnglish">
 							<p><b>drop 的记录从不写进库</b>：被价值校验判 drop 的记录压根不会落进 <code>l1/records/</code>，
 							它们的唯一留痕是 <code>value-check-log.jsonl</code> —— 页面上的「价值校验丢弃」页签就是那份日志，
 							否则只有幸存者偏差。</p>
@@ -1784,6 +1836,14 @@
 							只有侧车缺 <code>activeDays</code> 时才退化为日历天 —— 卡片上会标明用的是哪种。</p>
 							<p class="hint">质量分公式与 <code>memory/l1/quality.ts</code> 的一致性由
 							<code>scripts/verify-viewer-quality-parity.ts</code> 断言数值全等（不是靠注释声明）。</p>
+						</div>
+						<div class="hint" v-else>
+							<p><b>Dropped records are never stored</b>: value-check drops do not enter <code>l1/records/</code>. Their only audit trail is <code>value-check-log.jsonl</code>, shown in the “Value-check drops” tab.</p>
+							<p><b>Task status and validity are separate</b>: <span class="chip del">deleted</span> means a record was invalidated by deduplication or correction and is removed from retrieval with its vector. <span class="chip task-done">Done</span> only means a task is closed; the record remains active and searchable. A record can have both states.</p>
+							<p><b>The scene pool is authoritative</b>: <code>scene_name</code> is a snapshot from when the record was stored. <code>l1/scenes.json</code> is the source of truth. A “⇢ merged” marker means the scene ID was merged into another scene and is grouped under its canonical name.</p>
+							<p><b>Quality is not deletability</b>: quality measures activity and decays when a record is not used. <code>judgePrune</code> separately decides whether it can be removed. High-priority records and <code>work_method</code> records are never pruned automatically.</p>
+							<p><b>Decay clock</b>: <code>days</code> counts active session days, so it does not advance while idle. Calendar days are used only when the <code>activeDays</code> sidecar is missing; each card shows which clock applies.</p>
+							<p class="hint">The viewer checks that its quality-score formula exactly matches <code>memory/l1/quality.ts</code> using <code>scripts/verify-viewer-quality-parity.ts</code>.</p>
 						</div>
 					</el-collapse-item>
 				</el-collapse>
@@ -1825,7 +1885,7 @@
 
 					<div v-if="pageRows.length === 0" class="empty">
 						<template v-if="rows.length"><strong>无匹配结果</strong>试试放宽筛选或清空搜索。</template>
-						<template v-else><strong>还没有数据</strong>点上方「重新加载」从写盘桥取数。</template>
+						<template v-else><strong>{{ isEnglish ? "No data yet" : "还没有数据" }}</strong>{{ isEnglish ? "Reload the page data above to load records from the viewer bridge." : "点上方「重新加载」从写盘桥取数。" }}</template>
 					</div>
 					<div v-else class="cards" id="list">
 						<!-- 卡片：整张卡（含正文预览）都可点 → 打开详情弹层。正文是截断预览（契约 3），
@@ -1858,7 +1918,7 @@
 								<div class="chips">
 									<metric :value="fromNow(r.updatedAt || r.createdAt)" :tip="'最后更新于 ' + fmtTime(r.updatedAt || r.createdAt)"></metric>
 								</div>
-								<el-button class="expand-btn" @click.stop="openModal(r)">查看完整记录</el-button>
+				<el-button class="expand-btn" @click.stop="openModal(r)">{{ isEnglish ? 'View full record' : '查看完整记录' }}</el-button>
 							</div>
 						</article>
 					</div>
@@ -1950,80 +2010,65 @@
 				<!-- 弹层里的正文**只读**：全页唯一的正文编辑入口是下面纠错面板的「新正文」框（写盘要过四道闸） -->
 				<div class="full-content">{{ modalRow.content || "" }}</div>
 
-				<!-- 编辑区：**所有写动作集中在这一段**（改任务状态 / 改写正文；作废在页脚）。
-				     顶部只展示状态、正文之后才出现控件，于是"读"和"改"在视觉上分成两段。 -->
+				<!-- 编辑区：只保留常用的任务状态修改；正文修正和原始数据作为默认收起的高级操作。 -->
 				<div class="edit-zone">
-					<h3 class="sub">编辑（会写盘）</h3>
+					<h3 class="sub">修改此记录</h3>
 
-					<!-- 任务状态：**一个下拉，不是三颗按钮**（用户 2026-10-10 报"看起来就像是展示状态"）。
-					     三颗带形状编码的描边按钮并排，谁看都像"这条记录有这几种状态"而不像"这里可以改"。
-					     行为不变：选中即写（l1_task_state，就地改写 + 写锁 + metadata.taskStateChange 审计）。 -->
-					<div class="ops-row" v-if="modalRow.isTask">
-						<div class="ops-label">任务状态</div>
-						<div class="ops-ctl">
-							<el-select :model-value="modalRow.taskState" style="width:130px" :disabled="!hasPort() || taskBusy" @change="onTaskStateChange">
+					<section v-if="modalRow.isTask" class="task-state-editor">
+						<div class="task-state-heading">任务状态</div>
+						<div class="task-state-controls">
+							<el-select :model-value="taskStateDraft" class="task-state-select" :disabled="!hasPort() || taskBusy" @change="onTaskStateChange">
 								<el-option v-for="s in ['open','done','dropped']" :key="s" :value="s" :label="taskLabel(s)"></el-option>
 							</el-select>
-							<el-input v-model="taskReason" style="width:250px" placeholder="可选：原因（写入审计）" :disabled="!hasPort() || taskBusy" maxlength="200"></el-input>
-							<span v-if="taskBusy" class="hint">写入中…</span>
+							<el-input v-model="taskReason" class="task-state-reason" placeholder="原因（可选）" :disabled="!hasPort() || taskBusy" maxlength="200"></el-input>
 						</div>
-						<div class="ops-note">
-							改这里就<b>就地改写</b>该条（保留 id / 正文 / 向量），并写 <code>metadata.taskStateChange</code> 审计<template v-if="!hasPort()">。只读：需带 <code>?port=</code> 打开才能写盘。</template>。
-						</div>
-					</div>
+						<div v-if="taskStateDraft !== modalRow.taskState" class="task-state-preview">待确认：{{ taskLabel(modalRow.taskState) }} → {{ taskLabel(taskStateDraft) }}</div>
+						<div class="ops-note">修改状态后，点击弹窗底部的“确认修改”才会保存。<template v-if="!hasPort()">当前为只读模式，请通过查看器启动器打开后再修改。</template></div>
+						<notice v-if="taskStateNotice.html" :msg="taskStateNotice"></notice>
+					</section>
 
-					<el-collapse>
+					<el-collapse v-model="modalDetailsOpen" class="record-detail-collapse">
 						<!-- 字段清单已删（2026-10-10 用户要求）：上面那几行胶囊 + 这里的原始 JSON 已经够了，
 						     再摆一份"字段名 → 值"的表格等于同一批数据说两遍。 -->
 						<el-collapse-item name="fields" title="原始记录（JSON）">
 							<pre class="log-text">{{ JSON.stringify(modalRow, null, 2) }}</pre>
 						</el-collapse-item>
 
-					<!-- 纠错面板（l1_fix）：预演（checkFixGates 裁决）→ 执行。审计标注会**追加进正文本身**。
-					     默认收起：这一块实测 382px、占弹层一半高，而它是 agent 自纠的走法；人的日常动作是
-					     看正文、标任务状态、作废。summary 就是它唯一的入口。 -->
-					<el-collapse-item name="fix" :title="'改写正文（l1_fix）· 需填证据、会写盘' + (hasPort() ? '' : ' · 只读：需带 ?port= 打开')">
-						<div class="ops">
-							<div class="hint" v-if="!hasPort()">写盘需要写盘桥：请以带 <code>?port=</code> 的地址打开本页。以下控件在只读模式下不可用。</div>
-							<div class="hint">
-								作废某条请用右下<b>删除（墓碑）</b> —— 与 l1_fix 的 tombstone 是同一个写盘动作，这里不再重复入口。改写会把审计标注【YYYY-MM-DD L1 修正：…】<b>追加进正文本身</b>（不是独立审计键），同时记 <code>metadata.l1Cleanup</code> —— 正文会真的变长。四道闸：证据 ≥20 字符、新正文 ≥10 字符、24h 防抖、高价值保护。
-							</div>
-							<div class="ops-row">
-								<div class="ops-label">新正文<help-note text="≥10 字符；短于此预演就会被拒。"></help-note></div>
-								<div class="ops-ctl">
-									<el-input type="textarea" v-model="fix.content" :autosize="{ minRows: 5, maxRows: 14 }" :disabled="!hasPort()"></el-input>
+						<el-collapse-item name="fix" :title="'修正正文' + (hasPort() ? '' : '（只读）')">
+							<div class="ops">
+								<div class="ops-note">先填写修正后的正文和依据，再预览结果；确认无误后才会保存。修正说明会附在正文后。作废记录请使用右下角的“删除（墓碑）”。</div>
+								<div class="ops-row">
+									<div class="ops-label">修正后的正文<help-note text="至少 10 个字符。"></help-note></div>
+									<div class="ops-ctl">
+										<el-input type="textarea" v-model="fix.content" class="edit-content-input" :autosize="{ minRows: 4, maxRows: 8 }" :disabled="!hasPort() || taskBusy" @input="invalidateFixPreview"></el-input>
+									</div>
 								</div>
-							</div>
-							<div class="ops-row">
-								<div class="ops-label">证据 *<help-note text="必填且 ≥20 字符：修正必须附可复核证据，否则预演就会被拒。"></help-note></div>
-								<div class="ops-ctl">
-									<el-input v-model="fix.evidence" placeholder="grep 输出 / file:line / 命令输出（≥20 字符，必填）" :disabled="!hasPort()"></el-input>
+								<div class="ops-row">
+									<div class="ops-label">依据 *<help-note text="必填，至少 20 个字符；需能复核修正依据。"></help-note></div>
+									<div class="ops-ctl">
+										<el-input v-model="fix.evidence" placeholder="填写可复核的依据（至少 20 个字符）" :disabled="!hasPort() || taskBusy" @input="invalidateFixPreview"></el-input>
+									</div>
 								</div>
-							</div>
-							<div class="ops-row">
-								<div class="ops-label">原因 / 优先级</div>
-								<div class="ops-ctl">
-									<el-input v-model="fix.reason" style="width:240px" placeholder="可选：原因（写进正文审计标注）" :disabled="!hasPort()"></el-input>
-									<el-input-number v-model="fix.priority" style="width:140px" :min="0" :max="100" :controls="false" placeholder="priority 0-100" :disabled="!hasPort()"></el-input-number>
-									<el-checkbox v-model="fix.force" :disabled="!hasPort()">force（只解高价值保护那道闸）</el-checkbox>
+								<div class="ops-row">
+									<div class="ops-label">原因 / 优先级</div>
+									<div class="ops-ctl">
+										<el-input v-model="fix.reason" style="width:240px" placeholder="原因（可选）" :disabled="!hasPort() || taskBusy" @input="invalidateFixPreview"></el-input>
+										<el-input-number v-model="fix.priority" style="width:140px" :min="0" :max="100" :controls="false" placeholder="优先级（0–100）" :disabled="!hasPort() || taskBusy" @change="invalidateFixPreview"></el-input-number>
+										<el-checkbox v-model="fix.force" :disabled="!hasPort() || taskBusy" @change="invalidateFixPreview">允许修正高价值记录</el-checkbox><help-note text="只绕过高价值保护检查，其他检查仍会执行。"></help-note>
+									</div>
 								</div>
+								<notice v-if="fixVerdict.html" :msg="fixVerdict"></notice>
 							</div>
-							<div class="ops-ctl" style="margin-top:6px">
-								<!-- 预演是只读动作（描边默认档）；只有真正写盘的「执行」才用 primary（写入新内容） -->
-								<el-button :disabled="!hasPort()" @click="previewFix">预演（只报闸门裁决）</el-button>
-								<el-button v-if="fixApplyReady" type="primary" :disabled="!hasPort()" @click="applyFix">执行（写盘）</el-button>
-							</div>
-							<notice v-if="fixVerdict.html" :msg="fixVerdict"></notice>
-						</div>
-					</el-collapse-item>
+						</el-collapse-item>
 					</el-collapse>
 				</div>
 			</template>
 			<template #footer>
-				<div class="foot">
-					<!-- 页脚只放**不可逆**的那一个动作（删除墓碑）与关闭 -->
-					<el-button type="danger" @click="onTombstoneClick">删除（墓碑）</el-button>
-					<el-button @click="closeModal">关闭</el-button>
+				<div class="foot record-modal-footer">
+					<el-button :disabled="!hasPort() || taskBusy" @click="previewFix">预览修改结果</el-button>
+					<el-button class="record-modal-confirm" type="primary" :loading="taskBusy" :disabled="!hasPort() || taskBusy || !modalHasPendingChanges" @click="confirmModalChanges">确认修改</el-button>
+					<el-button type="danger" :disabled="taskBusy" @click="onTombstoneClick">删除（墓碑）</el-button>
+					<el-button :disabled="taskBusy" @click="closeModal">关闭</el-button>
 				</div>
 			</template>
 		</el-dialog>

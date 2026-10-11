@@ -44,6 +44,7 @@
 	"use strict";
 
 	var V = window.V;
+	var isEnglish = window.ViewerI18n && window.ViewerI18n.locale === "en";
 
 	// ── 解析场景块（与 memory/l2/commit-tool.ts 的 parseSceneBlock 同口径）──
 	var META_START = "-----META-START-----";
@@ -162,6 +163,7 @@
 		mixins: [V.vue.pageMixin],
 		data: function () {
 			return {
+				isEnglish: isEnglish,
 				/** ../l2/index/scene_index.json —— 派生物，只用来对账与兜底 */
 				index: [],
 				/** ../l2/index/scene_members.json —— 权威成员清单 */
@@ -290,13 +292,13 @@
 						diskLive[f.file] = true;
 					});
 					this.index.forEach(function (e) {
-						if (e && e.filename && !diskLive[e.filename]) issues.push({ level: "warn", text: "索引里有块「" + e.filename + "」，但 scene-blocks/ 下没有这个文件（索引未重建？）" });
+						if (e && e.filename && !diskLive[e.filename]) issues.push({ level: "warn", text: isEnglish ? "Block “" + e.filename + "” is in the index, but its file is missing from scene-blocks/ (has the index not been rebuilt?)" : "索引里有块「" + e.filename + "」，但 scene-blocks/ 下没有这个文件（索引未重建？）" });
 					});
 					this.dirLive.forEach(function (f) {
-						if (!indexByFile.has(f.file)) issues.push({ level: "warn", text: "scene-blocks/ 下的「" + f.file + "」不在索引里（该块目前不会被 L3/注入看到）" });
+						if (!indexByFile.has(f.file)) issues.push({ level: "warn", text: isEnglish ? "“" + f.file + "” in scene-blocks/ is missing from the index (L3 and memory injection cannot see this block)" : "scene-blocks/ 下的「" + f.file + "」不在索引里（该块目前不会被 L3/注入看到）" });
 					});
 				} else {
-					issues.push({ level: "info", text: "无写盘桥：拿不到 scene-blocks/ 的目录列举，无法核对「索引 ↔ 磁盘」是否一致（只能核对索引与侧车）" });
+					issues.push({ level: "info", text: isEnglish ? "Viewer bridge unavailable: scene-blocks/ cannot be listed, so the index cannot be compared with disk (only the index and sidecars can be checked)." : "无写盘桥：拿不到 scene-blocks/ 的目录列举，无法核对「索引 ↔ 磁盘」是否一致（只能核对索引与侧车）" });
 				}
 
 				// 索引成员 ↔ 侧车成员
@@ -306,13 +308,13 @@
 					var fromSidecar = self.members[e.filename];
 					if (!fromSidecar) {
 						if (Array.isArray(e.members) && e.members.length > 0) {
-							issues.push({ level: "warn", text: "「" + e.filename + "」在索引里有 " + e.members.length + " 个成员，但 scene_members.json 侧车里没有这条 —— 侧车是权威，索引成员可能来自正文兜底解析" });
+							issues.push({ level: "warn", text: isEnglish ? "“" + e.filename + "” lists " + e.members.length + " members in the index, but has no entry in the scene_members.json sidecar. The sidecar is authoritative; index members may have been parsed from the block content." : "「" + e.filename + "」在索引里有 " + e.members.length + " 个成员，但 scene_members.json 侧车里没有这条 —— 侧车是权威，索引成员可能来自正文兜底解析" });
 						}
 						return;
 					}
 					var a = (e.members || []).slice().sort().join(",");
 					var b = fromSidecar.slice().sort().join(",");
-					if (a !== b) issues.push({ level: "warn", text: "「" + e.filename + "」的成员在索引与侧车不一致（索引 " + (e.members || []).length + " 个 / 侧车 " + fromSidecar.length + " 个）—— 索引是派生物，以侧车为准" });
+					if (a !== b) issues.push({ level: "warn", text: isEnglish ? "Members for “" + e.filename + "” differ between the index and sidecar (index: " + (e.members || []).length + "; sidecar: " + fromSidecar.length + "). The index is derived; use the sidecar as the source of truth." : "「" + e.filename + "」的成员在索引与侧车不一致（索引 " + (e.members || []).length + " 个 / 侧车 " + fromSidecar.length + " 个）—— 索引是派生物，以侧车为准" });
 				});
 
 				// 归档：目录 ↔ 账本
@@ -322,16 +324,16 @@
 				});
 				if (this.dirArchive) {
 					this.dirArchive.forEach(function (f) {
-						if (!ledgerArchived[f.file]) issues.push({ level: "warn", text: "归档块「" + f.file + "」在 ledger.jsonl 里没有 archive 记录 —— 归档的可追溯性缺失" });
+						if (!ledgerArchived[f.file]) issues.push({ level: "warn", text: isEnglish ? "Archived block “" + f.file + "” has no archive event in ledger.jsonl; its archive history is incomplete." : "归档块「" + f.file + "」在 ledger.jsonl 里没有 archive 记录 —— 归档的可追溯性缺失" });
 					});
 				}
 				Object.keys(ledgerArchived).forEach(function (f) {
 					if (self.dirArchive && !self.dirArchive.some(function (d) { return d.file === f; })) {
-						issues.push({ level: "warn", text: "账本记了「" + f + "」的 archive，但 archive/ 下没有该文件（已被 restore 后账本未补 restore 记录？）" });
+						issues.push({ level: "warn", text: isEnglish ? "The ledger records an archive for “" + f + "”, but the file is missing from archive/ (was it restored without a matching restore event?)" : "账本记了「" + f + "」的 archive，但 archive/ 下没有该文件（已被 restore 后账本未补 restore 记录？）" });
 					}
 				});
 				Object.keys(this.archiveMembers).forEach(function (f) {
-					if (!ledgerArchived[f]) issues.push({ level: "warn", text: "归档侧车成员里有「" + f + "」，但账本没有它的 archive 记录" });
+			if (!ledgerArchived[f]) issues.push({ level: "warn", text: isEnglish ? "Archived member sidecar contains “" + f + "”, but the ledger has no archive event for it." : "归档侧车成员里有「" + f + "」，但账本没有它的 archive 记录" });
 				});
 
 				// 成员 id 是否在块正文里出现（兜底口径） / 是否被多个块声明
@@ -344,7 +346,7 @@
 					Object.keys(s.obj).forEach(function (f) {
 						(s.obj[f] || []).forEach(function (id) {
 							var prev = ownerOf.get(id);
-							if (prev && prev !== f) issues.push({ level: "warn", text: "成员 " + id + " 同时挂在「" + prev + "」与「" + f + "」上（成员口径分叉）" });
+							if (prev && prev !== f) issues.push({ level: "warn", text: isEnglish ? "Member “" + id + "” is assigned to both “" + prev + "” and “" + f + "” (conflicting ownership)." : "成员 " + id + " 同时挂在「" + prev + "」与「" + f + "」上（成员口径分叉）" });
 							else ownerOf.set(id, f);
 						});
 					});
@@ -356,7 +358,7 @@
 					if (blk.body.indexOf(id) < 0) tokenMissing++;
 				});
 				if (tokenMissing > 0) {
-					issues.push({ level: "info", text: tokenMissing + " 个成员 id 在所属块的正文里找不到（可能是侧车回填过 / 或正文被手工改过）" });
+					issues.push({ level: "info", text: isEnglish ? tokenMissing + " member IDs could not be found in their block content (the sidecar may have been backfilled or the content edited manually)." : tokenMissing + " 个成员 id 在所属块的正文里找不到（可能是侧车回填过 / 或正文被手工改过）" });
 				}
 
 				return { issues: issues, ownerOf: ownerOf };
@@ -366,7 +368,7 @@
 				var self = this;
 				var warn = this.recon.issues.filter(function (i) { return i.level === "warn"; });
 				var info = this.recon.issues.filter(function (i) { return i.level !== "warn"; });
-				var out = warn.length === 0 ? [{ html: "对账无告警：索引 / 侧车 / 磁盘 / 账本四项一致。", level: "" }] : [];
+				var out = warn.length === 0 ? [{ html: isEnglish ? "Reconciliation passed: index, sidecars, disk, and ledger all match." : "对账无告警：索引 / 侧车 / 磁盘 / 账本四项一致。", level: "" }] : [];
 				return out
 					.concat(
 						warn.map(function (i) { return { html: self.esc(i.text), level: "warn" }; }),
@@ -390,6 +392,7 @@
 				return "none";
 			},
 			gradeText: function () {
+				if (isEnglish) return { red: "Full", orange: "One slot left", yellow: "Near limit", none: "Below limit", unknown: "Limit unavailable (no viewer bridge)" }[this.grade];
 				return { red: "已满", orange: "差一个到上限", yellow: "接近上限", none: "未接近上限", unknown: "上限未知（无桥时读不到 l2.maxScenes）" }[this.grade];
 			},
 			/** 严重度 → CSS 类（色值只在 viewer-theme.css 里有一份）。unknown 不给宽度，故不配色。 */
@@ -415,7 +418,10 @@
 			},
 			/** 配置读不到时的可见提示（失败态不许藏进问号）。 */
 			capError: function () {
-				return this.config ? "" : "无写盘桥：读不到 <code>l2.maxScenes</code>（配置节由 /api/limits 提供，避免把含密钥的 config/ 交给页面）。";
+				if (this.config) return "";
+				return isEnglish
+					? "No viewer bridge: <code>l2.maxScenes</code> is unavailable. Limits are served by /api/limits so the page does not receive config files that may contain secrets."
+					: "无写盘桥：读不到 <code>l2.maxScenes</code>（配置节由 /api/limits 提供，避免把含密钥的 config/ 交给页面）。";
 			},
 			/** 侧栏概览：七项全库口径（不随搜索变）。 */
 			statRows: function () {
@@ -431,13 +437,18 @@
 					{ label: "归档块", value: Object.keys(this.archiveBlocks).length },
 					{ label: "live 成员总数", value: memberTotal },
 					{ label: "归档成员总数", value: archiveMemberTotal },
-					{ label: "账本条目", value: this.ledger.length },
+					{ label: isEnglish ? "Ledger events" : "账本条目", value: this.ledger.length },
 					{ label: "对账问题", value: this.recon.issues.filter(function (i) { return i.level === "warn"; }).length },
 				];
 			},
 			/** L2 游标水位（值留给页面；"水位用来判什么"那句进标题的问号）。 */
 			cursorHtml: function () {
-				if (!this.cursor) return '<span class="hint">无 cursor.json</span>';
+				if (!this.cursor) return '<span class="hint">' + (isEnglish ? "No cursor.json" : "无 cursor.json") + "</span>";
+				if (isEnglish) return '<div class="cursor-facts">' +
+					'<div class="cursor-fact"><span class="cursor-label">Last processed</span><time class="cursor-value">' +
+					this.esc(V.fmtTime(new Date(this.cursor.lastProcessedAt).toISOString())) + "</time></div>" +
+					'<div class="cursor-fact"><span class="cursor-label">Last record ID</span><span class="cursor-value cursor-id">' +
+					this.esc(this.cursor.lastRecordId || "—") + "</span></div></div>";
 				return '<div class="cursor-facts">' +
 					'<div class="cursor-fact"><span class="cursor-label">最近处理时间</span><time class="cursor-value">' +
 					this.esc(V.fmtTime(new Date(this.cursor.lastProcessedAt).toISOString())) + "</time></div>" +
@@ -449,6 +460,13 @@
 				var m = this.maxScenes;
 				var live = this.liveCount;
 				var free = m === null ? null : Math.max(0, m - live);
+				if (isEnglish) return "<p><b>Block limit</b>: <code>maxScenes</code> = " +
+					(m === null ? "unknown (unavailable without the viewer bridge: <code>/api/limits</code>)" : m) +
+					"; current live blocks: " + live + (free === null ? "" : "; available slots: " + free) + ".</p>" +
+					"<p><b>Restore requires an available slot</b>: restoring adds one block to live, so " +
+					(free === null ? "the server rejects it when the limit is reached" : "the server rejects it when no slots remain (" + live + " / " + m + ")") +
+					". Archive or merge another block first. Archived blocks live in <code>archive/</code> beside <code>scene-blocks/</code> and <b>do not count toward maxScenes</b>.</p>" +
+					"<p><b>Archive is a logged, reversible removal</b>: the block is moved, and <code>archive/ledger.jsonl</code> records its filename, time, author, and reason. This append-only ledger is the evidence needed to restore and audit it. <code>delete</code> permanently removes it without a ledger entry.</p>";
 				return "<p><b>块数预算</b>：live 块上限 <code>maxScenes</code> = " +
 					(m === null ? "未知（无桥时读不到 <code>/api/limits</code>）" : m) +
 					"，当前 live 块 " + live + " 个" + (free === null ? "" : "，空位 " + free + " 个") + "。</p>" +
@@ -461,6 +479,7 @@
 			},
 			/** 无桥时的整区说明（写回能力全部依赖写盘桥，这里要说清怎么把桥拉起来）。 */
 			readOnlyHint: function () {
+				if (isEnglish) return "<b>Read-only mode</b>: archiving, restoring, and changing scene names require the viewer bridge, so the buttons below are disabled. Run <code>node scripts/l1-admin/viewer-bridge.mjs</code>, then open this page using the URL it prints with <b><code>?port=</code></b>.";
 				return '<b>只读模式</b>：归档/恢复与统一场景名称都需要写盘桥，下面的按钮已禁用。' +
 					"请运行 <code>node scripts/l1-admin/viewer-bridge.mjs</code>，再用它打印的<b>带 <code>?port=</code> 的地址</b>打开本页。";
 			},
@@ -469,7 +488,7 @@
 				var sorted = this.ledger.slice().sort(function (a, b) { return V.ts(a.at) - V.ts(b.at); });
 				return sorted.map(function (e) {
 					var op = e.op || "?";
-					var label = { archive: "归档", restore: "恢复", "ledger-missing": "缺账补记" }[op] || op;
+					var label = isEnglish ? ({ archive: "Archive", restore: "Restore", "ledger-missing": "Ledger repair" }[op] || op) : ({ archive: "归档", restore: "恢复", "ledger-missing": "缺账补记" }[op] || op);
 					return {
 						cls: op,
 						label: label,
@@ -477,7 +496,7 @@
 						when:
 							V.fmtTime(e.at) + " · by " + (e.by || "—") +
 							(e.heat !== undefined ? " · heat " + e.heat : "") +
-							(e.memberCount !== undefined ? " · 成员 " + e.memberCount : ""),
+							(e.memberCount !== undefined ? (isEnglish ? " · members " : " · 成员 ") + e.memberCount : ""),
 						reason: e.reason || "",
 					};
 				});
@@ -684,11 +703,11 @@
 						self.syncOpState();
 						// 场景池报告**不在**加载时取 —— 它可能调 embedding，必须按需（见 runReport）。
 						// 待消费信号与在跑的子代理也不在这里了：它们已归「流水线」页。
-						self.setNote(
-							"已加载 " + self.index.length + " 个 live 索引条目、" + Object.keys(self.members).length +
-								" 条 live 成员侧车、" + self.ledger.length + " 条账本事件" +
-								(self.dirLive ? "（磁盘列举可用：live " + self.dirLive.length + " 个 .md、归档 " + self.dirArchive.length + " 个 .md）" : "（<b>无写盘桥</b>：拿不到目录列举，索引 ↔ 磁盘 无法核对）"),
-						);
+						self.setNote(isEnglish
+							? "Loaded " + self.index.length + " live index entries, " + Object.keys(self.members).length + " live member sidecar entries, and " + self.ledger.length + " ledger events" +
+								(self.dirLive ? " (disk listing available: " + self.dirLive.length + " live .md files, " + self.dirArchive.length + " archived .md files)" : " (<b>viewer bridge unavailable</b>: cannot list directories or compare the index with disk)")
+							: "已加载 " + self.index.length + " 个 live 索引条目、" + Object.keys(self.members).length + " 条 live 成员侧车、" + self.ledger.length + " 条账本事件" +
+								(self.dirLive ? "（磁盘列举可用：live " + self.dirLive.length + " 个 .md、归档 " + self.dirArchive.length + " 个 .md）" : "（<b>无写盘桥</b>：拿不到目录列举，索引 ↔ 磁盘 无法核对）"));
 					})
 					.catch(function (e) {
 						self.setNote("加载失败：" + self.esc(e && e.message ? e.message : String(e)), "err");
@@ -983,7 +1002,7 @@
 				<h2>块数上限（l2.maxScenes）<help-note v-if="config" :text="capHelp" raw></help-note></h2>
 				<div class="budget">
 					<div class="track"><i :class="gradeClass" :style="{ width: gradePct + '%' }"></i></div>
-					<div class="meta"><span>{{ liveCount }} / {{ maxScenes === null ? "?" : maxScenes }} 个 live 块</span><span>{{ gradeText }}</span></div>
+					<div class="meta"><span>{{ isEnglish ? liveCount + ' / ' + (maxScenes === null ? '?' : maxScenes) + ' live blocks' : liveCount + ' / ' + (maxScenes === null ? '?' : maxScenes) + ' 个 live 块' }}</span><span>{{ gradeText }}</span></div>
 				</div>
 				<!-- 读不到配置是失败态，留在页面上；能读到时的口径注解进问号 -->
 				<div class="hint" v-if="!config" v-html="capError"></div>
@@ -1015,7 +1034,7 @@
 				     它们描述"为什么会被拒"，只有真被拒时才需要读。 -->
 				<h3 class="sub">契约</h3>
 				<el-collapse v-model="contractOpen">
-					<el-collapse-item name="contract" title="块数预算 / 恢复要先腾位 / 归档 ≠ 删除">
+					<el-collapse-item name="contract" :title="isEnglish ? 'Block limit / make room before restoring / archive is not delete' : '块数预算 / 恢复要先腾位 / 归档 ≠ 删除'">
 						<div class="hint" v-html="contractHtml"></div>
 					</el-collapse-item>
 				</el-collapse>
@@ -1033,8 +1052,8 @@
 				     侧栏原本 1,903px 高、要滚 1,049px 才看得见下面的内容，大半是这段。 -->
 				<h2>权威 / 派生的分工</h2>
 				<el-collapse v-model="authorityOpen">
-					<el-collapse-item name="authority" title="权威源是哪些 / 索引为什么是派生 / 归档 ≠ 删除">
-						<div class="hint">
+					<el-collapse-item name="authority" :title="isEnglish ? 'Authoritative data / why the index is derived / archive is not delete' : '权威源是哪些 / 索引为什么是派生 / 归档 ≠ 删除'">
+						<div class="hint" v-if="!isEnglish">
 							<p><b>权威</b>：块文件正文与 META、两份 <code>scene_members.json</code> 侧车、
 							<code>archive/ledger.jsonl</code>（append-only，不可重建）。</p>
 							<p><b>派生</b>：<code>index/scene_index.json</code> —— 每次提交都从块文件<b>全量重建</b>，
@@ -1042,6 +1061,12 @@
 							<p>因此「数成员」一律以侧车为准；索引与侧车不一致时会显示为告警。</p>
 							<p><b>归档 ≠ 删除</b>：归档把块搬到与 <code>scene-blocks/</code> 平级的 <code>archive/</code>
 							（不占 maxScenes 名额），有账、可 restore；<code>delete</code> 才是真的消失、且不留痕。</p>
+						</div>
+						<div class="hint" v-else>
+							<p><b>Authoritative data</b>: block content and META, both <code>scene_members.json</code> sidecars, and <code>archive/ledger.jsonl</code> (append-only and cannot be rebuilt).</p>
+							<p><b>Derived data</b>: <code>index/scene_index.json</code> is rebuilt from all block files on every commit. Fields that exist only in the index are lost on the next rebuild; member lists are also merged from the sidecars.</p>
+							<p>Always use the sidecars as the source of truth for member counts. A mismatch between the index and sidecar is shown as a warning.</p>
+							<p><b>Archive is not delete</b>: archiving moves a block to <code>archive/</code> beside <code>scene-blocks/</code> (it does not use a <code>maxScenes</code> slot). The move is recorded and can be restored; <code>delete</code> permanently removes the block without a record.</p>
 						</div>
 					</el-collapse-item>
 				</el-collapse>
@@ -1080,7 +1105,7 @@
 					<el-table-column label="heat" width="52" align="right" class-name="mono">
 						<template #default="{ row }">{{ row.heat }}</template>
 					</el-table-column>
-					<el-table-column label="成员" width="56" align="right" class-name="mono">
+					<el-table-column :label="isEnglish ? 'Members' : '成员'" width="72" align="right" class-name="mono">
 						<template #default="{ row }">{{ row.memberCount }}</template>
 					</el-table-column>
 					<el-table-column label="updated" width="90" class-name="nowrap">
@@ -1140,12 +1165,12 @@
 				</div>
 
 				<h2>成员归属反查</h2>
-				<div v-if="loaded && ownerTotal === 0" class="hint">没有成员记录。</div>
+				<div v-if="loaded && ownerTotal === 0" class="hint">{{ isEnglish ? 'No member records.' : '没有成员记录。' }}</div>
 				<div v-else-if="!loaded" class="hint">尚未加载</div>
 				<template v-else>
-					<div class="hint">共 {{ ownerTotal }} 个成员 id 有归属（全部在页面内可搜）。点上方块行查看该块的实际成员清单。</div>
+					<div class="hint">{{ isEnglish ? ownerTotal + ' member IDs are assigned and searchable on this page. Select a block above to view its member list.' : '共 ' + ownerTotal + ' 个成员 id 有归属（全部在页面内可搜）。点上方块行查看该块的实际成员清单。' }}</div>
 					<el-table :data="visibleOwners" size="small" max-height="260" class="fixed-rows">
-						<el-table-column label="L1 记录 id" min-width="220" class-name="mono">
+						<el-table-column :label="isEnglish ? 'L1 record ID' : 'L1 记录 id'" min-width="220" class-name="mono">
 							<template #default="{ row }"><div class="ellipsis" :title="row.id">{{ row.id }}</div></template>
 						</el-table-column>
 						<el-table-column label="所属块" min-width="220">
@@ -1177,7 +1202,7 @@
 					</el-collapse-item>
 					<el-collapse-item v-if="detail.members.length" name="members" :title="'成员清单（' + detail.members.length + '）'">
 						<el-table :data="detail.members" size="small">
-							<el-table-column label="L1 记录 id" min-width="240" class-name="mono">
+							<el-table-column :label="isEnglish ? 'L1 record ID' : 'L1 记录 id'" min-width="240" class-name="mono">
 								<template #default="{ row }">{{ row.id }}</template>
 							</el-table-column>
 							<el-table-column label="" width="120">

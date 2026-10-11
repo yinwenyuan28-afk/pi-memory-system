@@ -49,6 +49,7 @@
 	"use strict";
 
 	var V = window.V;
+	var isEnglish = window.ViewerI18n && window.ViewerI18n.locale === "en";
 
 	/** 端点字面量集中一处：门禁 ⑬ 按字面量核对桥里是否声明（拼串会漏检）。 */
 	var EP = {
@@ -99,6 +100,7 @@
 		mixins: [V.vue.pageMixin], // loadNote / busy / setNote / hasPort / bridgeError / esc / fmtTime / fromNow
 		data: function () {
 			return {
+				isEnglish: isEnglish,
 				/** 侧栏导航（模板只能解析组件实例上的名字，模块级常量必须挂上来） */
 				pages: PAGES,
 				/** /api/l1/shards 的两条统计；null = 还没取到（取不到时对象里是 {source:"none"}） */
@@ -146,7 +148,7 @@
 			/** 最新分片的抽样结果（刚读到时为空数组 = 加载中，不占位）。 */
 			sampleRows: function () {
 				if (!this.sample) return [];
-				return [statRow("最新分片 " + this.sample.shard, this.sample.rows + " 行 / " + this.sample.distinct + " 个 id")];
+				return [statRow(isEnglish ? "Latest shard " + this.sample.shard : "最新分片 " + this.sample.shard, isEnglish ? this.sample.rows + " rows / " + this.sample.distinct + " IDs" : this.sample.rows + " 行 / " + this.sample.distinct + " 个 id")];
 			},
 
 			/** 衰减时钟：活跃会话日条数。 */
@@ -157,6 +159,10 @@
 			/** 时钟口径：首/末会话日 + 为什么它比侧车权威（<br> 保留旧版换行）。 */
 			clockFoot: function () {
 				if (!this.clock) return [];
+				if (isEnglish) return [
+					"First " + this.esc(this.clock.firstDay || "—") + " · Last " + this.esc(this.clock.lastDay || "—") +
+					"<br>Source: <code>l0/conversations</code> (authoritative; <code>hit-stats.json</code> sidecar may lag)",
+				];
 				return [
 					"首 " +
 						this.esc(this.clock.firstDay || "—") +
@@ -167,7 +173,7 @@
 			},
 			/** 拿不到活跃会话日时说的那句（旧版 .notice.warn）。 */
 			clockWarn: function () {
-				return { html: "拿不到活跃会话日：质量分的衰减时钟会退化为日历天（停工期间照常衰减）。", level: "warn" };
+				return { html: isEnglish ? "Active session days are unavailable. Quality decay will use calendar days and continue during inactivity." : "拿不到活跃会话日：质量分的衰减时钟会退化为日历天（停工期间照常衰减）。", level: "warn" };
 			},
 
 			/** L2 场景层（旧版 `#l2`）：live 块（索引 / 磁盘）、归档块、live 成员总数、账本条目。 */
@@ -175,25 +181,26 @@
 				if (!this.l2) return LOADING_ROWS;
 				var s = this.l2;
 				return [
-					statRow("live 块（索引 / 磁盘）", s.index + " / " + (s.diskLive === null ? "?" : s.diskLive)),
+					statRow(isEnglish ? "Live blocks (index / disk)" : "live 块（索引 / 磁盘）", s.index + " / " + (s.diskLive === null ? "?" : s.diskLive)),
 					statRow("归档块", s.archive),
 					statRow("live 成员总数", s.memberTotal),
-					statRow("账本条目", s.ledger),
+					statRow(isEnglish ? "Ledger events" : "账本条目", s.ledger),
 				];
 			},
 			/** 无写盘桥时唯一能说的那句（旧版是 row() 的 note → .hint）。 */
 			l2Foot: function () {
 				if (!this.l2 || this.l2.missingOnDisk !== null) return [];
+				if (isEnglish) return ["Viewer bridge unavailable: cannot compare the index with files on disk."];
 				return ["无写盘桥：无法核对「索引 ↔ 磁盘」。"];
 			},
 			/** 索引↔磁盘的对账结论（旧版是四行之后的 .notice / .notice.warn）。 */
 			l2Notice: function () {
 				if (!this.l2 || this.l2.missingOnDisk === null) return null;
 				if (this.l2.missingOnDisk === 0 && this.l2.notIndexed === 0) {
-					return { html: "索引与磁盘一致（无缺失块、无未入索引块）。", level: "" };
+					return { html: isEnglish ? "Index and disk match (no missing blocks and no unindexed blocks)." : "索引与磁盘一致（无缺失块、无未入索引块）。", level: "" };
 				}
 				return {
-					html: "索引缺块 " + this.l2.missingOnDisk + " 个 · 未入索引块 " + this.l2.notIndexed + " 个 —— 详见 L2 页的对账结果。",
+					html: isEnglish ? "Blocks missing from disk: " + this.l2.missingOnDisk + " · blocks missing from the index: " + this.l2.notIndexed + ". See reconciliation results on L2." : "索引缺块 " + this.l2.missingOnDisk + " 个 · 未入索引块 " + this.l2.notIndexed + " 个 —— 详见 L2 页的对账结果。",
 					level: "warn",
 				};
 			},
@@ -207,8 +214,8 @@
 				var s = this.l3;
 				return [
 					statRow(
-						"USER.md 条目 / 预算",
-						s.profileFilesAvailable ? s.userEntries + " 条 / " + s.userBudget + (s.userLimit ? " / " + s.userLimit : "") + " 字符" : null,
+						isEnglish ? "USER.md entries / budget" : "USER.md 条目 / 预算",
+						s.profileFilesAvailable ? (isEnglish ? s.userEntries + " entries / " + s.userBudget + (s.userLimit ? " / " + s.userLimit : "") + " characters" : s.userEntries + " 条 / " + s.userBudget + (s.userLimit ? " / " + s.userLimit : "") + " 字符") : null,
 					),
 					statRow("USER-temp 待合入条目", s.profileFilesAvailable ? s.pendingProposal : null),
 				];
@@ -216,6 +223,7 @@
 			/** 这两行的口径注释（旧版逐行跟在数字下面，这里归到该组之后，顺序与旧版一致）。 */
 			l3ProfileFoot: function () {
 				if (!this.l3) return [];
+				if (isEnglish) return ["Budget uses <code>entryBudget</code> (entry text + separators), <b>not bytes</b>.", "L3 is a draft; merging it into the live profile requires a manual action."];
 				return ["预算按 <code>entryBudget</code>（正文 + 分隔符），<b>不是字节数</b>", "L3 提议稿；合并进 live 是人工动作"];
 			},
 			/** L3 的后两行：P4 进度（游标）与画像备份数。 */
@@ -231,7 +239,7 @@
 			l3Notice: function () {
 				if (!this.l3 || this.l3.profileFilesAvailable) return null;
 				return {
-					html:
+					html: isEnglish ? "Profile files (<code>MEMORY.md</code>, <code>USER.md</code>, <code>USER-temp.md</code>) could not be read from the profile root. The viewer bridge must expose <code>/api/profile-files</code>. A count of 0 below does not mean the files are empty." :
 						"读不到 profile 根的画像文件（<code>MEMORY.md</code>/<code>USER.md</code>/<code>USER-temp.md</code>）" +
 						"—— 需要写盘桥的 <code>/api/profile-files</code>。下面条目数为 0 不代表文件为空。",
 					level: "warn",
@@ -490,9 +498,10 @@
 		template: /* html */ `
 		<header class="page">
 			<h1>记忆库查看器</h1>
-			<p class="sub">L0–L3 记忆库的本地查看器。源码在插件仓库 <code>viewers/</code>，激活时按内容哈希同步到 <code>{profile}/memoryDB/viewers/</code>。</p>
-			<notice :msg="loadNote"></notice>
-			<div class="toolbar">
+			<p class="sub" v-if="!isEnglish">L0–L3 记忆库的本地查看器。源码在插件仓库 <code>viewers/</code>，激活时按内容哈希同步到 <code>{profile}/memoryDB/viewers/</code>。</p>
+			<p class="sub" v-else>A local viewer for the L0–L3 memory system. Source files are in <code>viewers/</code> in the plugin repository and are synced by content hash to <code>{profile}/memoryDB/viewers/</code> when activated.</p>
+			<div class="index-load-row">
+				<notice :msg="loadNote"></notice>
 				<el-button @click="showBridgeState">写盘状态</el-button>
 			</div>
 			<!-- 「写盘状态」的答案：点之前不占位（旧版 #hint 是 display:none 的空 div） -->
@@ -510,7 +519,7 @@
 
 				<h2>怎么用</h2>
 				<el-collapse v-model="helpOpen">
-					<el-collapse-item name="help" title="经写盘桥打开 / file:// 会降级 / 版本 chip 怎么看">
+					<el-collapse-item name="help" :title="isEnglish ? 'Open through the viewer bridge / file:// limitations / version chip' : '经写盘桥打开 / file:// 会降级 / 版本 chip 怎么看'">
 						<div class="hint">
 							<p><b>推荐经写盘桥打开</b>：<code>node scripts/l1-admin/viewer-bridge.mjs</code>，然后打开终端打印的 <code>http://localhost:5174/viewers/index.html?port=5174</code>。带 <code>?port=</code> 才有：全部分片的自动加载、目录列举（解开日期窗口）、以及写盘（改任务状态 / 删除）。</p>
 							<p><b>直接双击 HTML（file://）</b>：页面能打开，但自动加载与写回都不可用（浏览器禁止 <code>file://</code> 下的 fetch），所以看不到数据。必须经写盘桥。</p>
@@ -533,11 +542,12 @@
 					<template v-if="sample">
 						<stat-list :rows="sampleRows"></stat-list>
 						<div class="chips">
-							<chip kind="task-open" :label="'待办 ' + sample.tasks.open"></chip>
-							<chip kind="task-done" :label="'已完成 ' + sample.tasks.done"></chip>
-							<chip kind="task-dropped" :label="'已废弃 ' + sample.tasks.dropped"></chip>
+							<chip kind="task-open" :label="(isEnglish ? 'Open ' : '待办 ') + sample.tasks.open"></chip>
+							<chip kind="task-done" :label="(isEnglish ? 'Done ' : '已完成 ') + sample.tasks.done"></chip>
+							<chip kind="task-dropped" :label="(isEnglish ? 'Dropped ' : '已废弃 ') + sample.tasks.dropped"></chip>
 						</div>
-						<div class="hint">任务状态按 <code>taskState</code> 统计（缺字段 = 待办）。这只是<b>最新一天分片</b>的抽样，全库分布见 L1 页。</div>
+						<div class="hint" v-if="!isEnglish">任务状态按 <code>taskState</code> 统计（缺字段 = 待办）。这只是<b>最新一天分片</b>的抽样，全库分布见 L1 页。</div>
+						<div class="hint" v-else>Task status is counted from <code>taskState</code> (missing values count as Open). This is a sample from the <b>latest daily shard</b>; see L1 for full-library totals.</div>
 					</template>
 					<div class="hint" v-else-if="sample === null">读不到最新分片。</div>
 				</div>
