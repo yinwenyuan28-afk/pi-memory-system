@@ -1,0 +1,6 @@
+node_modules/
+.vitepress/cache/
+.vitepress/dist/
+public/brand/
+public/media/
+design-preview/

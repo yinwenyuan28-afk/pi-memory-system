@@ -1,0 +1,55 @@
+1
+00:00:00,180 --> 00:00:02,199
+Returning to a project
+
+2
+00:00:02,199 --> 00:00:04,860
+shouldn’t mean starting over.
+
+3
+00:00:05,180 --> 00:00:08,409
+Pi turns useful conversations
+
+4
+00:00:08,409 --> 00:00:11,860
+into reusable project memories.
+
+5
+00:00:12,180 --> 00:00:15,068
+Related memories come together
+
+6
+00:00:15,068 --> 00:00:17,860
+with the context behind them.
+
+7
+00:00:18,180 --> 00:00:24,393
+Set up semantic recall to bring relevant context into a new session.
+
+8
+00:00:24,393 --> 00:00:26,860
+Pick up where you left off.
+
+9
+00:00:27,180 --> 00:00:30,285
+Review and correct your memories.
+
+10
+00:00:30,285 --> 00:00:33,860
+Track tasks as open, done, or dropped.
+
+11
+00:00:34,180 --> 00:00:37,020
+Your profile starts as a suggestion.
+
+12
+00:00:37,020 --> 00:00:39,860
+You review and approve every change.
+
+13
+00:00:40,180 --> 00:00:41,945
+Make every conversation
+
+14
+00:00:41,945 --> 00:00:44,860
+the starting point for your next task.

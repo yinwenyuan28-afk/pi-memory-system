@@ -1,0 +1,4 @@
+Pillow>=10.0
+numpy>=1.26
+edge-tts==7.2.8
+resvg-py==0.5.0

@@ -11,7 +11,7 @@
 		"extensions": [
 			"./index.ts"
 		],
-		"video": "https://raw.githubusercontent.com/yinwenyuan28-afk/pi-memory-system/main/assets/pi-memory-system-preview.mp4"
+		"video": "https://raw.githubusercontent.com/yinwenyuan28-afk/pi-memory-system/main/assets/promo/pi-memory-system-promo-en.mp4"
 	},
 	"files": [
 		"index.ts",

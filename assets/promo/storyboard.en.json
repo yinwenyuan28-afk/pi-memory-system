@@ -1,0 +1,63 @@
+{
+  "locale": "en",
+  "title": "Make every conversation the starting point for your next task.",
+  "duration": 45,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "voice": "en-US-JennyNeural",
+  "output_mp4": "pi-memory-system-promo-en.mp4",
+  "output_poster": "poster-en.jpg",
+  "output_subtitles": "subtitles.en.srt",
+  "scenes": [
+    {
+      "start": 0,
+      "end": 5,
+      "label": "A familiar moment",
+      "voice": "Returning to a project shouldn’t mean starting over.",
+      "captions": ["Returning to a project", "shouldn’t mean starting over."]
+    },
+    {
+      "start": 5,
+      "end": 12,
+      "label": "Save what matters",
+      "voice": "Pi Memory System turns useful conversations into reusable project memories.",
+      "captions": ["Pi turns useful conversations", "into reusable project memories."]
+    },
+    {
+      "start": 12,
+      "end": 18,
+      "label": "Keep the story",
+      "voice": "Related memories come together as a project story, with the context behind them.",
+      "captions": ["Related memories come together", "with the context behind them."]
+    },
+    {
+      "start": 18,
+      "end": 27,
+      "label": "Recall in a new session",
+      "voice": "With semantic recall set up, Pi can find relevant context in a new session and help you pick up where you left off.",
+      "captions": ["Set up semantic recall to bring relevant context into a new session.", "Pick up where you left off."]
+    },
+    {
+      "start": 27,
+      "end": 34,
+      "label": "Review and refine",
+      "voice": "Review and correct your memories. Mark tasks open, done, or dropped.",
+      "captions": ["Review and correct your memories.", "Track tasks as open, done, or dropped."]
+    },
+    {
+      "start": 34,
+      "end": 40,
+      "label": "You approve your profile",
+      "voice": "Your long-term profile starts as a suggestion. You review and approve every change.",
+      "captions": ["Your profile starts as a suggestion.", "You review and approve every change."]
+    },
+    {
+      "start": 40,
+      "end": 45,
+      "label": "Keep moving forward",
+      "voice": "Make every conversation the starting point for your next task.",
+      "captions": ["Make every conversation", "the starting point for your next task."]
+    }
+  ]
+}

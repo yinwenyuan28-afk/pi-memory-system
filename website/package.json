@@ -1,0 +1,21 @@
+{
+  "name": "pi-memory-website-design",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/sync-assets.mjs && vitepress dev --host 127.0.0.1 --port 5188",
+    "build": "node scripts/sync-assets.mjs && vitepress build",
+    "preview": "vitepress preview --host 127.0.0.1 --port 5188"
+  },
+  "dependencies": {
+    "element-plus": "2.14.7",
+    "@lucide/vue": "1.55.0",
+    "vue": "3.5.43"
+  },
+  "overrides": {
+    "vite": "6.4.3"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  }
+}
