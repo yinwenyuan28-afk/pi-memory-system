@@ -1,8 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none">
   <title>Pi Memory System — D4 Layer Bridges</title>
-  <path d="M48 7 87 27 48 47 9 27 48 7Z" fill="#4CC48A"/>
-  <path d="m48 14 25 13-25 13-25-13 25-13Z" fill="#DDF3E8"/>
-  <path d="M13 49 48 67 83 49" stroke="#F3F3EA" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M13 69 48 87 83 69" stroke="#F3F3EA" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>
-  <path d="M17 31.1V51.1M50 49v13M78 31.6V51.6M29 60v13M61 63v13M74 57v13" stroke="#4CC48A" stroke-width="3.5" stroke-linecap="round"/>
+  <desc>A broad top layer with six staggered, uniformly sized connections.</desc>
+  <!-- Keep the original x positions: 17 / 50 / 78 above, 29 / 61 / 74 below.
+       Each end follows its layer edge; starts inside the top fill avoid hairline gaps.
+       Layers are drawn last so connection ends remain recessed. -->
+  <path d="M17 29.103V51.057M50 43.974V65.971M78 29.615V51.571M29 57.229V77.229M61 60.314V80.314M74 53.629V73.629"
+        stroke="#4CC48A" stroke-width="4" stroke-linecap="butt"/>
+  <path d="M48 7 87 27 48 47 9 27Z"
+        fill="#4CC48A"/>
+  <path d="M48 14 73 27 48 40 23 27Z"
+        fill="#DDF3E8"/>
+  <path d="M13 49 48 67 83 49"
+        stroke="#F3F3EA" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M13 69 48 87 83 69"
+        stroke="#CCDCD1" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -13,7 +13,7 @@
   <g transform="translate(544 124)">
     <rect width="340" height="248" rx="20" fill="#18211F" stroke="#34413C"/>
     <circle cx="170" cy="105" r="82" fill="#101716" stroke="#34413C" stroke-width="2"/>
-    <g transform="translate(122 57)"><path d="M48 7 87 27 48 47 9 27 48 7Z" fill="#4CC48A"/><path d="m48 14 25 13-25 13-25-13 25-13Z" fill="#DDF3E8"/><path d="M13 49 48 67 83 49M13 69 48 87 83 69" stroke="#F3F3EA" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 31.1V51.1M50 49v13M78 31.6V51.6M29 60v13M61 63v13M74 57v13" stroke="#4CC48A" stroke-width="3.5" stroke-linecap="round"/></g>
+    <g transform="translate(122 57)"><path d="M17 29.103V51.057M50 43.974V65.971M78 29.615V51.571M29 57.229V77.229M61 60.314V80.314M74 53.629V73.629" stroke="#4CC48A" stroke-width="4" stroke-linecap="butt"/><path d="M48 7 87 27 48 47 9 27Z" fill="#4CC48A"/><path d="M48 14 73 27 48 40 23 27Z" fill="#DDF3E8"/><path d="M13 49 48 67 83 49" stroke="#F3F3EA" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 69 48 87 83 69" stroke="#CCDCD1" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></g>
     <text x="26" y="214" font-size="19" font-weight="700" fill="#F3F3EA">D4 · 叠层连线</text>
   </g>
 </svg>
