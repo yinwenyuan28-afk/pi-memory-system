@@ -31,17 +31,15 @@ Follow Pi's prompts to sign in or configure a model provider. Pi 0.83.0 requires
 
 ### Install from npm
 
-Once the package is published to npm, run:
+Run this in your terminal:
 
 ```bash
 pi install npm:pi-memory-system
 ```
 
-**The package has not been published to npm yet**, so this command is not available yet. It will work after publication.
-
 ### Install from a local directory
 
-For development or before publication, install from a local extension directory. Replace the example path with your actual directory.
+For development or testing local changes, install from a local extension directory. Replace the example path with your actual directory.
 
 ```powershell
 pi install ./path/to/memory-system
