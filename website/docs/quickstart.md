@@ -13,7 +13,19 @@ Pi Memory 将 Pi 对话中的有效信息提炼成记忆，帮助你在后续会
 
 ## 安装扩展
 
-准备好插件目录后，在终端按本地目录安装。将示例路径换成你实际使用的路径。
+### 通过 npm 安装
+
+包发布到 npm 后，在终端运行：
+
+```bash
+pi install npm:pi-memory-system
+```
+
+**目前 npm 上还没有发布此包**，所以这条命令暂时无法安装；发布后即可使用。
+
+### 从本地目录安装
+
+开发或尚未发布时，可以按本地目录安装。将示例路径换成你实际使用的路径。
 
 ```powershell
 pi install ./path/to/memory-system
@@ -28,7 +40,7 @@ pi install ./path/to/memory-system
 也可以重启 Pi。后台子代理由本扩展启动，无需安装 pi-subagents。
 
 ::: warning 只选择一种安装方式
-不要同时保留扩展扫描目录中的副本和 packages 包安装，否则可能重复加载、注册同名工具。`pi install` 不接受 `.tgz` 文件作为扩展目录；压缩包需要先解包。
+不要同时保留扩展扫描目录中的副本和 `pi install` 安装的副本，否则可能重复加载、注册同名工具。`pi install` 不接受 `.tgz` 文件作为扩展目录；压缩包需要先解包。
 :::
 
 ## 检查模型配置
@@ -61,4 +73,4 @@ pi install ./path/to/memory-system
 
 ## 查找完整参考
 
-按需要继续查看[配置说明](./configuration)、[常用命令](./commands)和[数据、隐私与备份](./data)。实现细节见 [项目 README](https://github.com/yinwenyuan28-afk/pi-memory-system#readme)。npm 安装方式在原文中标为“发布后”，此处使用本地目录安装路径。
+按需要继续查看[配置说明](./configuration)、[常用命令](./commands)和[数据、隐私与备份](./data)。实现细节见 [项目 README](https://github.com/yinwenyuan28-afk/pi-memory-system#readme)。

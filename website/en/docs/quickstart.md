@@ -13,7 +13,19 @@ Pi Memory extracts useful information from Pi conversations so you can continue 
 
 ## Install the extension
 
-Prepare a local extension directory. Replace the example path with your actual directory.
+### Install from npm
+
+Once the package is published to npm, run:
+
+```bash
+pi install npm:pi-memory-system
+```
+
+**The package has not been published to npm yet**, so this command is not available yet. It will work after publication.
+
+### Install from a local directory
+
+For development or before publication, install from a local extension directory. Replace the example path with your actual directory.
 
 ```powershell
 pi install ./path/to/memory-system
@@ -28,7 +40,7 @@ Then run this inside **Pi**, or restart Pi:
 The extension launches its own background agents; pi-subagents is not required.
 
 ::: warning Use one installation method
-Do not keep both an extension-directory copy and a package installation. This can register duplicate tools. Extract `.tgz` archives before installing; the directory is the supported input.
+Do not keep both an extension-directory copy and a `pi install` copy. This can register duplicate tools. Extract `.tgz` archives before installing; the directory is the supported input.
 :::
 
 ## Check your configuration
@@ -57,4 +69,4 @@ First confirm that the L1 record exists and its content and source are correct. 
 
 If you want to retrieve records by the meaning of your question, we recommend configuring an Embedding service and enabling vectorization in [Configure semantic recall](./recall). Vectorization is off by default, and installation does not configure Embedding automatically; regular memory extraction and saving still work. You can backfill a small set of existing records manually. The author uses Alibaba Cloud Bailian, which currently lists free quotas for some text embedding models; check the console for eligibility and expiry.
 
-Continue with the [Configuration guide](./configuration), [Command reference](./commands), and [Data, privacy, and backups](./data). The [repository README](https://github.com/yinwenyuan28-afk/pi-memory-system#readme) includes implementation details. It labels npm installation as available after publication, so this guide uses the local-directory route.
+Continue with the [Configuration guide](./configuration), [Command reference](./commands), and [Data, privacy, and backups](./data). The [repository README](https://github.com/yinwenyuan28-afk/pi-memory-system#readme) includes implementation details.
