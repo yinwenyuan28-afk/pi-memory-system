@@ -21,7 +21,7 @@ const videoOpen = ref(false);
 const locale = computed(() => english.value ? enLocale : zhCn);
 const videoPath = computed(() => withBase(`/media/promo-${english.value ? 'en' : 'zh'}.mp4`));
 const posterPath = computed(() => withBase(`/media/poster-${english.value ? 'en' : 'zh'}.jpg`));
-const installCommand = 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.83.0\npi install ./path/to/memory-system';
+const installCommand = 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.83.0\npi install npm:pi-memory-system';
 const copied = ref(false);
 const copyError = ref(false);
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -101,7 +101,7 @@ onUnmounted(() => clearTimeout(copyTimer));
       <section class="docs-section site-width section-space">
         <div class="section-heading"><h2>{{ t.docsTitle }}</h2><p>{{ t.docsIntro }}</p></div>
         <div class="docs-grid"><a v-for="item in t.docs" :key="item.slug" :href="docLink(item.slug)" class="doc-entry"><component :is="icons[item.icon as keyof typeof icons]" :size="21" /><div><h3>{{ item.title }}</h3><p>{{ item.desc }}</p></div><ArrowRight :size="18" /></a></div>
-        <div class="install-snippet"><div class="install-heading"><Terminal :size="16" /><span>{{ t.installLabel }}</span><ElButton size="small" :aria-label="t.copy" @click="copyInstall"><Check v-if="copied" :size="14" /><Copy v-else :size="14" />{{ copied ? t.copied : t.copy }}</ElButton></div><code>{{ installCommand }}</code><p>{{ t.installNote }}</p><p v-if="copyError" class="copy-error" role="alert">{{ t.copyFailed }}</p></div>
+        <div class="install-snippet"><div class="install-heading"><Terminal :size="16" /><span>{{ t.installLabel }}</span><ElButton size="small" :aria-label="t.copy" @click="copyInstall"><Check v-if="copied" :size="14" /><Copy v-else :size="14" />{{ copied ? t.copied : t.copy }}</ElButton></div><pre><code>{{ installCommand }}</code></pre><p>{{ t.installNote }}</p><p v-if="copyError" class="copy-error" role="alert">{{ t.copyFailed }}</p></div>
       </section>
 
       <section class="faq site-width section-space">
@@ -116,9 +116,11 @@ onUnmounted(() => clearTimeout(copyTimer));
 
       <section class="contribute site-width section-space">
         <div class="contribute-card">
-          <div class="contribute-icon"><GitBranch :size="22" /></div>
-          <div class="contribute-copy"><span>{{ t.contributeEyebrow }}</span><h2>{{ t.contributeTitle }}</h2><p>{{ t.contributeText }}</p></div>
-          <div class="contribute-actions"><ElButton tag="a" :href="repository" target="_blank" rel="noopener noreferrer" type="primary" size="large">{{ t.contributeCode }}<ArrowRight :size="17" /></ElButton><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.contributeFeedback }}<ArrowRight :size="15" /></a></div>
+          <div class="contribute-main">
+            <div class="contribute-icon"><GitBranch :size="22" /></div>
+            <div class="contribute-copy"><span>{{ t.contributeEyebrow }}</span><h2>{{ t.contributeTitle }}</h2><p>{{ t.contributeText }}</p></div>
+          </div>
+          <div class="contribute-actions"><ElButton class="contribute-primary" tag="a" :href="repository" target="_blank" rel="noopener noreferrer" type="primary" size="large">{{ t.contributeCode }}<ArrowRight :size="17" /></ElButton><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.contributeFeedback }}<ArrowRight :size="15" /></a></div>
         </div>
       </section>
 

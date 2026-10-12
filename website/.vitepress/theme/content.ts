@@ -27,7 +27,7 @@ export const copy = {
     ],
     filmTitle: '用 45 秒，看懂一次接续。', filmText: '从分散的对话，到可复用记忆，再回到下一次工作。', filmButton: '播放宣传视频', filmDuration: '45 秒 · 中文配音', dialogTitle: 'Pi Memory · 45 秒演示',
     docsTitle: '从安装，到第一次找回记忆。', docsIntro: '先运行记忆管线，再按需要配置语义召回。每一步都有清楚的说明。',
-    installLabel: '先安装 Pi，再安装本地扩展', copy: '复制命令', copied: '已复制', copyFailed: '复制失败，请手动选择命令', installNote: '在项目目录运行 pi install；将示例路径替换为你的扩展目录。',
+    installLabel: '先安装 Pi，再通过 npm 安装扩展', copy: '复制命令', copied: '已复制', copyFailed: '复制失败，请手动选择命令', installNote: 'Pi Memory 尚未发布到 npm；当前第二条命令暂不可用，发布后即可安装。',
     docs: [
       { title: '快速开始', desc: '环境要求、安装方式与首次检查。', slug: 'quickstart', icon: 'terminal' },
       { title: '配置语义召回', desc: 'Embedding、向量化与已有记录回填。', slug: 'recall', icon: 'search' },
@@ -73,7 +73,7 @@ export const copy = {
     ],
     filmTitle: 'See the next session take shape in 45 seconds.', filmText: 'From scattered conversations to useful memory, and back into your work.', filmButton: 'Play the product film', filmDuration: '45 seconds · English narration', dialogTitle: 'Pi Memory · 45-second demo',
     docsTitle: 'From installation to your first recall.', docsIntro: 'Start the memory pipeline, then configure semantic recall when you need it. Follow a clear guide for each step.',
-    installLabel: 'Install Pi first, then the local extension', copy: 'Copy commands', copied: 'Copied', copyFailed: 'Copy failed. Select and copy the commands manually.', installNote: 'Run pi install from your project directory and replace the example path with your extension directory.',
+    installLabel: 'Install Pi first, then the extension from npm', copy: 'Copy commands', copied: 'Copied', copyFailed: 'Copy failed. Select and copy the commands manually.', installNote: 'Pi Memory is not published to npm yet, so the second command will work after publication.',
     docs: [
       { title: 'Quick start', desc: 'Requirements, installation, and first checks.', slug: 'quickstart', icon: 'terminal' },
       { title: 'Configure semantic recall', desc: 'Embedding, vectorization, and backfilling records.', slug: 'recall', icon: 'search' },
