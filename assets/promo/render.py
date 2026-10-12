@@ -608,8 +608,6 @@ def render_frame(t, subtitles=True):
                 c.rr((x-22,650,x+tw+22,697),11,"#0D1714")
                 c.txt(x,658,text,size)
                 break
-    c.line([(72,714),(1208,714)],C["line"],2)
-    c.line([(72,714),(72+1136*clamp(t/TOTAL),714)],C["green"],2)
     return im.convert("RGB")
 
 
