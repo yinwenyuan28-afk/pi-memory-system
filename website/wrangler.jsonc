@@ -1,0 +1,7 @@
+{
+  "name": "pi-memory-system",
+  "compatibility_date": "2026-10-12",
+  "assets": {
+    "directory": "./.vitepress/dist"
+  }
+}
