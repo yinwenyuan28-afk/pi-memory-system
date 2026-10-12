@@ -3,7 +3,7 @@ export const repository = 'https://github.com/yinwenyuan28-afk/pi-memory-system'
 export const copy = {
   zh: {
     forPi: '为持续工作的 Pi 用户而做',
-    headline: ['为 Pi 提供', '长期记忆支持。'],
+    headline: ['为 Pi 提供长期', '记忆支持。'],
     intro: '把对话里的项目事实、工作方法和待办积累下来，在下一次相关工作中按需找回。少一点重复交代，多一点接着往下做。',
     start: '开始使用', watch: '观看 45 秒演示', windows: '目前支持 Windows', node: 'Node ≥ 22.13',
     outcomes: [

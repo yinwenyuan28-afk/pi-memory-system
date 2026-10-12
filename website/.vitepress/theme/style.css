@@ -107,6 +107,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 96px; }
 .hero { display: grid; grid-template-columns: 1fr 1.4fr; gap: 54px; align-items: center; padding-top: 75px; padding-bottom: 62px; }
 @media (min-width: 801px) {
   html[lang='zh-CN'] .hero { min-height: calc(100svh - var(--vp-nav-height)); align-items: start; }
+  html[lang='zh-CN'] .hero-copy { padding-top: 18px; }
 }
 .product-context { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--site-brand); margin-bottom: 25px; }
 .context-line { width: 22px; height: 2px; background: currentColor; }
