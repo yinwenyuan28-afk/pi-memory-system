@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { withBase } from 'vitepress';
 import { ElButton } from 'element-plus';
 import { Check, Layers, Pause, Play, RotateCcw } from '@lucide/vue';
 
@@ -14,7 +13,6 @@ const text = computed(() => props.english ? {
   question: 'Another duplicate callback. How do we investigate?', recalled: 'Relevant method retrieved',
   answer: 'Let’s use our previous approach:\n1. Compare the order ID\n2. Verify the signature\n3. Inspect the idempotency record',
   pause: 'Pause', play: 'Continue', replay: 'Replay',
-  note: 'Illustrative conversation · semantic recall configured',
 } : {
   title: '方法记一次，下次接着用。', previous: '上一次会话', next: '新会话',
   user: '你', agent: 'Pi agent', first: '记下方法', second: '再次用上',
@@ -24,7 +22,6 @@ const text = computed(() => props.english ? {
   question: '又出现一笔重复回调，怎么查？', recalled: '找回了相关的排查方法',
   answer: '沿用我们之前的排查顺序：\n1. 对照订单号\n2. 检查签名\n3. 查看幂等记录',
   pause: '暂停', play: '继续播放', replay: '重播',
-  note: '对话示意 · 展示配置语义召回后的效果',
 });
 
 const panel = ref<HTMLElement>();
@@ -95,7 +92,7 @@ onUnmounted(() => {
 
 <template>
   <section ref="panel" class="memory-demo chat-demo" :aria-label="text.title">
-    <div class="demo-heading"><span class="demo-mark"><img :src="withBase('/brand/icon.svg')" alt="" /></span><strong>{{ text.title }}</strong></div>
+    <div class="demo-heading"><strong>{{ text.title }}</strong></div>
     <div class="chat-session"><span class="chat-status-dot" /><span>{{ nextSession ? text.next : text.previous }}</span><span class="chat-session-number">{{ nextSession ? '02' : '01' }} / 02</span></div>
 
     <div class="chat-stage" :aria-label="nextSession ? text.next : text.previous">
@@ -124,7 +121,6 @@ onUnmounted(() => {
         <ElButton text size="small" :aria-label="text.replay" :title="text.replay" @click="replay"><RotateCcw :size="15" /></ElButton>
       </div>
     </div>
-    <p class="example-note">{{ text.note }}</p>
   </section>
 </template>
 
