@@ -125,11 +125,11 @@ onUnmounted(() => {
 
 <style scoped>
 .chat-demo { min-width: 0; }
-.chat-session { display: flex; align-items: center; gap: 8px; padding-block: 12px; border-block: 1px solid var(--site-border); color: var(--site-muted); font-size: 12px; }
+.chat-session { display: flex; align-items: center; gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--site-border); color: var(--site-muted); font-size: 12px; }
 .chat-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--site-brand); }
 .chat-session-number { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
-.chat-stage { height: 288px; padding-block: 8px; }
-.chat-transcript { display: flex; flex-direction: column; gap: 18px; }
+.chat-stage { height: 292px; padding: 8px 0 22px; }
+.chat-transcript { display: flex; flex-direction: column; gap: 12px; }
 .chat-message { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; visibility: hidden; opacity: 0; transform: translateY(6px); transition: opacity .3s ease, transform .3s ease; }
 .chat-message.is-visible { visibility: visible; opacity: 1; transform: none; }
 .chat-speaker { display: flex; align-items: center; gap: 6px; color: var(--site-muted); font-size: 11px; }
@@ -163,7 +163,7 @@ onUnmounted(() => {
 @media (max-width: 1100px) and (min-width: 801px), (max-width: 480px) {
   .chat-stage { height: 330px; padding-block: 8px; }
   .chat-message .chat-bubble { max-width: 95%; font-size: 12px; padding: 10px 12px; }
-  .chat-transcript { gap: 16px; }
+  .chat-transcript { gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before { animation: none !important; transition: none !important; }
