@@ -40,6 +40,7 @@ export default defineConfig({
   title: 'Pi Memory',
   description: '让每次对话都成为下一次工作的起点。',
   cleanUrls: true,
+  sitemap: { hostname: 'https://pi-memory.com' },
   srcExclude: ['README.md', '设计方案.md', '文档内容梳理.md', 'design-preview/**'],
   appearance: true,
   markdown: {
