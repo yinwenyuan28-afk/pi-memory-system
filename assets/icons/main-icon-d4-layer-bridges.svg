@@ -5,9 +5,9 @@
        Each end follows its layer edge; starts inside the top fill avoid hairline gaps.
        Layers are drawn last so connection ends remain recessed. -->
   <path d="M17 29.103V51.057M50 43.974V65.971M78 29.615V51.571M29 57.229V77.229M61 60.314V80.314M74 53.629V73.629"
-        stroke="#4CC48A" stroke-width="4" stroke-linecap="butt"/>
+        stroke="#379B70" stroke-width="4" stroke-linecap="butt"/>
   <path d="M48 7 87 27 48 47 9 27Z"
-        fill="#4CC48A"/>
+        fill="#379B70"/>
   <path d="M48 14 73 27 48 40 23 27Z"
         fill="#DDF3E8"/>
   <path d="M13 49 48 67 83 49"
