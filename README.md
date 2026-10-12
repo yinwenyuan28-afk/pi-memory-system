@@ -2,6 +2,10 @@
 
 L0–L3 记忆管线扩展。会话进行中自动提取原子记忆、整合进场景块、生成用户画像，并在后续轮次按需召回注入。
 
+官方网站：https://pi-memory-system.yinwenyuan28.workers.dev/，备用：https://pi-memory.com
+
+联系方式：email@pi-memory.com
+
 ## 环境要求
 
 | 项 | 要求 | 说明 |
