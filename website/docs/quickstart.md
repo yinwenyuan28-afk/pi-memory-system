@@ -8,8 +8,24 @@ description: 安装 Pi Memory，并确认记忆管线与模型配置。
 Pi Memory 将 Pi 对话中的有效信息提炼成记忆，帮助你在后续会话中继续项目工作。先完成安装，再按需要配置语义召回。
 
 ::: info 当前兼容条件
-当前仅支持 **Windows**，需要 **Node ≥ 22.13**。项目实测宿主组合为 Pi 0.84.2、pi-coding-agent 0.83.0、pi-ai 0.74.2；这组版本是验证记录，不是所有兼容版本的列表。
+当前仅支持 **Windows**。安装 Pi 0.83.0 需要 **Node ≥ 22.19**。项目实测宿主组合为 Pi 0.84.2、pi-coding-agent 0.83.0、pi-ai 0.74.2；这组版本是验证记录，不是所有兼容版本的列表。
 :::
+
+## 安装 Pi
+
+Pi Memory 是 Pi 的扩展，需要先安装 Pi 本体。项目验证过的 npm 版本可通过以下命令安装：
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.83.0
+```
+
+安装完成后，在项目目录启动 Pi：
+
+```bash
+pi
+```
+
+启动后按 Pi 的提示登录或配置模型服务。Pi 0.83.0 要求 Node ≥ 22.19。
 
 ## 安装扩展
 

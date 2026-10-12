@@ -8,8 +8,24 @@ description: Install Pi Memory and check your pipeline and model configuration.
 Pi Memory extracts useful information from Pi conversations so you can continue project work in later sessions. Install the extension first, then configure semantic recall when needed.
 
 ::: info Current requirements
-**Windows only**, with **Node ≥ 22.13**. The project has tested Pi 0.84.2, pi-coding-agent 0.83.0, and pi-ai 0.74.2 together. This is a tested combination, not an exhaustive compatibility list.
+**Windows only**. Installing Pi 0.83.0 requires **Node ≥ 22.19**. The project has tested Pi 0.84.2, pi-coding-agent 0.83.0, and pi-ai 0.74.2 together. This is a tested combination, not an exhaustive compatibility list.
 :::
+
+## Install Pi
+
+Pi Memory is a Pi extension, so install Pi itself first. This is the npm command for the version tested with the project:
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.83.0
+```
+
+After installation, start Pi from your project directory:
+
+```bash
+pi
+```
+
+Follow Pi's prompts to sign in or configure a model provider. Pi 0.83.0 requires Node ≥ 22.19.
 
 ## Install the extension
 

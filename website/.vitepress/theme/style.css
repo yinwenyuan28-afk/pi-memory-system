@@ -181,7 +181,7 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
 .install-snippet { background: var(--site-soft); border: 1px solid var(--site-border); padding: 20px 24px; margin-top: 28px; border-radius: 10px; }
 .install-heading { display: flex; align-items: center; gap: 8px; color: var(--site-muted); font-size: 12px; }
 .install-heading .el-button { margin-left: auto; }
-.install-snippet > code { display: block; margin-top: 17px; font-size: 15px; font-family: var(--vp-font-family-mono); overflow-x: auto; }
+.install-snippet > code { display: block; margin-top: 17px; font-size: 15px; font-family: var(--vp-font-family-mono); white-space: pre; overflow-x: auto; }
 .install-snippet > p { font-size: 12px; margin-top: 13px; }
 .copy-error { color: #b43c3c !important; }
 .faq { padding-top: 0; display: flex; flex-direction: column; gap: 28px; align-items: stretch; }
@@ -197,6 +197,15 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
 .faq .el-collapse-item__wrap { border: 0; }
 .faq .el-collapse-item__content { padding: 0 50px 19px 20px; }
 .faq .el-collapse-item__content > p { font-size: 13px; line-height: 1.75; }
+.contribute { padding-top: 20px; }
+.contribute-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 22px; padding: 32px 36px; border: 1px solid var(--site-border); border-radius: 16px; background: linear-gradient(115deg, var(--site-soft), var(--site-surface) 66%); }
+.contribute-icon { display: grid; place-items: center; width: 50px; height: 50px; border-radius: 13px; background: var(--site-surface); color: var(--site-brand); border: 1px solid var(--site-border); }
+.contribute-copy > span { display: block; color: var(--site-brand); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 5px; }
+.contribute-copy h2 { font-size: 23px; }
+.contribute-copy p { margin-top: 6px; font-size: 13px; }
+.contribute-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.contribute-actions > a { display: inline-flex; align-items: center; gap: 7px; color: var(--site-brand); font-size: 12px; font-weight: 550; }
+.contribute-actions > a:hover { text-decoration: underline; }
 .final-cta { border-top: 1px solid var(--site-border); padding-block: 43px; display: flex; align-items: center; gap: 20px; }
 .final-cta > img { width: 56px; height: 56px; padding: 9px; background: #203b2c; border-radius: 12px; }
 .final-cta h2 { font-size: 24px; }
@@ -218,6 +227,8 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
   .film h2 { font-size: 25px; }
   .final-cta { flex-wrap: wrap; }
   .final-cta .actions { margin-left: 76px; }
+  .contribute-card { padding: 26px; grid-template-columns: auto 1fr; }
+  .contribute-actions { grid-column: 2; flex-direction: row; flex-wrap: wrap; align-items: center; }
 }
 
 @media (max-width: 800px) {
@@ -267,6 +278,10 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
   .install-heading .el-button { font-size: 10px; }
   .install-snippet > code { font-size: 11px; }
   .final-cta { gap: 15px; }
+  .contribute-card { grid-template-columns: 1fr; gap: 14px; padding: 21px; }
+  .contribute-icon { width: 43px; height: 43px; }
+  .contribute-copy h2 { font-size: 20px; }
+  .contribute-actions { grid-column: 1; }
   .final-cta > img { width: 42px; height: 42px; }
   .final-cta > div:not(.actions) { flex: 1; }
   .final-cta h2 { font-size: 19px; }

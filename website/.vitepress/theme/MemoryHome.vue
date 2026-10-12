@@ -21,7 +21,7 @@ const videoOpen = ref(false);
 const locale = computed(() => english.value ? enLocale : zhCn);
 const videoPath = computed(() => withBase(`/media/promo-${english.value ? 'en' : 'zh'}.mp4`));
 const posterPath = computed(() => withBase(`/media/poster-${english.value ? 'en' : 'zh'}.jpg`));
-const installCommand = 'pi install ./path/to/memory-system';
+const installCommand = 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.83.0\npi install ./path/to/memory-system';
 const copied = ref(false);
 const copyError = ref(false);
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -112,6 +112,14 @@ onUnmounted(() => clearTimeout(copyTimer));
             <p>{{ item.answer }}</p>
           </ElCollapseItem>
         </ElCollapse>
+      </section>
+
+      <section class="contribute site-width section-space">
+        <div class="contribute-card">
+          <div class="contribute-icon"><GitBranch :size="22" /></div>
+          <div class="contribute-copy"><span>{{ t.contributeEyebrow }}</span><h2>{{ t.contributeTitle }}</h2><p>{{ t.contributeText }}</p></div>
+          <div class="contribute-actions"><ElButton tag="a" :href="repository" target="_blank" rel="noopener noreferrer" type="primary" size="large">{{ t.contributeCode }}<ArrowRight :size="17" /></ElButton><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.contributeFeedback }}<ArrowRight :size="15" /></a></div>
+        </div>
       </section>
 
       <section class="final-cta site-width"><img :src="withBase('/brand/icon.svg')" alt="" /><div><h2>{{ t.finalTitle }}</h2><p>{{ t.finalText }}</p></div><div class="actions"><ElButton tag="a" :href="docLink('quickstart')" type="primary" size="large">{{ t.start }}<ArrowRight :size="17" /></ElButton><ElButton tag="a" :href="repository" target="_blank" rel="noopener noreferrer" size="large">{{ t.github }}</ElButton></div></section>

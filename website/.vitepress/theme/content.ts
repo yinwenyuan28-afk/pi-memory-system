@@ -5,7 +5,7 @@ export const copy = {
     forPi: '为持续工作的 Pi 用户而做',
     headline: ['为 Pi 提供长期', '记忆支持。'],
     intro: '把对话里的项目事实、工作方法和待办积累下来，在下一次相关工作中按需找回。少一点重复交代，多一点接着往下做。',
-    start: '开始使用', watch: '观看 45 秒演示', windows: '目前支持 Windows', node: 'Node ≥ 22.13',
+    start: '开始使用', watch: '观看 45 秒演示', windows: '目前支持 Windows', node: 'Node ≥ 22.19',
     outcomes: [
       { title: '项目背景，少重复一遍', text: '让已有事实和工作约定成为后续协作的起点。', icon: 'message' },
       { title: '有用经验，有机会再用', text: '按当前问题找回相关记录，带着待办状态继续工作。', icon: 'search' },
@@ -27,7 +27,7 @@ export const copy = {
     ],
     filmTitle: '用 45 秒，看懂一次接续。', filmText: '从分散的对话，到可复用记忆，再回到下一次工作。', filmButton: '播放宣传视频', filmDuration: '45 秒 · 中文配音', dialogTitle: 'Pi Memory · 45 秒演示',
     docsTitle: '从安装，到第一次找回记忆。', docsIntro: '先运行记忆管线，再按需要配置语义召回。每一步都有清楚的说明。',
-    installLabel: '从本地插件目录安装', copy: '复制命令', copied: '已复制', copyFailed: '复制失败，请手动选择命令', installNote: '将示例路径替换为你的插件目录，安装后在 Pi 中执行 /reload。',
+    installLabel: '先安装 Pi，再安装本地扩展', copy: '复制命令', copied: '已复制', copyFailed: '复制失败，请手动选择命令', installNote: '在项目目录运行 pi install；将示例路径替换为你的扩展目录。',
     docs: [
       { title: '快速开始', desc: '环境要求、安装方式与首次检查。', slug: 'quickstart', icon: 'terminal' },
       { title: '配置语义召回', desc: 'Embedding、向量化与已有记录回填。', slug: 'recall', icon: 'search' },
@@ -41,16 +41,17 @@ export const copy = {
       { question: '安装后就能自动语义召回吗？', answer: '语义召回需要配置 Embedding 服务并开启向量化。向量化默认关闭，默认触发阈值为 500 条有效记录；已有记录还需要回填向量。安装与配置是两个步骤。' },
       { question: '记忆数据会发送到外部服务吗？', answer: '记忆文件保存在 Pi profile 中。后台提取会使用配置的模型，向量化会调用配置的 Embedding 服务。实际数据发送范围取决于你的服务配置；保存在本地不代表全部处理都在本地。' },
       { question: '多个项目的记忆会严格隔离吗？', answer: '项目归属会在有效识别时参与排序，使相关项目的内容有机会优先出现。它目前不是严格的隔离过滤，也可能存在 unknown 项目归属。' },
-      { question: '目前有哪些兼容与使用限制？', answer: '当前仅支持 Windows，需要 Node 22.13 或更高版本。场景层目前不会自动注入每轮回答，画像需要审阅并入。本地查看器桥目前没有鉴权，建议按默认方式在本机使用。详细信息见限制与数据说明。' }
+      { question: '目前有哪些兼容与使用限制？', answer: '当前仅支持 Windows。安装项目验证过的 Pi 0.83.0 需要 Node 22.19 或更高版本。场景层目前不会自动注入每轮回答，画像需要审阅并入。本地查看器桥目前没有鉴权，建议按默认方式在本机使用。详细信息见限制与数据说明。' }
     ],
     finalTitle: '让下一次会话，接着这一次。', finalText: '为持续推进的工作，留下一份可复用的起点。', github: '查看 GitHub',
+    contributeEyebrow: '开源共建', contributeTitle: '和我们一起，让 Pi 的记忆更可靠。', contributeText: '欢迎贡献代码、完善文档、分享使用场景，或提出改进建议。', contributeCode: '参与项目共建', contributeFeedback: '提交想法或问题',
     footerDocs: '文档', footerData: '数据与限制', footerIssue: '反馈问题'
   },
   en: {
     forPi: 'Built for ongoing work with Pi',
     headline: ['Long-term memory', 'for your Pi agent.'],
     intro: 'Keep useful project facts, working methods, and tasks from your conversations. Bring relevant context back when you continue the work.',
-    start: 'Get started', watch: 'Watch the 45-second demo', windows: 'Currently for Windows', node: 'Node ≥ 22.13',
+    start: 'Get started', watch: 'Watch the 45-second demo', windows: 'Currently for Windows', node: 'Node ≥ 22.19',
     outcomes: [
       { title: 'Explain the context less often', text: 'Use existing project facts and conventions as a starting point.', icon: 'message' },
       { title: 'Give useful experience another turn', text: 'Retrieve relevant records and continue with task states in view.', icon: 'search' },
@@ -72,7 +73,7 @@ export const copy = {
     ],
     filmTitle: 'See the next session take shape in 45 seconds.', filmText: 'From scattered conversations to useful memory, and back into your work.', filmButton: 'Play the product film', filmDuration: '45 seconds · English narration', dialogTitle: 'Pi Memory · 45-second demo',
     docsTitle: 'From installation to your first recall.', docsIntro: 'Start the memory pipeline, then configure semantic recall when you need it. Follow a clear guide for each step.',
-    installLabel: 'Install from a local extension directory', copy: 'Copy command', copied: 'Copied', copyFailed: 'Copy failed. Select and copy the command manually.', installNote: 'Replace the example path with your extension directory. Run /reload inside Pi after installation.',
+    installLabel: 'Install Pi first, then the local extension', copy: 'Copy commands', copied: 'Copied', copyFailed: 'Copy failed. Select and copy the commands manually.', installNote: 'Run pi install from your project directory and replace the example path with your extension directory.',
     docs: [
       { title: 'Quick start', desc: 'Requirements, installation, and first checks.', slug: 'quickstart', icon: 'terminal' },
       { title: 'Configure semantic recall', desc: 'Embedding, vectorization, and backfilling records.', slug: 'recall', icon: 'search' },
@@ -86,9 +87,10 @@ export const copy = {
       { question: 'Does semantic recall work immediately after installation?', answer: 'It requires an Embedding service and enabled vectorization. Vectorization is off by default, with a default threshold of 500 valid records. Existing records need a vector backfill. Installation and recall setup are separate steps.' },
       { question: 'Is data sent to external services?', answer: 'Memory files live in your Pi profile. Background extraction uses your configured model; vectorization uses your configured Embedding service. What leaves your device depends on that configuration. Local files do not mean all processing is local.' },
       { question: 'Are projects strictly isolated?', answer: 'When the project is identified, its ownership can influence ranking. This is not a strict isolation filter, and some records may have unknown ownership.' },
-      { question: 'What are the current compatibility and usage limits?', answer: 'Windows only, with Node 22.13 or later. Scenes are not automatically injected into each answer. Profile changes require review and merge. The local viewer bridge currently has no authentication; use its default local setup. Read the limits guide for details.' }
+      { question: 'What are the current compatibility and usage limits?', answer: 'Windows only. The project-tested Pi 0.83.0 requires Node 22.19 or later. Scenes are not automatically injected into each answer. Profile changes require review and merge. The local viewer bridge currently has no authentication; use its default local setup. Read the limits guide for details.' }
     ],
     finalTitle: 'Pick up where this conversation leaves off.', finalText: 'Keep a reusable starting point for the work you continue.', github: 'View on GitHub',
+    contributeEyebrow: 'Open source', contributeTitle: 'Help make Pi memory more useful.', contributeText: 'Contribute code, improve the docs, share a workflow, or suggest an idea.', contributeCode: 'Contribute on GitHub', contributeFeedback: 'Share feedback or ideas',
     footerDocs: 'Documentation', footerData: 'Data and limits', footerIssue: 'Report an issue'
   }
 };
