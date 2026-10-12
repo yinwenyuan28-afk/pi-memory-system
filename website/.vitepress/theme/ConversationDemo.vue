@@ -5,7 +5,7 @@ import { Check, Layers, Pause, Play, RotateCcw } from '@lucide/vue';
 
 const props = defineProps<{ english: boolean }>();
 const text = computed(() => props.english ? {
-  title: 'Remember a method. Use it again.', previous: 'Previous session', next: 'New session',
+  previous: 'Previous session', next: 'New session',
   user: 'You', agent: 'Pi agent', first: 'Keep the method', second: 'Use it again',
   before: 'For payment callbacks, check the order ID, then the signature, then the idempotency record.',
   acknowledgement: 'Got it. Let’s follow that order.',
@@ -14,7 +14,7 @@ const text = computed(() => props.english ? {
   answer: 'Let’s use our previous approach:\n1. Compare the order ID\n2. Verify the signature\n3. Inspect the idempotency record',
   pause: 'Pause', play: 'Continue', replay: 'Replay',
 } : {
-  title: '方法记一次，下次接着用。', previous: '上一次会话', next: '新会话',
+  previous: '上一次会话', next: '新会话',
   user: '你', agent: 'Pi agent', first: '记下方法', second: '再次用上',
   before: '排查支付回调时，先对照订单号，再检查签名和幂等记录。',
   acknowledgement: '好，这次按这个顺序排查。',
@@ -91,8 +91,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section ref="panel" class="memory-demo chat-demo" :aria-label="text.title">
-    <div class="demo-heading"><strong>{{ text.title }}</strong></div>
+  <section ref="panel" class="memory-demo chat-demo" :aria-label="english ? 'Pi Memory conversation demo' : 'Pi Memory 对话动画演示'">
     <div class="chat-session"><span class="chat-status-dot" /><span>{{ nextSession ? text.next : text.previous }}</span><span class="chat-session-number">{{ nextSession ? '02' : '01' }} / 02</span></div>
 
     <div class="chat-stage" :aria-label="nextSession ? text.next : text.previous">
