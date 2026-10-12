@@ -43,8 +43,8 @@ export const copy = {
       { question: '多个项目的记忆会严格隔离吗？', answer: '项目归属会在有效识别时参与排序，使相关项目的内容有机会优先出现。它目前不是严格的隔离过滤，也可能存在 unknown 项目归属。' },
       { question: '目前有哪些兼容与使用限制？', answer: '当前仅支持 Windows。安装项目验证过的 Pi 0.83.0 需要 Node 22.19 或更高版本。场景层目前不会自动注入每轮回答，画像需要审阅并入。本地查看器桥目前没有鉴权，建议按默认方式在本机使用。详细信息见限制与数据说明。' }
     ],
-    finalTitle: '让下一次会话，接着这一次。', finalText: '为持续推进的工作，留下一份可复用的起点。', github: '查看 GitHub',
-    contributeEyebrow: '开源共建', contributeTitle: '和我们一起，让 Pi 的记忆更可靠。', contributeText: '欢迎贡献代码、完善文档、分享使用场景，或提出改进建议。', contributeCode: '参与项目共建', contributeFeedback: '提交想法或问题',
+    finalTitle: '让下一次会话，接着这一次。', finalText: '开始积累你的项目记忆，也欢迎贡献代码、完善文档或分享使用场景。',
+    contributeEyebrow: '开源共建', contributeCode: '参与项目共建',
     footerDocs: '文档', footerData: '数据与限制', footerIssue: '反馈问题'
   },
   en: {
@@ -89,8 +89,8 @@ export const copy = {
       { question: 'Are projects strictly isolated?', answer: 'When the project is identified, its ownership can influence ranking. This is not a strict isolation filter, and some records may have unknown ownership.' },
       { question: 'What are the current compatibility and usage limits?', answer: 'Windows only. The project-tested Pi 0.83.0 requires Node 22.19 or later. Scenes are not automatically injected into each answer. Profile changes require review and merge. The local viewer bridge currently has no authentication; use its default local setup. Read the limits guide for details.' }
     ],
-    finalTitle: 'Pick up where this conversation leaves off.', finalText: 'Keep a reusable starting point for the work you continue.', github: 'View on GitHub',
-    contributeEyebrow: 'Open source', contributeTitle: 'Help make Pi memory more useful.', contributeText: 'Contribute code, improve the docs, share a workflow, or suggest an idea.', contributeCode: 'Contribute on GitHub', contributeFeedback: 'Share feedback or ideas',
+    finalTitle: 'Pick up where this conversation leaves off.', finalText: 'Start building your project memory. Help shape it with code, documentation, or workflows.',
+    contributeEyebrow: 'Open source', contributeCode: 'Contribute on GitHub',
     footerDocs: 'Documentation', footerData: 'Data and limits', footerIssue: 'Report an issue'
   }
 };

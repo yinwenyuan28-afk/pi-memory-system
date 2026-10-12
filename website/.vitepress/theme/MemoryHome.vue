@@ -114,17 +114,16 @@ onUnmounted(() => clearTimeout(copyTimer));
         </ElCollapse>
       </section>
 
-      <section class="contribute site-width section-space">
-        <div class="contribute-card">
-          <div class="contribute-main">
-            <div class="contribute-icon"><GitBranch :size="22" /></div>
-            <div class="contribute-copy"><span>{{ t.contributeEyebrow }}</span><h2>{{ t.contributeTitle }}</h2><p>{{ t.contributeText }}</p></div>
-          </div>
-          <div class="contribute-actions"><ElButton class="contribute-primary" tag="a" :href="repository" target="_blank" rel="noopener noreferrer" type="primary" size="large">{{ t.contributeCode }}<ArrowRight :size="17" /></ElButton><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.contributeFeedback }}<ArrowRight :size="15" /></a></div>
+      <section class="final-cta site-width" aria-labelledby="final-title">
+        <div class="final-main">
+          <img :src="withBase('/brand/icon.svg')" alt="" width="56" height="56" />
+          <div class="final-copy"><span>{{ t.contributeEyebrow }}</span><h2 id="final-title">{{ t.finalTitle }}</h2><p>{{ t.finalText }}</p></div>
+        </div>
+        <div class="actions final-actions">
+          <ElButton tag="a" :href="docLink('quickstart')" type="primary" size="large">{{ t.start }}<ArrowRight :size="17" /></ElButton>
+          <ElButton tag="a" :href="repository" target="_blank" rel="noopener noreferrer" size="large"><GitBranch :size="17" />{{ t.contributeCode }}</ElButton>
         </div>
       </section>
-
-      <section class="final-cta site-width"><img :src="withBase('/brand/icon.svg')" alt="" /><div><h2>{{ t.finalTitle }}</h2><p>{{ t.finalText }}</p></div><div class="actions"><ElButton tag="a" :href="docLink('quickstart')" type="primary" size="large">{{ t.start }}<ArrowRight :size="17" /></ElButton><ElButton tag="a" :href="repository" target="_blank" rel="noopener noreferrer" size="large">{{ t.github }}</ElButton></div></section>
 
       <nav class="home-footer site-width" :aria-label="english ? 'Footer links' : '页脚链接'"><a :href="docLink('quickstart')"><BookOpen :size="15" />{{ t.footerDocs }}</a><a :href="docLink('limits')">{{ t.footerData }}</a><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.footerIssue }}</a><a href="mailto:email@pi-memory.com"><Mail :size="15" />email@pi-memory.com</a></nav>
     </main>
