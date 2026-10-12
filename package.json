@@ -24,6 +24,7 @@
 		"agents/",
 		"viewers/",
 		"scripts/l1-admin/",
+		"scripts/lib/",
 		"README.md"
 	],
 	"scripts": {
