@@ -3,17 +3,9 @@ export const repository = 'https://github.com/yinwenyuan28-afk/pi-memory-system'
 export const copy = {
   zh: {
     forPi: '为持续工作的 Pi 用户而做',
-    headline: ['让 Pi 记得', '项目走到哪里。'],
+    headline: ['为 Pi 提供', '长期记忆支持。'],
     intro: '把对话里的项目事实、工作方法和待办积累下来，在下一次相关工作中按需找回。少一点重复交代，多一点接着往下做。',
     start: '开始使用', watch: '观看 45 秒演示', windows: '目前支持 Windows', node: 'Node ≥ 22.13',
-    example: '一个项目，两次对话', exampleNote: '交互示例 · 展示配置语义召回后的效果',
-    yesterday: '上一次会话', nextSession: '下一次会话', extracted: '沉淀为可复用记忆', recalled: '与当前问题相关的记忆',
-    inputLabel: '你', answerLabel: 'Pi',
-    scenarios: [
-      { label: '项目约定', value: 'fact', type: '事实', before: '支付模块里的金额统一用整数分，接口不传浮点数。', memory: '支付模块：金额以整数分表示。', question: '继续写退款接口，金额怎么处理？', answer: '沿用之前的约定：退款金额用整数分，接口也按这个单位校验。' },
-      { label: '待办进度', value: 'task', type: '待办', before: '退款接口已经写完了，下一步补上重复退款的测试。', memory: '待办：补充重复退款的测试。', question: '我们上次做到哪了？', answer: '退款接口已完成，接下来补充重复退款场景的测试。' },
-      { label: '工作方法', value: 'method', type: '方法', before: '排查支付回调时，先对照订单号，再检查签名和幂等记录。', memory: '排查方法：订单号 → 签名 → 幂等记录。', question: '又出现一笔重复回调，怎么查？', answer: '可以复用之前的排查顺序：对照订单号，检查签名，再看幂等记录。' }
-    ],
     outcomes: [
       { title: '项目背景，少重复一遍', text: '让已有事实和工作约定成为后续协作的起点。', icon: 'message' },
       { title: '有用经验，有机会再用', text: '按当前问题找回相关记录，带着待办状态继续工作。', icon: 'search' },
@@ -56,17 +48,9 @@ export const copy = {
   },
   en: {
     forPi: 'Built for ongoing work with Pi',
-    headline: ['Give your next', 'session a head start.'],
+    headline: ['Long-term memory', 'for your Pi agent.'],
     intro: 'Keep useful project facts, working methods, and tasks from your conversations. Bring relevant context back when you continue the work.',
     start: 'Get started', watch: 'Watch the 45-second demo', windows: 'Currently for Windows', node: 'Node ≥ 22.13',
-    example: 'One project. Two sessions.', exampleNote: 'Interactive example · with semantic recall configured',
-    yesterday: 'Previous session', nextSession: 'Next session', extracted: 'Saved as reusable memory', recalled: 'Memory relevant to this question',
-    inputLabel: 'You', answerLabel: 'Pi',
-    scenarios: [
-      { label: 'Project facts', value: 'fact', type: 'Fact', before: 'Use integer cents for all amounts in the payments module. No floats in the API.', memory: 'Payments: represent amounts as integer cents.', question: 'Let’s build the refund endpoint. How should we handle amounts?', answer: 'Continue with the existing convention: use integer cents for refunds and validate amounts in that unit.' },
-      { label: 'Task progress', value: 'task', type: 'Task', before: 'The refund endpoint is done. Next, add tests for duplicate refunds.', memory: 'Open task: test duplicate refunds.', question: 'Where did we leave off?', answer: 'The refund endpoint is complete. Next up: tests for duplicate refund requests.' },
-      { label: 'Methods', value: 'method', type: 'Method', before: 'For payment callbacks, check the order ID, then the signature, then the idempotency record.', memory: 'Debugging: order ID → signature → idempotency record.', question: 'Another duplicate callback. How do we investigate?', answer: 'Reuse the previous approach: compare the order ID, verify the signature, then inspect the idempotency record.' }
-    ],
     outcomes: [
       { title: 'Explain the context less often', text: 'Use existing project facts and conventions as a starting point.', icon: 'message' },
       { title: 'Give useful experience another turn', text: 'Retrieve relevant records and continue with task states in view.', icon: 'search' },

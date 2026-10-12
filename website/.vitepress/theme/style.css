@@ -104,7 +104,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 96px; }
 .memory-site a { text-decoration: none; }
 .memory-site a:focus-visible, .memory-site button:focus-visible { outline: 3px solid var(--site-brand); outline-offset: 4px; }
 .memory-site svg { flex-shrink: 0; }
-.hero { display: grid; grid-template-columns: 1fr 1.07fr; gap: 70px; align-items: center; padding-top: 75px; padding-bottom: 62px; }
+.hero { display: grid; grid-template-columns: 1fr 1.4fr; gap: 54px; align-items: center; padding-top: 75px; padding-bottom: 62px; }
 .product-context { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--site-brand); margin-bottom: 25px; }
 .context-line { width: 22px; height: 2px; background: currentColor; }
 .hero h1 { font-size: clamp(40px, 4.7vw, 59px); line-height: 1.2; font-weight: 650; letter-spacing: -2px; }
@@ -124,30 +124,6 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
 .demo-heading { display: flex; align-items: center; gap: 10px; padding-bottom: 18px; font-size: 15px; }
 .demo-mark { padding: 5px; background: #203b2c; border-radius: 8px; }
 .demo-mark img { width: 24px; height: 24px; }
-.demo-pi { margin-left: auto; font-family: var(--vp-font-family-mono); font-size: 16px; color: var(--site-muted); }
-.memory-demo .el-segmented { --el-segmented-item-selected-bg-color: var(--site-surface); --el-segmented-item-selected-color: var(--site-ink); --el-segmented-bg-color: var(--site-soft); --el-border-radius-base: 7px; font-size: 12px; }
-.conversation { border: 1px solid var(--site-border); border-radius: 10px; padding: 14px 16px; }
-.previous { margin-top: 19px; background: var(--site-bg); }
-.conversation-time { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--site-muted); margin-bottom: 8px; }
-.conversation-time > svg { margin-left: auto; }
-.time-dot { width: 6px; height: 6px; background: #8ca396; border-radius: 50%; }
-.time-dot.green { background: var(--site-brand); }
-.conversation p { font-size: 13px; line-height: 1.65; color: var(--site-ink); }
-.memory-link { display: flex; align-items: center; justify-content: center; position: relative; height: 37px; color: var(--site-brand); }
-.memory-link > span:first-child { height: 20px; width: 1px; background: var(--site-border); position: absolute; top: 0; }
-.memory-link > svg { z-index: 1; background: var(--site-surface); }
-.link-label { position: absolute; left: calc(50% + 15px); color: var(--site-muted); font-size: 10px; }
-.remembered { background: var(--site-soft); border: 1px solid #a9ceb7; border-radius: 9px; padding: 13px 15px; }
-.dark .remembered { border-color: #416c50; }
-.remembered-label { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--site-brand); margin-bottom: 8px; }
-.remembered-content { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.6; }
-.remembered-content .el-tag { flex-shrink: 0; }
-.memory-link.lower { height: 25px; }
-.session-id { margin-left: auto; font-family: var(--vp-font-family-mono); font-size: 10px; }
-.dialogue-line { display: flex; gap: 10px; align-items: flex-start; }
-.dialogue-line.answer { margin-top: 10px; }
-.speaker { width: 21px; height: 21px; border-radius: 5px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 10px; margin-top: 1px; background: var(--site-soft); color: var(--site-muted); }
-.speaker.pi { background: #dff2e6; color: #24593a; font-family: var(--vp-font-family-mono); font-weight: 600; }
 .example-note { text-align: center; font-size: 10px; margin-top: 11px !important; }
 .outcomes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px; padding-block: 29px 39px; border-top: 1px solid var(--site-border); }
 .outcomes article { display: flex; align-items: flex-start; gap: 13px; }
@@ -233,7 +209,7 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
 
 @media (max-width: 1100px) {
   .hero { gap: 35px; }
-  .hero h1 { font-size: 48px; }
+  .hero h1 { font-size: clamp(36px, 4.4vw, 48px); }
   .hero-intro { font-size: 15px; }
   .hero .el-button--large { padding-inline: 13px; }
   .feature-content { gap: 35px; }

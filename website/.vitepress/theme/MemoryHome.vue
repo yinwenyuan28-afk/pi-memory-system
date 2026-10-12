@@ -1,22 +1,20 @@
 <script setup lang="ts">
 import { computed, onUnmounted, provide, ref } from 'vue';
 import { useData, withBase } from 'vitepress';
-import { ElButton, ElCollapse, ElCollapseItem, ElConfigProvider, ElDialog, ElSegmented, ElTabPane, ElTabs, ElTag, ID_INJECTION_KEY, ZINDEX_INJECTION_KEY } from 'element-plus';
+import { ElButton, ElCollapse, ElCollapseItem, ElConfigProvider, ElDialog, ElTabPane, ElTabs, ElTag, ID_INJECTION_KEY, ZINDEX_INJECTION_KEY } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import enLocale from 'element-plus/es/locale/lang/en';
-import { ArrowDown, ArrowRight, BookOpen, Check, ChevronRight, Copy, GitBranch, Layers as Layers3, Mail, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
+import { ArrowRight, BookOpen, Check, ChevronRight, Copy, GitBranch, Layers as Layers3, Mail, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
 import { copy, repository } from './content';
+import ConversationDemo from './ConversationDemo.vue';
 
 const { lang } = useData();
 provide(ID_INJECTION_KEY, { prefix: 7301, current: 0 });
 provide(ZINDEX_INJECTION_KEY, { current: 0 });
 const english = computed(() => lang.value === 'en');
 const t = computed(() => english.value ? copy.en : copy.zh);
-const selectedScenario = ref('fact');
 const selectedFeature = ref('records');
-const scenario = computed(() => t.value.scenarios.find(item => item.value === selectedScenario.value) || t.value.scenarios[0]);
 const feature = computed(() => t.value.features.find(item => item.id === selectedFeature.value) || t.value.features[0]);
-const options = computed(() => t.value.scenarios.map(({ label, value }) => ({ label, value })));
 const icons = { message: MessageSquare, search: Search, shield: ShieldCheck, terminal: Terminal, layers: Layers3 };
 const docLink = (slug: string) => withBase(`${english.value ? '/en' : ''}/docs/${slug}`);
 const videoOpen = ref(false);
@@ -56,26 +54,7 @@ onUnmounted(() => clearTimeout(copyTimer));
           <div class="compatibility"><span><Monitor :size="14" />{{ t.windows }}</span><span>{{ t.node }}</span></div>
         </div>
 
-        <div class="memory-demo">
-          <div class="demo-heading"><span class="demo-mark"><img :src="withBase('/brand/icon.svg')" alt="" /></span><strong>{{ t.example }}</strong><span class="demo-pi">pi</span></div>
-          <ElSegmented v-model="selectedScenario" :options="options" block :aria-label="english ? 'Choose an example' : '选择演示场景'" />
-          <div class="conversation previous">
-            <div class="conversation-time"><span class="time-dot" />{{ t.yesterday }}<MessageSquare :size="14" /></div>
-            <p>{{ scenario.before }}</p>
-          </div>
-          <div class="memory-link"><span /><ArrowDown :size="16" /><span class="link-label">{{ t.extracted }}</span></div>
-          <div class="remembered" aria-live="polite">
-            <div class="remembered-label"><Layers3 :size="15" />{{ t.recalled }}</div>
-            <div class="remembered-content"><ElTag type="success" effect="plain" size="small">{{ scenario.type }}</ElTag><span>{{ scenario.memory }}</span></div>
-          </div>
-          <div class="memory-link lower"><span /><ArrowDown :size="16" /></div>
-          <div class="conversation next">
-            <div class="conversation-time"><span class="time-dot green" />{{ t.nextSession }}<span class="session-id">{{ english ? 'new session' : '新会话' }}</span></div>
-            <div class="dialogue-line"><span class="speaker user">{{ t.inputLabel }}</span><p>{{ scenario.question }}</p></div>
-            <div class="dialogue-line answer"><span class="speaker pi">{{ t.answerLabel }}</span><p>{{ scenario.answer }}</p></div>
-          </div>
-          <p class="example-note">{{ t.exampleNote }}</p>
-        </div>
+        <ConversationDemo :english="english" />
       </section>
 
       <section class="outcomes site-width" :aria-label="english ? 'What changes for you' : '用户收益'">
