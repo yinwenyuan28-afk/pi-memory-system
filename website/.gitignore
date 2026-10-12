@@ -1,4 +1,5 @@
 node_modules/
+.wrangler/
 .vitepress/cache/
 .vitepress/dist/
 public/brand/

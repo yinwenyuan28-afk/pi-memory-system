@@ -8,6 +8,7 @@ Pi Agent 的分层记忆扩展，负责 L0 对话归档，以及 L1 原子记忆
 
 | 文件 | 计划状态 | 任务进度 | 创建时间 |
 |------|---------|---------|---------|
+| [Markdown 内容协商](MARKDOWN_NEGOTIATION_PLAN.md) | observing | 2/3 | 2026-10-12 |
 | [macOS 适配](MACOS-适配-计划.md) | draft | 0/20 | 2026-10-11 |
 | [查看器热更新](VIEWER_HOT_UPDATE_PLAN.md) | complete | 3/3 | 2026-10-11 |
 
@@ -15,6 +16,7 @@ Pi Agent 的分层记忆扩展，负责 L0 对话归档，以及 L1 原子记忆
 
 | 项目 | 来自计划 | 判定方式与现状 |
 |------|---------|----------------|
+| 公网 Markdown 内容协商检查 | [Markdown 内容协商](MARKDOWN_NEGOTIATION_PLAN.md) | 本地 Wrangler 预览的 26 个中英文页面均返回 Markdown，HTML 默认响应通过；待新 Worker 自动部署后调用 scanner，确认 `checks.contentAccessibility.markdownNegotiation.status` 为 `pass`。 |
 | 在真实 Pi TUI 手动走查模型向导与 `peek` | [模型与向量化交互式配置](completed/记忆模型向量化配置-计划.md) | 代码类型检查通过；首次运行时确认菜单/输入取消行为和只读状态展示。 |
 | L1 淘汰候选在真实库上恒为 0 | [查看器跟版重写](completed/查看器-跟版重写-计划.md) | 保护带取 priority 分布 P75（实测 85），而提取出的 priority 普遍偏高 ⇒ `judgePrune` 从不判可删。数字正确、机制空转，属产品判断。 |
 | 写盘桥的 CORS 全开 | [查看器跟版重写](completed/查看器-跟版重写-计划.md) | 为支持 `file://` 页面带 `?port=` 回连而全开；运行期间本机任何页面可读 `l1/records/*.jsonl`。`config/`（含 embedding 密钥）已挡在静态托管外。收紧需先决定是否放弃该模式。**2026-10-08 之后代价变大**：写端点从 2 个扩到 14 个，含"写 live 画像（并入）"与"整库还原"，所以任何本机页面在桥运行期间都能触发这些动作。 |

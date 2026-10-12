@@ -1,7 +1,17 @@
 {
   "name": "pi-memory-system",
   "compatibility_date": "2026-10-12",
+  "main": "./worker.ts",
   "assets": {
-    "directory": "./.vitepress/dist"
+    "directory": "./.vitepress/dist",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/",
+      "/index.html",
+      "/en",
+      "/en/*",
+      "/docs/*",
+      "/_markdown/*"
+    ]
   }
 }

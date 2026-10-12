@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/sync-assets.mjs && vitepress dev --host 127.0.0.1 --port 5188",
-    "build": "node scripts/sync-assets.mjs && vitepress build",
+    "build": "node scripts/sync-assets.mjs && vitepress build && node scripts/copy-markdown.mjs",
     "preview": "vitepress preview --host 127.0.0.1 --port 5188"
   },
   "dependencies": {
