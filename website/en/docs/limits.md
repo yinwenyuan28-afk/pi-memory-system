@@ -24,9 +24,11 @@ Memory files live in your Pi profile. Extraction and skill review use your confi
 
 Default cleaning does not guarantee removal of API keys, passwords, or bearer tokens. Skill-feed retains tool arguments and results, so take care with secrets in those sources.
 
+See [Data, privacy, and backups](./data) for storage, model inputs, deletion, and backup scope. [Projects and profiles](./projects) explains project ranking and separate memory stores.
+
 ## Documented issues
 
-- **Chat extraction mode:** prompt types and commit enums differ, which can reject submissions. This prototype focuses its examples on development work records.
+- **Chat extraction mode:** prompt types and commit enums differ, which can reject submissions. These guides focus their examples on development work records.
 - **Viewer bridge:** no authentication and unrestricted CORS. Default loopback listening is not token-based access protection; LAN mode expands access.
 - **Long operations:** synchronous CLI calls can block other bridge requests during backfill and rebuild.
 - **Secrets:** skill-feed cleaning has no general credential-redaction guarantee.

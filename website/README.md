@@ -1,8 +1,9 @@
 # Pi Memory 网站设计原型
 
-使用 VitePress、Vue 3、Element Plus 和 Lucide，包含中英文首页与入门文档。
+使用 VitePress、Vue 3、Element Plus 和 Lucide，包含中英文首页，以及安装、记忆原理、配置、日常管理、恢复和数据说明。
 
 - 设计说明：[设计方案](./设计方案.md)
+- 文档来源、取舍与源码核验：[文档内容梳理](./文档内容梳理.md)（维护资料，不发布到网站）
 - 本地启动：`npm install` 后执行 `npm run dev`
 - 地址：`http://127.0.0.1:5188/`，英文首页 `/en/`
 - 构建：`npm run build`

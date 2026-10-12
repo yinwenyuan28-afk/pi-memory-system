@@ -43,7 +43,7 @@ Extraction follows the foreground model by default. L1 schedules extraction afte
 
 ## Check a small example
 
-Discuss a clear project fact or task, then request extraction if needed:
+Discuss a clear project fact or task during normal work. For example, state the project path, a confirmed idempotency key, and a task to add retry tests. Once the response finishes, request extraction if needed:
 
 ```text
 /my-memory:l1-trigger
@@ -51,8 +51,10 @@ Discuss a clear project fact or task, then request extraction if needed:
 
 This schedules background work. After it completes, inspect the records and pipeline in the [local viewer](./viewer). A scheduled request is not a completed extraction.
 
+First confirm that the L1 record exists and its content and source are correct. After vectors are ready, ask a related question to check recall. Checking these stages separately helps locate problems. See [Background work and recovery](./pipeline) if a stage has not happened.
+
 ## Set up recall
 
-Read [Configure semantic recall](./recall). Vectorization is off by default, and installation does not configure Embedding automatically.
+If you want to retrieve records by the meaning of your question, we recommend configuring an Embedding service and enabling vectorization in [Configure semantic recall](./recall). Vectorization is off by default, and installation does not configure Embedding automatically; regular memory extraction and saving still work. You can backfill a small set of existing records manually. The author uses Alibaba Cloud Bailian, which currently lists free quotas for some text embedding models; check the console for eligibility and expiry.
 
-The [repository README](https://github.com/yinwenyuan28-afk/pi-memory-system#readme) contains the complete reference. It labels npm installation as available after publication, so this prototype uses the documented local-directory route.
+Continue with the [Configuration guide](./configuration), [Command reference](./commands), and [Data, privacy, and backups](./data). The [repository README](https://github.com/yinwenyuan28-afk/pi-memory-system#readme) includes implementation details. It labels npm installation as available after publication, so this guide uses the local-directory route.
