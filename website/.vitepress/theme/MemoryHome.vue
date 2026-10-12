@@ -4,7 +4,7 @@ import { useData, withBase } from 'vitepress';
 import { ElButton, ElCollapse, ElCollapseItem, ElConfigProvider, ElDialog, ElSegmented, ElTabPane, ElTabs, ElTag, ID_INJECTION_KEY, ZINDEX_INJECTION_KEY } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import enLocale from 'element-plus/es/locale/lang/en';
-import { ArrowDown, ArrowRight, BookOpen, Check, ChevronRight, Copy, GitBranch, Layers as Layers3, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
+import { ArrowDown, ArrowRight, BookOpen, Check, ChevronRight, Copy, GitBranch, Layers as Layers3, Mail, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
 import { copy, repository } from './content';
 
 const { lang } = useData();
@@ -126,13 +126,18 @@ onUnmounted(() => clearTimeout(copyTimer));
       </section>
 
       <section class="faq site-width section-space">
-        <h2>{{ t.faqTitle }}</h2>
-        <ElCollapse accordion><ElCollapseItem v-for="(item, index) in t.faqs" :key="item.question" :name="index" :title="item.question"><p>{{ item.answer }}</p></ElCollapseItem></ElCollapse>
+        <div class="faq-intro"><h2>{{ t.faqTitle }}</h2><p>{{ t.faqIntro }}</p></div>
+        <ElCollapse class="faq-list" accordion>
+          <ElCollapseItem v-for="(item, index) in t.faqs" :key="item.question" :name="index">
+            <template #title><span class="faq-question">{{ item.question }}</span></template>
+            <p>{{ item.answer }}</p>
+          </ElCollapseItem>
+        </ElCollapse>
       </section>
 
       <section class="final-cta site-width"><img :src="withBase('/brand/icon.svg')" alt="" /><div><h2>{{ t.finalTitle }}</h2><p>{{ t.finalText }}</p></div><div class="actions"><ElButton tag="a" :href="docLink('quickstart')" type="primary" size="large">{{ t.start }}<ArrowRight :size="17" /></ElButton><ElButton tag="a" :href="repository" target="_blank" rel="noopener noreferrer" size="large">{{ t.github }}</ElButton></div></section>
 
-      <nav class="home-footer site-width" :aria-label="english ? 'Footer links' : '页脚链接'"><a :href="docLink('quickstart')"><BookOpen :size="15" />{{ t.footerDocs }}</a><a :href="docLink('limits')">{{ t.footerData }}</a><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.footerIssue }}</a></nav>
+      <nav class="home-footer site-width" :aria-label="english ? 'Footer links' : '页脚链接'"><a :href="docLink('quickstart')"><BookOpen :size="15" />{{ t.footerDocs }}</a><a :href="docLink('limits')">{{ t.footerData }}</a><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.footerIssue }}</a><a href="mailto:email@pi-memory.com"><Mail :size="15" />email@pi-memory.com</a></nav>
     </main>
 
     <ElDialog v-model="videoOpen" :title="t.dialogTitle" class="promo-dialog" width="960px" align-center destroy-on-close>

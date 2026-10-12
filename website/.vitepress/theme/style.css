@@ -158,12 +158,12 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
 .section-heading > p { margin-top: 15px; font-size: 16px; }
 .workflow-section { background: var(--site-soft); border-block: 1px solid var(--site-border); }
 .workflow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 64px; padding-top: 8px; }
-.workflow-step { position: relative; }
+.workflow-step { position: relative; min-width: 0; padding: 22px; border: 1px solid var(--site-border); border-radius: 13px; background: var(--site-surface); }
 .step-index { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; background: var(--site-surface); border: 1px solid var(--site-border); border-radius: 8px; color: var(--site-brand); font-family: var(--vp-font-family-mono); font-size: 14px; }
-.workflow-step h3 { font-size: 20px; margin-top: 22px; margin-bottom: 10px; }
+.workflow-step h3 { font-size: 20px; margin-top: 17px; margin-bottom: 10px; }
 .workflow-step p { font-size: 14px; }
 .step-meta { display: block; font-size: 11px; margin-top: 15px; color: var(--site-muted); }
-.step-arrow { position: absolute; right: -42px; top: 5px; color: var(--site-brand); }
+.step-arrow { position: absolute; right: -43px; top: 27px; color: var(--site-brand); }
 .workflow-branch { margin-top: 38px; padding-top: 25px; border-top: 1px solid var(--site-border); display: flex; align-items: center; gap: 12px; color: var(--site-brand); }
 .workflow-branch p { font-size: 13px; }
 .workflow-branch a { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 13px; margin-left: auto; }
@@ -207,17 +207,25 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
 .install-snippet > code { display: block; margin-top: 17px; font-size: 15px; font-family: var(--vp-font-family-mono); overflow-x: auto; }
 .install-snippet > p { font-size: 12px; margin-top: 13px; }
 .copy-error { color: #b43c3c !important; }
-.faq { padding-top: 0; display: grid; grid-template-columns: .8fr 1.2fr; gap: 75px; }
-.faq h2 { font-size: 28px; margin-top: 8px; }
-.faq .el-collapse { --el-collapse-header-bg-color: transparent; --el-collapse-content-bg-color: transparent; --el-collapse-border-color: var(--site-border); --el-collapse-header-height: 61px; }
-.faq .el-collapse-item__title { font-size: 14px; font-weight: 550; }
-.faq .el-collapse-item__content > p { font-size: 13px; padding-right: 16px; }
+.faq { padding-top: 0; display: flex; flex-direction: column; gap: 28px; align-items: stretch; }
+.faq-intro { max-width: none; }
+.faq-intro h2 { font-size: 30px; line-height: 1.35; letter-spacing: -.5px; }
+.faq-intro > p { margin-top: 12px; font-size: 14px; max-width: 65ch; }
+.faq .el-collapse { --el-collapse-header-bg-color: transparent; --el-collapse-content-bg-color: transparent; --el-collapse-border-color: var(--site-border); --el-collapse-header-height: 64px; width: 100%; border: 1px solid var(--site-border); border-radius: 13px; overflow: hidden; background: var(--site-surface); }
+.faq .el-collapse-item:not(:last-child) { border-bottom: 1px solid var(--site-border); }
+.faq .el-collapse-item__header { display: flex; align-items: center; min-height: 64px; height: auto; padding: 14px 20px; line-height: 1.5; transition: background-color .18s ease; }
+.faq .el-collapse-item__header:hover, .faq .el-collapse-item.is-active > .el-collapse-item__header { background: var(--site-soft); }
+.faq .el-collapse-item__title { min-width: 0; font-size: 14px; font-weight: 550; white-space: normal; }
+.faq .el-collapse-item__arrow { color: var(--site-brand); margin-left: 16px; }
+.faq .el-collapse-item__wrap { border: 0; }
+.faq .el-collapse-item__content { padding: 0 50px 19px 20px; }
+.faq .el-collapse-item__content > p { font-size: 13px; line-height: 1.75; }
 .final-cta { border-top: 1px solid var(--site-border); padding-block: 43px; display: flex; align-items: center; gap: 20px; }
 .final-cta > img { width: 56px; height: 56px; padding: 9px; background: #203b2c; border-radius: 12px; }
 .final-cta h2 { font-size: 24px; }
 .final-cta p { margin-top: 7px; font-size: 13px; }
 .final-cta .actions { margin-left: auto; }
-.home-footer { display: flex; gap: 24px; justify-content: center; padding-block: 5px 35px; font-size: 12px; color: var(--site-muted); }
+.home-footer { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: center; padding-block: 5px 35px; font-size: 12px; color: var(--site-muted); }
 .home-footer a { display: flex; align-items: center; gap: 6px; }
 .promo-dialog { max-width: calc(100vw - 32px); }
 .promo-dialog .el-dialog__body { padding: 0; }
@@ -243,8 +251,9 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
   .outcomes { grid-template-columns: 1fr; gap: 24px; }
   .section-space { padding-block: 60px; }
   .workflow { gap: 35px; }
+  .workflow-step { padding: 19px; }
   .workflow-step h3 { font-size: 17px; }
-  .step-arrow { right: -26px; }
+  .step-arrow { right: -27px; }
   .workflow-branch { flex-wrap: wrap; }
   .workflow-branch p { flex: 1; }
   .workflow-branch a { width: 100%; margin-left: 32px; }
@@ -252,7 +261,10 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
   .feature-copy { max-width: 600px; }
   .film { grid-template-columns: 1fr; padding: 28px; }
   .docs-grid { column-gap: 24px; }
-  .faq { grid-template-columns: 1fr; gap: 25px; padding-top: 0; }
+  .faq { gap: 20px; padding-top: 0; }
+  .faq-intro h2 { font-size: 26px; }
+  .faq .el-collapse-item__header { padding-inline: 16px; }
+  .faq .el-collapse-item__content { padding: 0 40px 16px 16px; }
   .final-cta h2 { font-size: 21px; }
 }
 
@@ -263,9 +275,9 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
   .hero .actions { gap: 9px; }
   .hero .el-button--large { font-size: 12px; padding-inline: 13px; }
   .workflow { grid-template-columns: 1fr; gap: 28px; }
-  .workflow-step { padding-left: 48px; }
+  .workflow-step { padding: 17px 16px 17px 62px; }
   .workflow-step h3 { margin-top: 0; }
-  .step-index { position: absolute; left: 0; top: 0; }
+  .step-index { position: absolute; left: 16px; top: 16px; }
   .step-arrow { display: none; }
   .workflow-step .step-meta { margin-top: 8px; }
   .feature-tabs .el-tabs__item { padding-inline: 14px; font-size: 12px; }

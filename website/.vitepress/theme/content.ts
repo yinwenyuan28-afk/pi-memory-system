@@ -43,6 +43,7 @@ export const copy = {
       { title: '限制与数据说明', desc: '兼容条件、服务调用与当前边界。', slug: 'limits', icon: 'shield' }
     ],
     faqTitle: '安装前，你可能想知道。',
+    faqIntro: '兼容范围、召回配置和数据处理方式，安装前都可以先了解。',
     faqs: [
       { question: '适合什么样的用户？', answer: '最适合经常用 Pi 推进持续项目、有重复工作流程的开发者。多个会话里反复讨论的约定、决定和待办，是它能积累的主要价值。一次性问答中的收益相对有限。' },
       { question: '安装后就能自动语义召回吗？', answer: '语义召回需要配置 Embedding 服务并开启向量化。向量化默认关闭，默认触发阈值为 500 条有效记录；已有记录还需要回填向量。安装与配置是两个步骤。' },
@@ -95,6 +96,7 @@ export const copy = {
       { title: 'Limits and data handling', desc: 'Compatibility, service calls, and current limits.', slug: 'limits', icon: 'shield' }
     ],
     faqTitle: 'A few things to know before you install.',
+    faqIntro: 'Check compatibility, recall setup, and data handling before you get started.',
     faqs: [
       { question: 'Who is this for?', answer: 'Pi users who work on ongoing projects or repeatable workflows. Decisions, conventions, and tasks discussed across sessions are the core use case. The benefit is smaller for occasional, one-off questions.' },
       { question: 'Does semantic recall work immediately after installation?', answer: 'It requires an Embedding service and enabled vectorization. Vectorization is off by default, with a default threshold of 500 valid records. Existing records need a vector backfill. Installation and recall setup are separate steps.' },

@@ -6,16 +6,32 @@ const sidebar = (prefix: string, en = false) => [
     text: en ? 'Start here' : '开始使用',
     items: [
       { text: en ? 'Quick start' : '快速开始', link: `${prefix}/docs/quickstart` },
-      { text: en ? 'How memory works' : '记忆如何工作', link: `${prefix}/docs/memory` },
       { text: en ? 'Configure recall' : '配置语义召回', link: `${prefix}/docs/recall` }
+    ]
+  },
+  {
+    text: en ? 'Understand the system' : '理解记忆系统',
+    items: [
+      { text: en ? 'How memory works' : '记忆如何工作', link: `${prefix}/docs/memory` },
+      { text: en ? 'Context and progressive loading' : '上下文与渐进式设计', link: `${prefix}/docs/context-design` },
+      { text: en ? 'Projects and profiles' : '项目归属与记忆空间', link: `${prefix}/docs/projects` },
+      { text: en ? 'Background work and recovery' : '后台运行与故障恢复', link: `${prefix}/docs/pipeline` }
     ]
   },
   {
     text: en ? 'Work with your memory' : '日常使用',
     items: [
       { text: en ? 'Inspect and correct' : '查看与修正记忆', link: `${prefix}/docs/viewer` },
-      { text: en ? 'Learn reusable skills' : '沉淀可复用技能', link: `${prefix}/docs/skills` },
-      { text: en ? 'Limits and data handling' : '限制与数据说明', link: `${prefix}/docs/limits` }
+      { text: en ? 'Learn reusable skills' : '沉淀可复用技能', link: `${prefix}/docs/skills` }
+    ]
+  },
+  {
+    text: en ? 'Configuration and reference' : '配置与参考',
+    items: [
+      { text: en ? 'Configuration guide' : '配置说明', link: `${prefix}/docs/configuration` },
+      { text: en ? 'Command reference' : '常用命令', link: `${prefix}/docs/commands` },
+      { text: en ? 'Data, privacy, and backups' : '数据、隐私与备份', link: `${prefix}/docs/data` },
+      { text: en ? 'Current limitations' : '限制与数据说明', link: `${prefix}/docs/limits` }
     ]
   }
 ];
@@ -24,7 +40,7 @@ export default defineConfig({
   title: 'Pi Memory',
   description: '让每次对话都成为下一次工作的起点。',
   cleanUrls: true,
-  srcExclude: ['README.md', '设计方案.md', 'design-preview/**'],
+  srcExclude: ['README.md', '设计方案.md', '文档内容梳理.md', 'design-preview/**'],
   appearance: true,
   markdown: {
     config(md) {
@@ -59,7 +75,7 @@ export default defineConfig({
         darkModeSwitchLabel: '外观', lightModeSwitchTitle: '切换为浅色', darkModeSwitchTitle: '切换为深色',
         sidebarMenuLabel: '文档目录', returnToTopLabel: '返回顶部', langMenuLabel: '语言',
         lastUpdatedText: '最近更新', skipToContentLabel: '跳转到正文',
-        footer: { message: '让每次对话都成为下一次工作的起点。', copyright: 'pi-memory-system · MIT License' }
+        footer: { message: '让每次对话都成为下一次工作的起点。 · <a href="mailto:email@pi-memory.com">email@pi-memory.com</a>', copyright: 'pi-memory-system · MIT License' }
       }
     },
     en: {
@@ -72,7 +88,7 @@ export default defineConfig({
         ],
         sidebar: { '/en/docs/': sidebar('/en', true) },
         outline: { level: [2, 3], label: 'On this page' },
-        footer: { message: 'Give your next session a head start.', copyright: 'pi-memory-system · MIT License' }
+        footer: { message: 'Give your next session a head start. · <a href="mailto:email@pi-memory.com">email@pi-memory.com</a>', copyright: 'pi-memory-system · MIT License' }
       }
     }
   },
