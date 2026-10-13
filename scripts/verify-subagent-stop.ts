@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isProcessAlive, killProcessTree, repairAfterKill, stopSubagent } from "../memory/pipeline/subagent-kill.ts";
+import { isGroupAlive, isProcessAlive, killProcessTree, repairAfterKill, stopSubagent } from "../memory/pipeline/subagent-kill.ts";
 import { isStopRequested, stopRequestPath } from "../memory/pipeline/stop-request.ts";
 import { forceReleaseWriteLock } from "../memory/l1/write-lock.ts";
 import { L2_CURSOR_FILE } from "../memory/paths.ts";
@@ -47,17 +47,43 @@ const block = (lines: string[]) =>
 	`-----META-START-----\ncreated: 2026-09-01T00:00:00.000Z\nupdated: 2026-09-01T00:00:00.000Z\nsummary: s\nheat: 1\n-----META-END-----\n\n${lines.join("\n")}\n`;
 
 async function main(): Promise<void> {
-	console.log("\n=== 1. 杀进程：只杀我们自己 spawn 的假子进程 ===");
+	console.log("\n=== 1. 杀进程：只杀我们自己 spawn 的假子进程（含组内孙进程）===");
 	{
-		// 起一个什么都不做的子进程当靶子（真实子代理只会在真实 job 里被杀）
-		const child = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"], { stdio: "ignore", windowsHide: true });
+		// 靶子与生产子代理同构：**detached**（自成进程组、组长即自身），且自己再起一个孙进程
+		// —— 孙进程是"组里除组长外的第二个成员"。旧实现只杀组长会漏掉它；按组杀才带走它。
+		const grandFile = join(tmpdir(), `stopfix-grand-${process.pid}-${Date.now()}.txt`);
+		const childCode =
+			`const {spawn}=require("node:child_process");const fs=require("node:fs");` +
+			`const g=spawn(process.execPath,["-e","setTimeout(()=>{},60000)"],{stdio:"ignore"});` +
+			`fs.writeFileSync(${JSON.stringify(grandFile)},String(g.pid));` +
+			`setTimeout(()=>{},60000);`;
+		const child = spawn(process.execPath, ["-e", childCode], { stdio: "ignore", detached: true, windowsHide: true });
 		const pid = child.pid;
 		check("靶子已 spawn 且有 pid", typeof pid === "number" && pid > 0, String(pid));
 		if (typeof pid === "number") {
-			check("杀之前：进程存活", isProcessAlive(pid));
+			// 等孙进程把 pid 落盘（最多 5s）
+			let grandPid = 0;
+			for (let i = 0; i < 50 && !grandPid; i++) {
+				await sleep(100);
+				try {
+					grandPid = Number(readFileSync(grandFile, "utf-8").trim()) || 0;
+				} catch {
+					// 还没写出来
+				}
+			}
+			check("孙进程已起（组内有第二个成员）", grandPid > 0, String(grandPid));
+			check("杀之前：组长存活", isProcessAlive(pid));
+			if (process.platform !== "win32") check("杀之前：组存活（isGroupAlive 有判定力）", isGroupAlive(pid));
 			killProcessTree(pid);
-			await sleep(400);
-			check("杀之后：确认为死（这就是 killConfirmed 的判据）", !isProcessAlive(pid));
+			await sleep(500);
+			check("杀之后：组长已死（这就是 killConfirmed 的判据）", !isProcessAlive(pid));
+			check("杀之后：孙进程一并消失（按组杀的关键断言）", grandPid > 0 && !isProcessAlive(grandPid));
+			if (process.platform !== "win32") check("杀之后：整组已灭（POSIX 按组确认）", !isGroupAlive(pid));
+		}
+		try {
+			rmSync(grandFile, { force: true });
+		} catch {
+			// 忽略
 		}
 		// 不存在的 pid：视为已死（停止序列据此判定"确认已死"）
 		check("不存在的 pid → isProcessAlive=false", !isProcessAlive(999_999_999));
@@ -186,7 +212,8 @@ async function main(): Promise<void> {
 	console.log("\n=== 5. 停止序列（注入假 run）：先拦 → 杀 → 修复 → 清标记 ===");
 	{
 		const root = makeProfile();
-		const child = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"], { stdio: "ignore", windowsHide: true });
+		// detached ⇒ 与生产子代理同构（自成进程组），stopSubagent 内部按组杀 + 按组确认
+		const child = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"], { stdio: "ignore", detached: true, windowsHide: true });
 		const pid = child.pid as number;
 		// 假 run 指向我们自己起的靶子 —— 绝不触碰真实子代理
 		const fakeRun: StopTarget = {
@@ -209,6 +236,7 @@ async function main(): Promise<void> {
 		await sleep(400);
 		check("报告 killConfirmed=true", out.killConfirmed, out.note);
 		check("靶子确实死了", !isProcessAlive(pid));
+		if (process.platform !== "win32") check("整组已灭（POSIX 的按组确认）", !isGroupAlive(pid));
 		check("杀后修复已执行（索引 + 成员钩子都被调到）", hooksCalled.length === 2, JSON.stringify(hooksCalled));
 		check("确认已死时清掉停止标记（否则下次运行全被拒写）", !isStopRequested(root, "l2") && !existsSync(stopRequestPath(root, "l2")));
 

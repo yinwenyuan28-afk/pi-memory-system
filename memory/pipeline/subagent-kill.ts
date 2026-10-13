@@ -59,7 +59,28 @@ export const KILL_GRACE_MS = DEFAULT_KILL_GRACE_MS;
  */
 export const HOLD_MS_UNCONFIRMED = DEFAULT_HOLD_MS_UNCONFIRMED;
 
-/** 杀进程树：Windows 用 `taskkill /T /F`（`/T` 连嵌套子进程，`fanout-child` 之类的孙进程一并带走）。 */
+/**
+ * 进程组是否还有存活成员（**仅 POSIX 有意义**）。
+ *
+ * 为什么需要它：子代理是 `detached: true` 起的（`util/spawn.ts:333`）⇒ 它自成进程组、组长即自身 pid。
+ * "它停干净了吗"的正确判据因此是**整组**而不是组长一个人 —— 组长退出而组里还有成员时，
+ * 只查组长会误判"已死"，随后照常做杀后修复 = 两个写者。
+ *
+ * Windows 不支持负 pid ⇒ 恒返回 `false`，调用方据此退回单进程判定
+ * （win32 的 `taskkill /T` 本就按进程树带走后代，不需要这一层）。
+ */
+export function isGroupAlive(pid: number): boolean {
+	if (process.platform === "win32") return false;
+	try {
+		process.kill(-pid, 0);
+		return true;
+	} catch (err) {
+		// EPERM = 组还在但无权限 → 视为存活（与 run-lock.ts 的 isProcessAlive 同款保守取舍）
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+/** 杀进程树：Windows 用 `taskkill /T /F`（`/T` 连嵌套子进程一并带走）。 */
 export function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
 		try {
@@ -69,10 +90,18 @@ export function killProcessTree(pid: number): void {
 		}
 		return;
 	}
+	// POSIX：先对**整个进程组**发信号（负 pid）。组长退出后仍活着的后代在这一步被一并带走，
+	// 这正是 detached 建组的意义。组不存在时（进程不是组长、或已整个退出，ESRCH）才回落单进程。
+	try {
+		process.kill(-pid, "SIGKILL");
+		return;
+	} catch {
+		// 回落：下面按单进程再发一次
+	}
 	try {
 		process.kill(pid, "SIGKILL");
 	} catch {
-		// 同上
+		// 已退出
 	}
 }
 
@@ -332,11 +361,13 @@ export async function stopSubagent(opts: StopSubagentOptions): Promise<StopSubag
 	if (pid !== undefined) {
 		killAttempted = true;
 		killProcessTree(pid);
-		killConfirmed = !isProcessAlive(pid);
+		// POSIX：组长死了 ≠ 停干净 —— 组里可能还有成员（它们仍持有写工具）⇒ 按组复核。
+		// Windows：isGroupAlive 恒 false，等价于原来的 !isProcessAlive(pid)，行为不变。
+		killConfirmed = !isProcessAlive(pid) && !isGroupAlive(pid);
 		if (!killConfirmed) {
-			// 再试一次（taskkill 偶发失败），仍不确认就如实上报
+			// 再试一次（taskkill / 组信号偶发失败），仍不确认就如实上报
 			killProcessTree(pid);
-			killConfirmed = !isProcessAlive(pid);
+			killConfirmed = !isProcessAlive(pid) && !isGroupAlive(pid);
 		}
 	}
 
