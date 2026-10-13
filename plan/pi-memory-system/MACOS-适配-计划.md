@@ -83,9 +83,10 @@ README「环境要求」自述**仅 Windows**，给的两条理由是：① 停�
 
 ### 🔴 必须修的三处（否则 Windows 真会被改坏）
 
-1. **T4 的按组确认若不限定平台 → 灾难性破坏 Windows。**
-   `process.kill(-pid, 0)` **是 POSIX 专有**；Windows 上会抛错。若照计划原文把 `killConfirmed` 无条件改成 `isGroupAlive(-pid,0)`，Windows 上 `killConfirmed` 恒为 `false` → `repairAfterKill` 永不执行、`clearStopRequest` 永不清除 → **该层写工具入口永久拒写，L1/L2/L3 全线停摆**（`subagent-kill.ts:344-349`）。
-   **修**：`isGroupAlive` 严格 POSIX 分支；win32 保留 `killConfirmed = !isProcessAlive(pid)` 与 `:64-71` 的 `taskkill` 早退。此项列入 T4 验收。
+1. **T4a 的按组确认必须限定平台（防御性；原先"灾难性破坏"的说法已被实测推翻）。**
+   **[2026-10-11 实测更正]** `process.kill(-pid, 0)` 确实是 POSIX 专有，但 **Windows 上它抛的是 `ESRCH`**（实测）。所以"无条件改成 `isGroupAlive` ⇒ Windows 的 `killConfirmed` 恒 false ⇒ 该层永久拒写"这条推论**不成立**：抛错 → 帮助函数返回 `false`（= 不存活）→ `!isGroupAlive(pid)` 为 `true` → 判定与原来完全一致（`repairAfterKill` 照常跑）。
+   真正的风险是**对实现细节的依赖**：只要哪天把"探针失败"映射成"存活"，或 Windows 上负 pid 的行为变了，就会静默把确认判成 false（`subagent-kill.ts:373-...`）→ 该层永久拒写。加平台门把这个依赖彻底消掉，也把意图写在代码里。
+   **修**：`isGroupAlive` 在 win32 直接返回 `false`；win32 保留 `killConfirmed = !isProcessAlive(pid)` 与 `taskkill` 早退。此项列入 T4a 验收。
 2. **T1「合并四个比较键」会静默改 Windows 边界。**
    四个键**当前并不等价**：`projectCompareKey` 会 trim、`projectKey`/`pathKey` 不 trim；`cwdCompareKey` 剥成对引号，另三个不剥；都不压 `//`。合并成"唯一实现"会改变 `projectKey('"C:/a"')`、`pathKey("C://a")` 等 Windows 调用点的输出，而 **`npm test` 覆盖不到**。
    **修**：T1 必须把新键语义**显式定义为现有四个的超集**，并为每个现有键补逐条对照用例。
@@ -155,7 +156,7 @@ README「环境要求」自述**仅 Windows**，给的两条理由是：① 停�
 
 ## 任务分解
 
-> **[二轮修正] 排序**：T0 是**所有任务的前置**（形式化）。T4 与路径工作无依赖，可先做；但 T4 需 T0 的进程组观测作为 step 0。**T6 不能先于 T2**（先教模型 POSIX 例子而服务端不收，记录会被静默降级成 `unknown`）。**T2 单独上线安全**。原始 12 项**低估了约一倍工作量**（T3/T7/T11 各含多个可独立验收的单元）。
+> **[二轮修正] 排序**：T0 是**所有任务的前置**（形式化）。**T4a 与本计划其余部分完全无依赖，可以第一个做**（它只改杀进程的两行 + 确认步的分平台 + 两处测试夹具，不需要 T0⑤ 的观测——最小正确版无论组里有没有成员都成立）。T4b 可选、后做。**T6 不能先于 T2**（先教模型 POSIX 例子而服务端不收，记录会被静默降级成 `unknown`）。**T2 单独上线安全**。原始 12 项**低估了约一倍工作量**（T3/T7/T11 各含多个可独立验收的单元）。
 
 | # | 任务 | 涉及文件 | 状态 | 验收 |
 |---|---|---|---|---|
@@ -165,7 +166,8 @@ README「环境要求」自述**仅 Windows**，给的两条理由是：① 停�
 | T3a | 抽取正则 + 二次过滤 + 噪声名单 | `util/judg-session-project/candidates.ts`、`memory/l1/config.ts` | todo | **POSIX 路径能被 `PATH_RE_SRC` 抽出**（当前零候选）；`^/` 不得放入 `/tmp`/`/usr`/`//server`（补 POSIX 噪声名单）；**[二轮修正] `isBroadProjectPath` 验收改用 `v` 真正会失败的值**（`/Users`、`/Library` 单段**现已为 true**，是空转；用 `/Users/<名>`、`/Users/<名>/Documents/x`） |
 | T3b | 比较键收敛 | `util/recall-score.ts`、`util/judg-session-project/index.ts`、`memory/l1/scene-pool.ts` | todo | 四个键各自的现有语义都有对照用例（T1 的超集定义在此验证）；`verify-judg-session-project.ts:126` 在此改 |
 | T3c | `decodeCwdFromSessionPath` 前导斜杠 | `memory/l0/index.ts:132` | todo | POSIX 形态解码后是**绝对路径**（现在丢前导斜杠） |
-| T4 | 停子代理按组 + 信号升级（**POSIX 限定**） | `memory/pipeline/subagent-kill.ts`、`util/spawn.ts`、`scripts/verify-subagent-stop.ts` | todo | **step 0 = T0⑤ 的观测**；`kill(-pid)` 杀组 + `isGroupAlive` **严格 POSIX 分支**，win32 保留 `isProcessAlive` 与 `taskkill` 早退；`SIGTERM`→`escalateMs`→`SIGKILL`（不复用 `graceMs`）；**[二轮修正] fixture 是 `:53` 与 `:189` 两处**，都改 `detached:true` 并各自断言 |
+| T4a | 停子代理**杀干净**（最小正确版，**可先做、与路径工作完全解耦**） | `memory/pipeline/subagent-kill.ts`、`scripts/verify-subagent-stop.ts` | done | ① 非 win32：先 `kill(-pid, "SIGKILL")` 失败再回落 `kill(pid, "SIGKILL")`（各自 try/catch）—— **不动时序、不引入 SIGTERM/宽限**；② win32：`taskkill /T /F` 与 `killConfirmed = !isProcessAlive(pid)` **一字不改**；③ `killConfirmed` 在 POSIX 上按**组**判（`kill(-pid, 0)`，`ESRCH` 时回落 `isProcessAlive(pid)`）；④ fixture `:53` 与 `:189` **两处**都改 `detached:true`，断言分平台（POSIX 断言组内全灭、win32 断言进程消失）。**不需要 T0⑤ 的观测即成立** |
+| T4b | 优雅停止（`SIGTERM`→宽限→`SIGKILL`）—— **可选、独立、后做** | `memory/pipeline/subagent-kill.ts` | todo | 新增独立 `escalateMs`，**不复用 `graceMs`**（否则默认 10s 变 20s）；`stopSubagent` 已有的 `sleep(graceMs)` 保留为协作窗口；helper 改 async（或拆成 `signalGroup` + 保留同步 `killProcessTree` 给 win32）；用例覆盖"收到 SIGTERM 后自行退出则不发 SIGKILL" |
 | T5 | 平台自检（**OS 门**）+ 文档 | `index.ts`、`README.md`、`记忆系统架构说明.md`、`scripts/l1-admin/README.md` | todo | **[二轮修正]** 自检②仅 darwin 生效（否则 Windows 每次误报）；自检③**须在 T2/T3 之后**；架构说明的 `C:/Users/...` 死链去硬编码 |
 | T6 | 提示词口径（**与 §1c 同批**） | `prompts/tool-vars.ts`（用 `path.sep`）、`agents/l1-extractor.md`、`scripts/verify-prompt-contracts.mjs:194-211` | todo | Windows 字节不变（`path.sep` 在 win32 即 `\`）；§1c 的 `bs()` 期望同步改；`npm test` 全绿 |
 | T7a | 管理 CLI 去硬编码 | `scripts/l1-admin/*`（6 处 + 文档） | todo | **[二轮修正] 验收改为**：无机器专有绝对路径字面量；默认 profile 由 `PI_PROFILE_PATH`/`$HOME` 推导（`.mjs` 不能 import TS，故不能写「一律走 resolveAgentDir()」） |
@@ -193,7 +195,7 @@ README「环境要求」自述**仅 Windows**，给的两条理由是：① 停�
 ## 风险 / 待确认
 
 - **T0 未过则全部作废**：pi 在 macOS 可运行这条，上游证据强（pi 文档、install.sh 的 `Darwin)` 分支、`engines.node >=22.19`），但**本仓库零 macOS 执行记录**。真正的前提是**系统 Node ≥ 22.13**（不是「pi 自带 Node」）。
-- **进程组是否有成员**：决定 T4 是「修既有 bug」还是「防御性加固」；证据基础此前不完整（3/6 agent），已列为 T0⑤。
+- **进程组是否有成员**：决定「按组杀」是「修既有 bug」还是「防御性加固」；证据基础此前不完整（3/6 agent），已列为 T0⑤。注：**T4a（最小正确版）不依赖这条观测**——有成员没成员它都成立。
 - **比较键合并的静默漂移**：无测试覆盖，靠 T1 的超集定义 + T3b 对照用例兜。
 - **「逐字不变」的验证成本**：只能在 Windows 上跑一遍证明；当前无 CI、无 runner。
 - **跨机同步假设**：「各机各自库」是**政策**不是技术保证；若真有人把 `~/.pi` 放 iCloud/跨机拷贝，L0 cursor key 与双形态标签会双双出问题（T10 要显式决策）。
@@ -204,9 +206,31 @@ README「环境要求」自述**仅 Windows**，给的两条理由是：① 停�
 **第一轮（2026-10-11）** —— 事实复核 / 遗漏耦合 / 方案压测。折入：`platform` 出现处（4 处/3 文件）、verify 脚本计数、行号修正、「≥9 模块」、L2 不消费 project、`candidates.ts:74`、时区、L0 cursor key、NFD、CI/`.gitattributes` 缺失、模块边界分拆、进程组双重宽限、平台自检重设计。
 
 **第二轮（2026-10-11）** —— Windows 回归 / 可执行性 / 未验证前提。折入：
-1. **[安全]** T4 的 `isGroupAlive` 必须限定 POSIX，否则 win32 上 `killConfirmed` 恒 false → 永久拒写；T4 fixture 是 `:53`+`:189` 两处（不是 `:55`）。
+1. **[安全]** T4a 的 `isGroupAlive` 必须限定 POSIX（见「二轮修正」第 1 条的实测更正：这是防御性，不是"已证实的灾难"）；T4a fixture 是 `:53`+`:189` 两处（不是 `:55`）。
 2. **[一致性]** 「逐字不变」与非靶标冲突；`/c/` 仲裁是全平台变化，列出 9 处故意变化；`verify-project-scope.ts:148` 不用改。
 3. **[证据]** 上一轮只查 3/6 个 agent，`memory-organizer.md:4` 含 `bash`；原生依赖与 jiti 解析**已证成**（lockfile + prebuilds + loader 源码）。
 4. **[任务]** 新增 T12（skill 小写化）、T7c（3 个真失败脚本）；拆 T3/T7/T11；`npm test` 只跑一个脚本 → 需统一 runner。
 5. **[验收]** 多条验收不可证伪（T1 逐字不变、T5 三项自检、T8 一键启动、T10 决策）→ 改为点名脚本/命令/断言；`isBroadProjectPath` 原验收是空转。
 6. **[措辞]** 「pi 自带 Node」错误（install.sh 用系统 Node）；`.gitattributes` 不得对 `.cmd` 用 LF；`resolveAgentDir()` 在 Git Bash 下会给 `\c\Users\...`。
+
+## 实施记录
+
+### T4a（2026-10-11，done）
+
+**落地内容**
+- `memory/pipeline/subagent-kill.ts`
+  - 新增 `isGroupAlive(pid)`：`process.kill(-pid, 0)` 探组；win32 直接返回 `false`；`EPERM` 视为存活（与 `run-lock.ts` 的 `isProcessAlive` 同款保守取舍）。
+  - `killProcessTree` 非 win32 分支：先 `kill(-pid, "SIGKILL")` 打整组，`ESRCH` 才回落 `kill(pid, "SIGKILL")`。**未动时序**（不引入 SIGTERM/宽限）。
+  - `stopSubagent` 两处 `killConfirmed`：`!isProcessAlive(pid) && !isGroupAlive(pid)`（win32 上后者恒 false ⇒ 等价于原式，行为不变）。
+- `scripts/verify-subagent-stop.ts`
+  - test 1 靶子改为 **detached + 自带孙进程**（孙 pid 经临时文件回传），断言"组长死 ∧ 孙进程一并消失"；POSIX 额外断言 `isGroupAlive` 杀前 true / 杀后 false。
+  - test 5 靶子改 `detached: true`；新增 POSIX 断言"整组已灭"。
+
+**验收结果（本机 = Windows）**
+- `verify-subagent-stop` **33/33**（含"孙进程一并消失"——Windows 侧由 `taskkill /T` 带走）。
+- `verify-run-lock` **31/31**（相邻回归）。
+- `npm run check-types` 0 新增。
+
+**未验（如实记录）**
+- **POSIX 分支未在本机执行**：本机是 Windows，`kill(-pid, SIGKILL)` 与 `isGroupAlive` 的正向断言（杀前 true）都被平台门跳过。必须在 macOS/Linux 上跑一次 `verify-subagent-stop` 才算真验（与 T0⑤ 同源）。
+- **实测更正**：Windows 上 `process.kill(-pid, 0)` 抛 `ESRCH`（非"被接受"）⇒ 二轮审查里"不限定平台会灾难性破坏 Windows"的推论**不成立**（详见「二轮修正」第 1 条）。平台门保留为防御与意图声明。
