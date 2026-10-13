@@ -1,0 +1,20 @@
+{
+  "title": "换个会话，经验接着用",
+  "locale": "zh",
+  "duration": 30,
+  "fps": 60,
+  "width": 1080,
+  "height": 1920,
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_rate": "+8%",
+  "scenes": [
+    {"start": 0, "end": 3, "label": "又要重讲", "voice": "换个会话，又要重讲？", "captions": ["换个会话，又要重讲？"], "dialogue": {"user": "继续排查。", "agent": "之前怎么查的？"}},
+    {"start": 3, "end": 6, "label": "重复解释", "voice": "说过的方法，还得重讲。", "captions": ["说过的方法，还得重讲。"]},
+    {"start": 6, "end": 10, "label": "留下方法", "voice": "把对话里的方法，留下来。", "captions": ["把对话里的方法，留下来。"], "dialogue": {"user": "查支付回调：订单号 → 签名 → 幂等记录", "agent": "好，按这个顺序。"}},
+    {"start": 10, "end": 14, "label": "后台积累", "voice": "累积的对话，在后台整理成记忆。", "captions": ["累积的对话，", "在后台整理成记忆。"]},
+    {"start": 14, "end": 18, "label": "相关召回", "voice": "配置语义召回，", "captions": ["配置语义召回，"], "dialogue": {"user": "又重复回调了，怎么查？"}},
+    {"start": 18, "end": 23, "label": "再次用上", "voice": "新会话，也能找回相关方法，接着查。", "captions": ["新会话，也能找回相关方法，", "接着查。"], "dialogue": {"agent": "沿用之前的顺序：\n① 对照订单号\n② 检查签名\n③ 查看幂等记录"}},
+    {"start": 23, "end": 26, "label": "按需带回", "voice": "相关记忆，按需带回。", "captions": ["相关记忆，按需带回。"]},
+    {"start": 26, "end": 30, "label": "开始积累", "voice": "Pi Memory，让经验接着用。", "captions": ["Pi Memory，让经验接着用。"]}
+  ]
+}
