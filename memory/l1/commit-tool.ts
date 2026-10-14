@@ -23,6 +23,7 @@ import {
 import { countNewRecords, loadL2Cursor } from "../l2/config.ts";
 import { MEMORY_DB_DIR, L1_VALUE_CHECK_LOG } from "../paths.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
+import { t } from "../../i18n/index.ts";
 import { readJudgFile } from "../../util/judg-session-project/index.ts";
 import { getPipelineJobsDB } from "../pipeline/jobs-db.ts";
 import { isStopRequested, stopRequestedMessage } from "../pipeline/stop-request.ts";
@@ -476,9 +477,9 @@ export function registerL1CommitTool(
 						logEvent("l1", skipMsg, profilePath);
 						noticeCard({
 							level: "warning",
-							title: "L1 价值校验未生效（fail-open，照写）",
-							lines: [skipMsg],
-							detail: "影响：本批记录未经过“值不值得留”的过滤。判据文件与提取规则同源，修好 md 后自动恢复。",
+							title: t("ext.l1.valueCheck.skip.title"),
+							lines: [t("ext.l1.valueCheck.skip.line", { file: `extract-${l1CfgForCheck.mode}-personal.md` })],
+							detail: t("ext.l1.valueCheck.skip.detail"),
 							dedupKey: "l1-value-check-failopen",
 						});
 						valueCheckReport = { skipped: "判据摘取失败" };
@@ -507,7 +508,7 @@ export function registerL1CommitTool(
 								logEvent("l1", `价值校验失败（fail-open，照写）: ${vcErr}`, profilePath);
 								noticeCard({
 									level: "warning",
-									title: "L1 价值校验调用失败（fail-open，照写）",
+									title: t("ext.l1.valueCheck.callFailed.title"),
 									lines: [vcErr.slice(0, 120)],
 									dedupKey: "l1-value-check-failopen",
 								});
@@ -563,7 +564,7 @@ export function registerL1CommitTool(
 					logEvent("l1", `价值校验异常（fail-open，照写）: ${msg}`, profilePath);
 					noticeCard({
 						level: "warning",
-						title: "L1 价值校验异常（fail-open，照写）",
+						title: t("ext.l1.valueCheck.error.title"),
 						lines: [msg.slice(0, 120)],
 						dedupKey: "l1-value-check-failopen",
 					});
@@ -780,8 +781,8 @@ export function registerL1CommitTool(
 				// 卡片走 relay：主代理写入时直接 appendEntry；子代理进程则落 notices.jsonl 等主进程 drain
 				noticeCard({
 					level: "error",
-					title: "L1 记录已落盘，但向量化写入失败",
-					lines: [msg.slice(0, 120), "影响：这批记忆召回不到（向量库缺条目），需 /my-memory:l1:embedding:backfill 补"],
+					title: t("ext.l1.commit.vectorFailed.title"),
+					lines: [msg.slice(0, 120), t("ext.l1.commit.vectorFailed.hint")],
 				});
 			}
 
@@ -795,10 +796,10 @@ export function registerL1CommitTool(
 						logEvent("l1", "场景池写入失败（记录已落盘；池条目缺失将在下批重建）", profilePath);
 						noticeCard({
 							level: "warning",
-							title: "场景池写入失败",
+							title: t("ext.l1.scenePool.writeFailed.title"),
 							lines: [
-								"记录已落盘且带正确场景名；池条目缺失将在下批重建（幂等）",
-								"影响：本批新场景不会立刻出现在 select-l1-scenes 清单里，可能多计未归类",
+								t("ext.l1.scenePool.writeFailed.line1"),
+								t("ext.l1.scenePool.writeFailed.line2"),
 							],
 						});
 					}
@@ -862,7 +863,12 @@ export function registerL1CommitTool(
 					? `，向量化写入 +${vectorStats.inserted}/-${vectorStats.deleted} 条`
 					: "";
 				if (isMainAgent) {
-					ctx.ui.notify(`L1 commit: ${written} 条记录已提交${vInfo}`, "info");
+					ctx.ui.notify(
+						vectorStats
+							? t("ext.l1.commit.mainAgentVectors", { written, inserted: vectorStats.inserted, deleted: vectorStats.deleted })
+							: t("ext.l1.commit.mainAgent", { written }),
+						"info",
+					);
 				} else {
 					logEvent("l1", `提交 ${written} 条记录${vInfo}`, profilePath);
 				}

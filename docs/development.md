@@ -12,7 +12,7 @@ npm install            # ← 必须先做，见下方「为什么 npm install �
 
 ```bash
 npm run check-types   # 类型门禁（无构建仓库里唯一能拦住「名字写错/模块写错」的东西）
-npm test              # 提示词契约逐字节校验
+npm test              # 提示词契约逐字节校验 + i18n 词表校验
 ```
 
 回归脚本在 `scripts/verify-*.ts`，共 20 多个、1400+ 项断言。跑法（Node ≥ 22.13 自带类型剥离，**不需要 jiti**）：
@@ -22,7 +22,7 @@ npm test              # 提示词契约逐字节校验
 node --conditions=import --experimental-strip-types scripts/verify-xxx.ts
 
 # 全部
-for f in scripts/verify-*.ts scripts/verify-*.mts scripts/verify-prompt-contracts.mjs; do
+for f in scripts/verify-*.ts scripts/verify-*.mts scripts/verify-prompt-contracts.mjs scripts/verify-i18n.mjs; do
   node --conditions=import --experimental-strip-types "$f" || echo "!! 失败: $f"
 done
 ```
@@ -39,6 +39,16 @@ node --conditions=import --experimental-strip-types scripts/verify-viewer-deploy
 
 后者包含三条**不需要浏览器**的检查，都是开发期真实踩到过的错：查看器 JS 的语法、
 HTML 引用的资源是否存在、页面调用的 `/api/*` 端点在 `viewer-bridge.mjs` 里是否真的声明了。
+
+改界面文案（`i18n/`）时：
+
+```bash
+node scripts/verify-i18n.mjs   # 键对等 + 未译检测 + 占位一致（已随 npm test 一起跑）
+```
+
+只做三项**精确**检查：各语言键集与源语言 `zh-CN` 完全一致、非源语言词表里不得残留汉字、
+同一键的 `{{占位}}` 集合跨语言一致。**刻意不做**「硬编码中文扫描」——那种按字符类扫法误报高，
+还会放过真正的中英混用不一致问题。新增语言的步骤见 `i18n/README.md`。
 
 ### 为什么 `npm install` 是必需的
 

@@ -20,6 +20,7 @@ import { loadSubagentTimeouts } from "../pipeline/timeout-config.ts";
 import { stopSubagent } from "../pipeline/subagent-kill.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
+import { t } from "../../i18n/index.ts";
 import { readL3Proposal, USER_TEMP_FILE } from "./user-file.ts";
 import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } from "../pipeline/status.ts";
 
@@ -32,7 +33,7 @@ function incrementMemoriesSince(profilePath: string, count: number): void {
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l3CoolDownMessage(failures: number): string {
-	return `L3 画像连续失败 ${failures} 次，已暂停自动更新。用 /my-memory:l3-trigger 手动重试或检查日志。`;
+	return t("ext.l3.cooldown", { failures });
 }
 
 /**
@@ -78,33 +79,33 @@ function reportProposalDiff(before: string[], after: string[]): void {
 	if (added.length === 0 && removed.length === 0) {
 		noticeCard({
 			level: "info",
-			title: "画像本轮无改动（L3 已跑完）",
-			lines: [`提议稿（${USER_TEMP_FILE}）条目数 ${after.length}，与跑前一致`],
+			title: t("ext.l3.proposal.noChange.title"),
+			lines: [t("ext.l3.proposal.noChange.line", { file: USER_TEMP_FILE, n: after.length })],
 		});
 		return;
 	}
 
 	const lines: string[] = [
-		`条目数 ${before.length} → ${after.length}`,
-		`写入 ${USER_TEMP_FILE}；live USER.md 未动，确认后手工并入`,
+		t("ext.l3.proposal.counts", { before: before.length, after: after.length }),
+		t("ext.l3.proposal.writtenTo", { file: USER_TEMP_FILE }),
 	];
-	for (const e of added.slice(0, 3)) lines.push(`＋ ${cut(e)}`);
-	if (added.length > 3) lines.push(`＋ …另 ${added.length - 3} 条`);
-	for (const e of removed.slice(0, 3)) lines.push(`－ ${cut(e)}`);
-	if (removed.length > 3) lines.push(`－ …另 ${removed.length - 3} 条`);
+	for (const e of added.slice(0, 3)) lines.push(t("ext.l3.proposal.addItem", { text: cut(e) }));
+	if (added.length > 3) lines.push(t("ext.l3.proposal.addedMore", { n: added.length - 3 }));
+	for (const e of removed.slice(0, 3)) lines.push(t("ext.l3.proposal.removeItem", { text: cut(e) }));
+	if (removed.length > 3) lines.push(t("ext.l3.proposal.removedMore", { n: removed.length - 3 }));
 
 	const detail = [
-		`提议稿：${USER_TEMP_FILE}（live USER.md 未被 L3 修改，并入由用户手工完成）`,
-		`新增/改写 ${added.length} 条：`,
-		...added.map((e) => `＋ ${e}`),
+		t("ext.l3.proposal.detailHeader", { file: USER_TEMP_FILE }),
+		t("ext.l3.proposal.detailAdded", { n: added.length }),
+		...added.map((e) => t("ext.l3.proposal.addItem", { text: e })),
 		"",
-		`删除 ${removed.length} 条：`,
-		...removed.map((e) => `－ ${e}`),
+		t("ext.l3.proposal.detailRemoved", { n: removed.length }),
+		...removed.map((e) => t("ext.l3.proposal.removeItem", { text: e })),
 	].join("\n");
 
 	noticeCard({
 		level: "info",
-		title: `画像提议（待并入 USER.md）：＋${added.length} / －${removed.length}`,
+		title: t("ext.l3.proposal.title", { added: added.length, removed: removed.length }),
 		lines,
 		detail,
 	});
@@ -180,8 +181,8 @@ export function setupL3Persona(
 		logEvent("l3", `persona failed (${st.consecutiveFailures}/${L3_FAILURE_THRESHOLD}): ${detail}`, profilePath);
 		if (visible) noticeCard({
 			level: "warning",
-			title: "L3 画像更新失败",
-			lines: [`连续失败 ${st.consecutiveFailures}/${L3_FAILURE_THRESHOLD}`, detail.slice(0, 80)],
+			title: t("ext.l3.card.failed.title"),
+			lines: [t("ext.l3.card.failed.line", { failures: st.consecutiveFailures, threshold: L3_FAILURE_THRESHOLD }), detail.slice(0, 80)],
 			detail,
 		});
 		if (st.consecutiveFailures >= L3_FAILURE_THRESHOLD && !st.cooledDown) {
@@ -248,8 +249,18 @@ export function setupL3Persona(
 			profilePath,
 			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
 			getPid: () => readSubagentRun(profilePath, "l3", job.id)?.pid,
-			onTick: (info) =>
-				setPipelineStatus(status, ctx, "l3", `⚙L3 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`, scope),
+			onTick: (info) => {
+				const min = (info.elapsedMs / 60000).toFixed(1);
+				setPipelineStatus(
+					status, ctx, "l3",
+					info.alive === undefined
+						? t("ext.l3.status.dispatching", { min })
+						: info.alive
+							? t("ext.l3.status.alive", { min })
+							: t("ext.l3.status.exited", { min }),
+					scope,
+				);
+			},
 		});
 		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
@@ -311,7 +322,7 @@ export function setupL3Persona(
 			});
 			await spawnP.catch(() => {});
 			db.complete(job.id, "failed", stop.killConfirmed ? "killed at hard cap" : "hard cap: stop unconfirmed");
-			recordFailure(ctx, `子代理超过硬上限被停掉（job ${job.id}）`, profilePath, !scope || scope.isCurrent());
+			recordFailure(ctx, t("ext.l3.card.hardCapStopped", { id: job.id }), profilePath, !scope || scope.isCurrent());
 			if (!stop.killConfirmed) {
 				// 停不下来就不能放新 L3 进来（它会写 USER-temp.md，而停不下来的那个还在写同一份文件）⇒ 持有该层
 				const st3 = loadFailureState(profilePath);
@@ -321,18 +332,18 @@ export function setupL3Persona(
 			logEvent("l3", `round stopped at hard cap (job ${job.id}，${stop.note})`, profilePath);
 			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
-				title: "L3 画像更新已在硬上限被停掉",
+				title: t("ext.l3.card.hardCap.title"),
 				lines: [
-					`job ${job.id}（来源 ${job.source}）超过 ${(to.hardMs / 60000).toFixed(0)} 分钟未提交，已停止子代理`,
+					t("ext.l3.card.hardCap.line1", { id: job.id, source: job.source, min: (to.hardMs / 60000).toFixed(0) }),
 					stop.killConfirmed
-						? `live USER.md 未被触碰（L3 只写 ${USER_TEMP_FILE}，原子写 + 每轮备份）`
-						: `**未能确认停止**，本层已持有，暂不接受新任务`,
+						? t("ext.l3.card.hardCap.line2Confirmed", { file: USER_TEMP_FILE })
+						: t("ext.l3.card.hardCap.line2Unconfirmed"),
 				],
-				detail: `${stop.note}\n进程内日志：memoryDB/logs/l3.log`,
+				detail: t("ext.l3.card.hardCap.detail", { note: stop.note }),
 			});
 			return "failed";
 		} catch (err) {
-			recordFailure(ctx, `派发失败：${err instanceof Error ? err.message : String(err)}`, profilePath, !scope || scope.isCurrent());
+			recordFailure(ctx, t("ext.l3.card.dispatchFailed", { message: err instanceof Error ? err.message : String(err) }), profilePath, !scope || scope.isCurrent());
 			const still = db.getJob(job.id);
 			if (still?.status === "running") db.complete(job.id, "failed", err instanceof Error ? err.message : String(err));
 			return "failed";
@@ -395,7 +406,7 @@ export function setupL3Persona(
 	function triggerManual(ctx?: ExtensionContext): void {
 		const profilePath = getProfilePath();
 		if (!profilePath) {
-			if (ctx) ctx.ui.notify("L3 调度器未初始化（缺少有效 profile）", "error");
+			if (ctx) ctx.ui.notify(t("ext.l3.notify.noProfile"), "error");
 			return;
 		}
 		try {
@@ -406,7 +417,7 @@ export function setupL3Persona(
 				cooledDown: loadL3State().cooledDown,
 			});
 			if (verdict === "refuse-busy") {
-				if (ctx) ctx.ui.notify("L3 画像已在队列或运行中", "warning");
+				if (ctx) ctx.ui.notify(t("ext.l3.notify.busy"), "warning");
 				return;
 			}
 			if (verdict === "unpause-queued") {
@@ -418,7 +429,7 @@ export function setupL3Persona(
 				if (ctx) pipeline.setCachedCtx(ctx);
 				pipeline.kick();
 				logEvent("l3", "手动触发：复位熔断，队列中的 job 将执行", profilePath);
-				if (ctx) ctx.ui.notify("L3 已复位熔断，排队中的任务将执行", "info");
+				if (ctx) ctx.ui.notify(t("ext.l3.notify.unpaused"), "info");
 				return;
 			}
 		} catch {

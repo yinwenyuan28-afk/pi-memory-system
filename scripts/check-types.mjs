@@ -25,7 +25,7 @@ const BASELINE_FILE = join(EXT_ROOT, "scripts", "type-check-baseline.json");
 /** 被检查的运行时目录（排除 scripts/ 工具与 node_modules；scripts 里是回归脚本，不参与运行）。 */
 // "workflow" 已于 2026-10-02 随目录一并删除（停用近一年、2354 行死代码，用户拍板删）。
 // 若将来重建工作流系统，记得把 "workflow" 加回这里，否则新代码不受门禁覆盖。
-const RUNTIME_ROOTS = ["index.ts", "memory", "util", "skill", "prompts", "config"];
+const RUNTIME_ROOTS = ["index.ts", "memory", "util", "skill", "prompts", "config", "i18n"];
 
 /** 门禁覆盖的错误码（"名字/模块/导出"类；其余类型噪音不在此列）。 */
 const GATED = new Set(["TS2304", "TS2552", "TS2307", "TS2305", "TS2459", "TS2454"]);

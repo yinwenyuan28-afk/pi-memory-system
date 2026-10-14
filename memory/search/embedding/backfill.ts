@@ -17,6 +17,7 @@ import { getEmbeddingService } from "./service.ts";
 import { getVectorStore } from "../vector-store/store.ts";
 import { loadEmbeddingConfig } from "./config.ts";
 import type { L1Record } from "./record-loader.ts";
+import { t } from "../../../i18n/index.ts";
 
 /** 向量化状态查询结果 */
 export interface VectorizationStatus {
@@ -119,7 +120,7 @@ export async function backfillMissingVectors(
       embedded: 0,
       failed: 0,
       durationMs: 0,
-      errors: ["memory-system-model.json 无 embedding 配置，无法回填"],
+      errors: [t("ext.embed.noEmbeddingConfigBackfill")],
     };
   }
 
@@ -234,7 +235,7 @@ export async function rebuildAllVectors(
       embedded: 0,
       failed: 0,
       durationMs: 0,
-      errors: ["memory-system-model.json 无 embedding 配置，无法 rebuild"],
+      errors: [t("ext.embed.noEmbeddingConfigRebuild")],
     };
   }
 
@@ -263,7 +264,7 @@ export async function rebuildAllVectors(
   try {
     cleared = await vecStore.clearAll();
   } catch (e) {
-    errors.push(`清理旧向量失败: ${e instanceof Error ? e.message : String(e)}`);
+    errors.push(t("ext.embed.clearOldFailed", { message: e instanceof Error ? e.message : String(e) }));
   }
 
   onProgress?.({
@@ -307,11 +308,11 @@ export async function rebuildAllVectors(
     const c = await vecStore.checkConsistency();
     if (c.indexRows !== c.vectorRows || c.aligned !== c.vectorRows) {
       errors.push(
-        `重建后一致性异常：映射表 ${c.indexRows} 行 / 向量表 ${c.vectorRows} 行 / 可对齐 ${c.aligned} 行`
+        t("ext.embed.rebuildConsistencyError", { indexRows: c.indexRows, vectorRows: c.vectorRows, aligned: c.aligned })
       );
     }
   } catch (e) {
-    errors.push(`重建后一致性自检失败: ${e instanceof Error ? e.message : String(e)}`);
+    errors.push(t("ext.embed.rebuildConsistencyCheckFailed", { message: e instanceof Error ? e.message : String(e) }));
   }
 
   return {
@@ -330,25 +331,25 @@ export async function rebuildAllVectors(
 export function formatStatus(status: VectorizationStatus, limit = 10): string {
   const lines: string[] = [];
 
-  lines.push(`L1 向量化状态:`);
-  lines.push(`  总 records: ${status.totalRecords}`);
-  lines.push(`  已向量化: ${status.vectorizedCount}`);
-  lines.push(`  未向量化: ${status.unVectorizedCount}`);
-  lines.push(`  可回填: ${status.readyForBackfill ? "✅" : "❌"}`);
+  lines.push(t("ext.embed.statusHeader"));
+  lines.push(t("ext.embed.statusTotal", { n: status.totalRecords }));
+  lines.push(t("ext.embed.statusVectorized", { n: status.vectorizedCount }));
+  lines.push(t("ext.embed.statusUnvectorized", { n: status.unVectorizedCount }));
+  lines.push(t("ext.embed.statusReady", { mark: status.readyForBackfill ? "✅" : "❌" }));
   lines.push("");
 
   if (status.unVectorizedCount > 0) {
-    lines.push(`未向量化 record id（前 ${limit} 条）:`);
+    lines.push(t("ext.embed.unvectorizedIdsHeader", { limit }));
     for (const id of status.unVectorizedIds.slice(0, limit)) {
       lines.push(`  - ${id}`);
     }
     if (status.unVectorizedIds.length > limit) {
-      lines.push(`  ... 还有 ${status.unVectorizedIds.length - limit} 条未显示`);
+      lines.push(t("ext.embed.remainingHidden", { n: status.unVectorizedIds.length - limit }));
     }
     lines.push("");
-    lines.push(`提示：使用 /vectorize-backfill 触发回填`);
+    lines.push(t("ext.embed.backfillHint"));
   } else {
-    lines.push(`✅ 所有 L1 records 都已向量化`);
+    lines.push(t("ext.embed.allVectorized"));
   }
 
   return lines.join("\n");

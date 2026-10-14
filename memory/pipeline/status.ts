@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PipelineJobScope, PipelineJobType } from "./worker.ts";
+import { t } from "../../i18n/index.ts";
 
 /** Central status-line adapter so background work and turn counters share one Pi status item. */
 export interface PipelineStatusReporter {
@@ -13,14 +14,14 @@ export function formatPipelineStatus(
 	active: { layer: PipelineJobType; detail: string } | undefined,
 	skill: string,
 ): string {
-	const l1Text = l1.paused ? (l1.queued ? "L1 已暂停·有排队任务" : "L1 已暂停")
-		: l1.queued ? "L1 排队中" : `L1 ${l1.remaining}t`;
+	const l1Text = l1.paused ? (l1.queued ? t("ext.status.l1PausedQueued") : t("ext.status.l1Paused"))
+		: l1.queued ? t("ext.status.l1Queued") : t("ext.status.l1Remaining", { n: l1.remaining });
 	const memoryText = active?.layer === "l1"
-		? `Memory ${active.detail}`
+		? t("ext.status.memoryActive", { detail: active.detail })
 		: active
-			? `Memory ${l1Text} · ${active.detail}`
-			: `Memory ${l1Text}`;
-	return `${memoryText} | Skill ${skill}`;
+			? t("ext.status.memoryBoth", { l1: l1Text, detail: active.detail })
+			: t("ext.status.memoryL1", { l1: l1Text });
+	return t("ext.status.full", { memory: memoryText, skill });
 }
 
 export function setPipelineStatus(
@@ -32,7 +33,7 @@ export function setPipelineStatus(
 ): void {
 	if (scope && !scope.isCurrent()) return;
 	if (reporter) reporter.set(ctx, layer, detail, scope);
-	else ctx.ui.setStatus("memory", `Memory ${detail}`);
+	else ctx.ui.setStatus("memory", t("ext.status.memoryActive", { detail }));
 }
 
 export function clearPipelineStatus(
@@ -43,5 +44,5 @@ export function clearPipelineStatus(
 ): void {
 	if (scope && !scope.isCurrent()) return;
 	if (reporter) reporter.clear(ctx, layer, scope);
-	else ctx.ui.setStatus("memory", "Memory");
+	else ctx.ui.setStatus("memory", t("ext.status.memoryBare"));
 }

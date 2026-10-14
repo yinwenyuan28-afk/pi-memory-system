@@ -6,6 +6,7 @@ import type { MemoryManager } from "../core/manager.ts";
 import { listL0Files, loadL1Cursor } from "../l1/config.ts";
 import { L0_CURSOR_FILE, MEMORY_DB_DIR } from "../paths.ts";
 import { loadCursor, saveCursor } from "./review-cursor.ts";
+import { t } from "../../i18n/index.ts";
 
 /**
  * 记忆审查子代理调度模块。
@@ -106,15 +107,15 @@ export function setupMemoryReviewer(pi: ExtensionAPI, getManager: () => MemoryMa
 	});
 
 	pi.registerCommand("remember", {
-		description: "Manually trigger a full memory review of the entire conversation.",
-		usage: "Usage: /remember",
+		description: t("ext.review.command.description"),
+		usage: t("ext.review.command.usage"),
 		handler: async (_args, ctx) => {
 			if (reviewScheduled) {
-				ctx.ui.notify("Memory review already in progress", "info");
+				ctx.ui.notify(t("ext.review.inProgress"), "info");
 				return;
 			}
 			reviewScheduled = true;
-			ctx.ui.notify("Memory review started via pi-subagents", "info");
+			ctx.ui.notify(t("ext.review.started"), "info");
 			const built = buildReviewTask(ctx);
 			if (!built) {
 				// 无新增内容或工作流未完成：仍走一次全量兜底（无游标时）

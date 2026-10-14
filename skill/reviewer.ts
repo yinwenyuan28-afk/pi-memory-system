@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { MEMORY_DB_DIR, SKILL_FEED_CURSOR_FILE, SKILL_FEED_DIR } from "../memory/paths.ts";
 import { loadCursor, saveCursor } from "../memory/review/review-cursor.ts";
 import { render as renderPrompt } from "../prompts/registry.ts";
+import { t } from "../i18n/index.ts";
 
 /**
  * Skill 审查子代理调度模块。
@@ -126,10 +127,10 @@ export function setupSkillReviewer(
 	});
 
 	pi.registerCommand("learn", {
-		description: "Learn a reusable skill from source code, docs, or conversation. Usage: /learn [source]",
+		description: t("ext.skill.command.description"),
 		handler: async (args, ctx) => {
 			if (reviewScheduled) {
-				ctx.ui.notify("Skill review already in progress", "info");
+				ctx.ui.notify(t("ext.skill.reviewInProgress"), "info");
 				return;
 			}
 			reviewScheduled = true;
@@ -154,19 +155,19 @@ export function setupSkillReviewer(
 					reviewScheduled = false;
 					onStatusChange(ctx);
 				}
-				ctx.ui.notify("Learning skill from your request...", "info");
-				return;
-			}
-			try {
-				await runPiSubagent("skill-reviewer", built.task + (extra ? `\nExtra context: ${extra}` : ""), ctx);
-				saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
-			} finally {
-				reviewScheduled = false;
-				onStatusChange(ctx);
-			}
-			ctx.ui.notify("Learning skill from your request...", "info");
-		},
-	});
+					ctx.ui.notify(t("ext.skill.learning"), "info");
+					return;
+				}
+				try {
+					await runPiSubagent("skill-reviewer", built.task + (extra ? `\nExtra context: ${extra}` : ""), ctx);
+					saveCursor(built.paths.profilePath, CURSOR_KEY, new Date().toISOString(), Date.now());
+				} finally {
+					reviewScheduled = false;
+					onStatusChange(ctx);
+				}
+				ctx.ui.notify(t("ext.skill.learning"), "info");
+			},
+		});
 
-	return () => reviewScheduled ? "⚙审查" : waitingForReply ? "等待完整回复" : `${SKILL_REVIEW_INTERVAL - turnCount}t`;
+		return () => reviewScheduled ? t("ext.skill.status.reviewing") : waitingForReply ? t("ext.skill.status.waitingReply") : `${SKILL_REVIEW_INTERVAL - turnCount}t`;
 }

@@ -35,6 +35,9 @@ import { stopSubagent } from "./memory/pipeline/subagent-kill.ts";
 import { loadSubagentTimeouts } from "./memory/pipeline/timeout-config.ts";
 import { resolveAgentDir } from "./util/agent-dir.ts";
 import { registerModelSetupCommands } from "./config/model-setup.ts";
+import { registerLanguageCommand } from "./i18n/command.ts";
+import { refreshLocaleFromConfig, t } from "./i18n/index.ts";
+import { qualityTagLabel, taskStateLabel } from "./i18n/labels.ts";
 import { holdUntilFrom, loadFailureState, saveFailureState } from "./memory/failure-state.ts";
 import { registerL2CommitTool, repairSceneMembers, syncSceneIndex } from "./memory/l2/commit-tool.ts";
 import { setupL3Persona } from "./memory/l3/index.ts";
@@ -433,6 +436,10 @@ export default function (pi: ExtensionAPI) {
     if (profile) {
       process.env.PI_PROFILE_PATH = profile.path;
     }
+    // 界面语言：此刻才有活跃 profile，按配置（application-propertis.json 的 language 节）
+    // 重新解析一次。命令/工具 description 已在工厂期按 env/系统区域注册，本次只影响后续
+    // 渲染的文案与状态栏；description 要下次 /reload 才跟上（见 i18n/README.md）。
+    refreshLocaleFromConfig(profile?.path);
     sessionId = ctx.sessionManager.getSessionId();
 
     // 子进程只需要模块顶层已注册的 commit/read 工具 + PI_PROFILE_PATH。
@@ -447,7 +454,7 @@ export default function (pi: ExtensionAPI) {
     if (promptProblems.length > 0) {
       noticeCard({
         level: "warning",
-        title: `提示词模板缺失/损坏（${promptProblems.length} 项）`,
+        title: t("ext.card.promptAssets.title", { count: promptProblems.length }),
         lines: promptProblems.slice(0, 6),
         detail: promptProblems.join("\n"),
       });
@@ -469,14 +476,17 @@ export default function (pi: ExtensionAPI) {
     const missingAgents = REQUIRED_AGENTS.filter((a) => !bundledAgentNames.includes(a));
     if (missingAgents.length > 0 || bundledAgentNames.length === 0) {
       const problems = [
-        `子代理定义缺失：${BUNDLED_AGENTS_DIR} 下缺少 ${missingAgents.join(", ") || "全部定义"}`,
-        "子代理定义需随插件分发，不能只存在于 ~/.pi/agent/agents/（发布包应含 agents/*.md 共 6 个）",
+        t("ext.card.subagent.missing", {
+          dir: BUNDLED_AGENTS_DIR,
+          names: missingAgents.join(", ") || t("ext.card.subagent.allDefs"),
+        }),
+        t("ext.card.subagent.advice"),
       ];
       noticeCard({
         level: "warning",
-        title: "子代理派发不可用，L1/L2/L3 记忆提取将无法运行",
+        title: t("ext.card.subagent.title"),
         lines: problems,
-        detail: problems.join("\n") + "\n\n自建 spawn 只需要 agents/*.md 与 pi 入口，不依赖任何其它扩展。",
+        detail: problems.join("\n") + t("ext.card.subagent.detailSuffix"),
         dedupKey: "subagent-defs-missing",
       });
     }
@@ -1227,36 +1237,39 @@ export default function (pi: ExtensionAPI) {
   // ── Memory model setup / read-only peek ───────────────────
   registerModelSetupCommands(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
 
+  // ── 界面语言（i18n）：查看/切换；写 profile 配置，命令说明需 /reload 刷新 ──
+  registerLanguageCommand(pi, () => manager?.getProfileManager().getActiveProfile()?.path);
+
   pi.registerCommand("my-memory:l1-mode", {
-    description: "切换 L1 提取模式：code（work_fact/work_task/work_method/work_artifact）或 chat（persona/episodic/instruction）。用法：/my-memory:l1-mode [code|chat]",
-    usage: "用法：/my-memory:l1-mode [code|chat]",
+    description: t("ext.command.l1Mode.description"),
+    usage: t("ext.command.l1Mode.usage"),
     handler: async (args, ctx) => {
       const profile = manager?.getProfileManager().getActiveProfile();
       if (!profile) {
-        ctx.ui.notify("No active profile", "error");
+        ctx.ui.notify(t("ext.notify.noProfile"), "error");
         return;
       }
       const mode = (args || "").trim().toLowerCase();
       if (mode !== "code" && mode !== "chat") {
-        ctx.ui.notify(`当前 L1 模式: ${loadL1Config(profile.path).mode}。用法：/my-memory:l1-mode [code|chat]`, "info");
+        ctx.ui.notify(t("ext.l1Mode.current", { mode: loadL1Config(profile.path).mode }), "info");
         return;
       }
       saveL1Mode(profile.path, mode as "code" | "chat");
-      ctx.ui.notify(`L1 mode switched to: ${mode}`, "info");
+      ctx.ui.notify(t("ext.l1Mode.switched", { mode }), "info");
     },
   });
 
   // ── L3 Persona Command ─────────────────────────────────────
 
   pi.registerCommand("my-memory:l3-trigger", {
-    description: "手动触发 L3 Persona 生成（从 L2 场景更新画像提议稿 USER-temp.md，再由用户并入 USER.md）。用法：/my-memory:l3-trigger",
-    usage: "用法：/my-memory:l3-trigger",
+    description: t("ext.command.l3Trigger.description"),
+    usage: t("ext.command.l3Trigger.usage"),
     handler: async (_args, ctx) => {
       if (!l3Controls) {
-        ctx.ui.notify("L3 persona scheduler not initialized", "error");
+        ctx.ui.notify(t("ext.error.l3NotInitialized"), "error");
         return;
       }
-      ctx.ui.notify("L3 persona generation queued", "info");
+      ctx.ui.notify(t("ext.l3.queued"), "info");
       await l3Controls.triggerManual(ctx);
     },
   });
@@ -1264,7 +1277,7 @@ export default function (pi: ExtensionAPI) {
   // ── /profile Command ────────────────────────────────────────
 
   pi.registerCommand("my-memory:profile", {
-    description: "列出或切换记忆 profile。用法：/my-memory:profile [list|switch <name>]",
+    description: t("ext.command.profile.description"),
     handler: async (args, ctx) => {
       const parts = (args || "").trim().split(/\s+/);
       const sub = parts[0];
@@ -1273,7 +1286,7 @@ export default function (pi: ExtensionAPI) {
         const profiles = manager.listProfiles();
         const active = manager.activeProfile;
         const lines = profiles.map((p) => p.name === active ? `* ${p.name} (active)` : `  ${p.name}`);
-        ctx.ui.notify(`Profiles（当前激活标 *）:\n${lines.join("\n")}`, "info");
+        ctx.ui.notify(t("ext.profile.list", { list: lines.join("\n") }), "info");
         return;
       }
 
@@ -1298,23 +1311,23 @@ export default function (pi: ExtensionAPI) {
           // [DISABLED] workflow 系统跟随 profile 重建已禁用（保留代码，恢复时取消注释）
           // workflowController.shutdown();
           // workflowController.init();
-          ctx.ui.notify(`Switched to profile: ${parts[1]}`, "info");
+          ctx.ui.notify(t("ext.profile.switched", { name: parts[1] }), "info");
         } catch (e) {
-          ctx.ui.notify(`Failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+          ctx.ui.notify(t("ext.profile.failed", { message: e instanceof Error ? e.message : String(e) }), "error");
         }
         return;
       }
 
-      ctx.ui.notify("用法：/my-memory:profile [list|switch <name>]", "info");
+      ctx.ui.notify(t("ext.profile.usage"), "info");
     },
   });
 
   // /l2-trigger：手动入队一次 L2（由 pipeline worker 串行消费）。
   pi.registerCommand("my-memory:l2-trigger", {
-    description: "手动入队一次 L2 场景组织。用法：/my-memory:l2-trigger",
+    description: t("ext.command.l2Trigger.description"),
     handler: async (_args, ctx) => {
       if (!l2Controls) {
-        ctx.ui.notify("L2 调度器未初始化（扩展加载中或未启用）", "error");
+        ctx.ui.notify(t("ext.error.l2NotInitialized"), "error");
         return;
       }
       await l2Controls.triggerManual(ctx);
@@ -1328,17 +1341,17 @@ export default function (pi: ExtensionAPI) {
   // 为什么必须留人工口子：自动判定分不清"一次超长生成"与"真卡死"（实测 987 秒的单轮生成），
   // 而人知道上下文（网关刚挂了 / 我已经等了四十分钟）。
   pi.registerCommand("my-memory:subagent-kill", {
-    description: "手动停掉某层的后台子代理（硬上限之外用）。用法：/my-memory:subagent-kill <l1|l2|l3> [jobId]",
+    description: t("ext.command.subagentKill.description"),
     handler: async (args, ctx) => {
       const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
       if (!profilePath) {
-        ctx.ui.notify("未取得 profile，无法停止", "error");
+        ctx.ui.notify(t("ext.subagentKill.noProfile"), "error");
         return;
       }
       const parts = (args || "").trim().split(/\s+/);
       const layer = parts[0];
       if (layer !== "l1" && layer !== "l2" && layer !== "l3") {
-        ctx.ui.notify("用法：/my-memory:subagent-kill <l1|l2|l3> [jobId]", "warning");
+        ctx.ui.notify(t("ext.subagentKill.usage"), "warning");
         return;
       }
       // 自建 spawn（2026-10-01）：找子代理不再扫 pi-subagents 的私有布局，而是查我们
@@ -1351,10 +1364,7 @@ export default function (pi: ExtensionAPI) {
         : listSubagentRuns(profilePath).filter((r) => r.layer === layer);
       const active = runs.length > 0 ? runs[runs.length - 1] : undefined;
       if (!active) {
-        ctx.ui.notify(
-          `没有正在运行的子代理（${layer} 层没有本扩展的运行记录）`,
-          "info",
-        );
+        ctx.ui.notify(t("ext.subagentKill.none", { layer }), "info");
         return;
       }
       const jobId = jobIdHint || active.jobId;
@@ -1373,7 +1383,9 @@ export default function (pi: ExtensionAPI) {
       }
       logEvent("pipeline", `手动停止 ${layer}（job ${jobId || "未指定"}）：${out.note}`, profilePath);
       ctx.ui.notify(
-        out.killConfirmed ? `${layer} 子代理已停掉，杀后修复已完成` : `未能确认停止：${out.note}（该层已持有）`,
+        out.killConfirmed
+          ? t("ext.subagentKill.stopped", { layer })
+          : t("ext.subagentKill.unconfirmed", { note: out.note }),
         out.killConfirmed ? "info" : "warning",
       );
     },
@@ -1388,34 +1400,34 @@ export default function (pi: ExtensionAPI) {
   // 与子代理路径的两点不同：① 人工可以搬子代理搬不动的块（年龄/同名两条硬拦仍然生效，不绕过）；
   // ② 必须显式给 --reason。两条路径都持 L2 运行级锁，否则会与正在跑的子代理交错提交。
   pi.registerCommand("my-memory:l2:archive-list", {
-    description: "列出 L2 归档层的内容与账目（谁在什么时候为什么搬的）。用法：/my-memory:l2:archive-list",
+    description: t("ext.command.l2ArchiveList.description"),
     handler: async (_args, ctx) => {
       const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
       if (!profilePath) {
-        ctx.ui.notify("未取得 profile", "error");
+        ctx.ui.notify(t("ext.arch.noProfile"), "error");
         return;
       }
       const blocks = listArchivedBlocks(profilePath);
       if (blocks.length === 0) {
-        ctx.ui.notify("归档层是空的（还没搬过任何块）", "info");
+        ctx.ui.notify(t("ext.arch.empty"), "info");
         return;
       }
       const lines = blocks.map((b) => {
         const last = [...b.events].reverse().find((e) => e.op === "archive" || e.op === "ledger-missing");
         const when = last?.at ? last.at.slice(0, 10) : "?";
-        const why = last?.reason ?? "（无记录）";
-        return `${b.filename}｜${when}｜成员 ${b.members.length}｜${why}`;
+        const why = last?.reason ?? t("ext.arch.noRecord");
+        return t("ext.arch.entry", { filename: b.filename, when, members: b.members.length, reason: why });
       });
-      ctx.ui.notify(`归档层 ${blocks.length} 个块：\n${lines.join("\n")}`, "info");
+      ctx.ui.notify(t("ext.arch.listTitle", { count: blocks.length, list: lines.join("\n") }), "info");
     },
   });
 
   pi.registerCommand("my-memory:l2:archive", {
-    description: "手工把一个场景块搬进归档层。用法：/my-memory:l2:archive <文件名.md> --reason \"为什么搬它\"",
+    description: t("ext.command.l2Archive.description"),
     handler: async (args, ctx) => {
       const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
       if (!profilePath) {
-        ctx.ui.notify("未取得 profile", "error");
+        ctx.ui.notify(t("ext.arch.noProfile"), "error");
         return;
       }
       const rawArgs = (args || "").trim();
@@ -1423,11 +1435,11 @@ export default function (pi: ExtensionAPI) {
       const reasonMatch = /--reason\s+(?:"([^"]*)"|'([^']*)'|(\S+))/.exec(rawArgs);
       const reason = (reasonMatch?.[1] ?? reasonMatch?.[2] ?? reasonMatch?.[3] ?? "").trim();
       if (!filename) {
-        ctx.ui.notify('用法：/my-memory:l2:archive <文件名.md> --reason "为什么搬它"', "warning");
+        ctx.ui.notify(t("ext.arch.archiveUsage"), "warning");
         return;
       }
       if (!reason) {
-        ctx.ui.notify("必须给 --reason（这是归档唯一的审计凭据）", "warning");
+        ctx.ui.notify(t("ext.arch.reasonRequired"), "warning");
         return;
       }
       const lock = acquireRunLock(profilePath, "l2");
@@ -1439,12 +1451,12 @@ export default function (pi: ExtensionAPI) {
         reconcileArchive(profilePath, new Date().toISOString());
         const out = archiveSceneBlock(profilePath, { filename, reason, by: "command" });
         if (!out.ok) {
-          ctx.ui.notify(`归档失败：${out.error}`, "error");
+          ctx.ui.notify(t("ext.arch.archiveFailed", { error: out.error }), "error");
           return;
         }
         syncSceneIndex(profilePath);
         logEvent("l2", `人工归档 ${filename}（${out.members.length} 个成员）：${reason}`, profilePath);
-        ctx.ui.notify(`已搬进归档层：${filename}（${out.members.length} 个成员随之保留）。搬回来：/my-memory:l2:restore ${filename}`, "info");
+        ctx.ui.notify(t("ext.arch.archived", { filename, count: out.members.length }), "info");
       } finally {
         lock.release();
       }
@@ -1452,16 +1464,16 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("my-memory:l2:restore", {
-    description: "把一个归档的块搬回场景目录。用法：/my-memory:l2:restore <文件名.md>",
+    description: t("ext.command.l2Restore.description"),
     handler: async (args, ctx) => {
       const profilePath = manager?.getProfileManager().getActiveProfile()?.path;
       if (!profilePath) {
-        ctx.ui.notify("未取得 profile", "error");
+        ctx.ui.notify(t("ext.arch.noProfile"), "error");
         return;
       }
       const filename = (args || "").trim().split(/\s+/)[0] ?? "";
       if (!filename) {
-        ctx.ui.notify("用法：/my-memory:l2:restore <文件名.md>", "warning");
+        ctx.ui.notify(t("ext.arch.restoreUsage"), "warning");
         return;
       }
       const lock = acquireRunLock(profilePath, "l2");
@@ -1475,17 +1487,17 @@ export default function (pi: ExtensionAPI) {
         const count = countSceneBlocks(profilePath);
         const limit = loadL2Config(profilePath).maxScenes;
         if (count + 1 > limit) {
-          ctx.ui.notify(`场景目录已满（${count}/${limit}）：先把别的块归档或合并，腾出位置再恢复`, "warning");
+          ctx.ui.notify(t("ext.arch.sceneFull", { count, limit }), "warning");
           return;
         }
         const out = restoreSceneBlock(profilePath, { filename, by: "command", reason: "人工恢复" });
         if (!out.ok) {
-          ctx.ui.notify(`恢复失败：${out.error}`, "error");
+          ctx.ui.notify(t("ext.arch.restoreFailed", { error: out.error }), "error");
           return;
         }
         syncSceneIndex(profilePath);
         logEvent("l2", `人工恢复 ${filename}（${out.members.length} 个成员）`, profilePath);
-        ctx.ui.notify(`已搬回场景目录：${filename}（${out.members.length} 个成员）`, "info");
+        ctx.ui.notify(t("ext.arch.restored", { filename, count: out.members.length }), "info");
       } finally {
         lock.release();
       }
@@ -1495,10 +1507,10 @@ export default function (pi: ExtensionAPI) {
   // /l1-trigger：手动触发一次 L1 提取（绕过 L1_INTERVAL 攒轮数）——供调试/验证使用。
   // 需 setupL1Extractor 已初始化，否则提示重启 pi 加载新扩展。
   pi.registerCommand("my-memory:l1-trigger", {
-    description: "手动入队一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。用法：/my-memory:l1-trigger",
+    description: t("ext.command.l1Trigger.description"),
     handler: async (_args, ctx) => {
       if (!l1Controls) {
-        ctx.ui.notify("L1 调度器未初始化（扩展加载中或未启用）", "error");
+        ctx.ui.notify(t("ext.error.l1NotInitialized"), "error");
         return;
       }
       l1Controls.triggerManual(ctx);
@@ -1509,20 +1521,20 @@ export default function (pi: ExtensionAPI) {
   // 查询 L1 records 向量化状态：哪些已向量化、哪些未向量化。
   // 从 vector store 的 l1_vector_index 辅助映射表读已向量化清单，与 records/ JSONL 对比。
   pi.registerCommand("my-memory:l1:embedding:list", {
-    description: "查询 L1 records 向量化状态。用法：/my-memory:l1:embedding:list [limit=10]",
+    description: t("ext.command.embeddingList.description"),
     handler: async (args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
-        ctx.ui.notify("No active profile", "error");
+        ctx.ui.notify(t("ext.notify.noProfile"), "error");
         return;
       }
       const limit = parseInt((args || "").trim(), 10) || 10;
       try {
         const { getVectorizationStatus, formatStatus } = await import("./memory/search/embedding/backfill.ts");
         const status = await getVectorizationStatus(profile.path);
-        noticeReport("L1 向量化状态", formatStatus(status, limit), { level: "info" });
+        noticeReport(t("ext.embedding.statusTitle"), formatStatus(status, limit), { level: "info" });
       } catch (e) {
-        ctx.ui.notify(`查询失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+        ctx.ui.notify(t("ext.embedding.queryFailed", { message: e instanceof Error ? e.message : String(e) }), "error");
       }
     },
   });
@@ -1532,35 +1544,37 @@ export default function (pi: ExtensionAPI) {
   // 前置条件：vectorization.json 中 enabled=true + embedding 配置可读。
   // 注意：需重启 pi 才能使用本命令（memory-system.ts 改动需重启加载）。
   pi.registerCommand("my-memory:l1:embedding:backfill", {
-    description: "批量将未向量化的 L1 records 嵌入向量并入库。用法：/my-memory:l1:embedding:backfill",
+    description: t("ext.command.embeddingBackfill.description"),
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
-        ctx.ui.notify("No active profile", "error");
+        ctx.ui.notify(t("ext.notify.noProfile"), "error");
         return;
       }
       try {
         const { backfillMissingVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.ts");
         const status = await getVectorizationStatus(profile.path);
         if (status.unVectorizedCount === 0) {
-          ctx.ui.notify(`✅ 所有 ${status.totalRecords} 条 L1 records 都已向量化，无需回填`, "info");
+          ctx.ui.notify(t("ext.embedding.allDone", { total: status.totalRecords }), "info");
           return;
         }
         if (!status.readyForBackfill) {
           ctx.ui.notify(
-            `❌ 回填前置条件不满足：检查 embedding 配置 + vectorization.json（enabled=true）。未向量化 ${status.unVectorizedCount} 条`,
+            t("ext.embedding.precondition", { count: status.unVectorizedCount }),
             "error",
           );
           return;
         }
-        ctx.ui.notify(`开始回填：${status.unVectorizedCount} 条待向量化`, "info");
+        ctx.ui.notify(t("ext.embedding.start", { count: status.unVectorizedCount }), "info");
         const result = await backfillMissingVectors(profile.path, (p) => {
-          ctx.ui.notify(`回填进度: ${p.done}/${p.total}`, "info");
+          ctx.ui.notify(t("ext.embedding.progress", { done: p.done, total: p.total }), "info");
         });
-        const msg = `✅ 回填完成: 成功 ${result.embedded}/${result.total}，耗时 ${result.durationMs}ms${result.failed > 0 ? `，失败 ${result.failed}` : ""}${result.errors.length > 0 ? `\n错误:\n${result.errors.slice(0, 3).join("\n")}` : ""}`;
+        const msg = t(result.failed > 0 ? "ext.embedding.doneFailed" : "ext.embedding.done", {
+          embedded: result.embedded, total: result.total, failed: result.failed, ms: result.durationMs,
+        }) + (result.errors.length > 0 ? "\n" + t("ext.embedding.errorBlock", { errors: result.errors.slice(0, 3).join("\n") }) : "");
         ctx.ui.notify(msg, result.failed > 0 ? "error" : "info");
       } catch (e) {
-        ctx.ui.notify(`回填失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+        ctx.ui.notify(t("ext.embedding.failed", { message: e instanceof Error ? e.message : String(e) }), "error");
       }
     },
   });
@@ -1570,39 +1584,41 @@ export default function (pi: ExtensionAPI) {
   // 用途：embedding 模型/维度变更后重算、修复 vector store 污染（如 POC 残留）、修复未归一化旧嵌入。
   // 注意：需重启 pi 加载归一化后的 service.ts 才能使新嵌入生效。
   pi.registerCommand("my-memory:l1:embedding:rebuild", {
-    description: "清空 vector store 并重新嵌入所有 L1 records（解决旧嵌入污染）。用法：/my-memory:l1:embedding:rebuild",
+    description: t("ext.command.embeddingRebuild.description"),
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
       if (!profile) {
-        ctx.ui.notify("No active profile", "error");
+        ctx.ui.notify(t("ext.notify.noProfile"), "error");
         return;
       }
       try {
         const { rebuildAllVectors, getVectorizationStatus } = await import("./memory/search/embedding/backfill.ts");
         const status = await getVectorizationStatus(profile.path);
         if (status.totalRecords === 0) {
-          ctx.ui.notify("❌ 没有 L1 records 可重建", "error");
+          ctx.ui.notify(t("ext.embedding.noRecords"), "error");
           return;
         }
-        ctx.ui.notify(`开始 rebuild：清空 vector store + 重新嵌入 ${status.totalRecords} 条 records`, "info");
+        ctx.ui.notify(t("ext.embedding.rebuildStart", { total: status.totalRecords }), "info");
         const result = await rebuildAllVectors(profile.path, (p) => {
-          ctx.ui.notify(`rebuild 进度: cleared=${p.cleared}, embedded=${p.embedded}/${p.total}`, "info");
+          ctx.ui.notify(t("ext.embedding.rebuildProgress", { cleared: p.cleared, embedded: p.embedded, total: p.total }), "info");
         });
-        const msg = `✅ rebuild 完成: 清空 ${result.cleared} 条旧向量，重新嵌入 ${result.embedded}/${result.total} 条${result.failed > 0 ? `，失败 ${result.failed}` : ""}，耗时 ${result.durationMs}ms${result.errors.length > 0 ? `\n错误:\n${result.errors.slice(0, 3).join("\n")}` : ""}`;
+        const msg = t(result.failed > 0 ? "ext.embedding.rebuildDoneFailed" : "ext.embedding.rebuildDone", {
+          cleared: result.cleared, embedded: result.embedded, total: result.total, failed: result.failed, ms: result.durationMs,
+        }) + (result.errors.length > 0 ? "\n" + t("ext.embedding.errorBlock", { errors: result.errors.slice(0, 3).join("\n") }) : "");
         ctx.ui.notify(msg, result.failed > 0 ? "error" : "info");
       } catch (e) {
-        ctx.ui.notify(`rebuild 失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+        ctx.ui.notify(t("ext.embedding.rebuildFailed", { message: e instanceof Error ? e.message : String(e) }), "error");
       }
     },
   });
 
   // ── /my-memory:l1:quality Command ───────────────────────────────
   pi.registerCommand("my-memory:l1:fix", {
-    description: "手工修正/作废一条 L1 记忆。用法：/my-memory:l1:fix <id> --action rewrite|tombstone --content \"新内容\" --evidence \"证据\" [--force] [--priority 80] [--reason 理由]",
+    description: t("ext.command.l1Fix.description"),
     handler: async (args, ctx) => {
       try {
         const profilePath = manager?.getProfileManager()?.getActiveProfile()?.path;
-        if (!profilePath) { ctx.ui.notify("无活跃 profile", "error"); return; }
+        if (!profilePath) { ctx.ui.notify(t("ext.notify.noProfile"), "error"); return; }
         const argv = (args || "").trim().split(/\s+/).filter(Boolean);
         const id = argv[0] || "";
         const rest = argv.slice(1);
@@ -1610,7 +1626,7 @@ export default function (pi: ExtensionAPI) {
           const i = rest.indexOf(k);
           return i >= 0 ? rest.slice(i + 1).join(" ") : undefined;
         };
-        if (!id) { ctx.ui.notify("用法：/my-memory:l1:fix <id> --action ... --content ... --evidence ...", "error"); return; }
+        if (!id) { ctx.ui.notify(t("ext.l1Fix.usage"), "error"); return; }
         const action = (get("--action") || "").trim() as any;
         const content = get("--content");
         const evidence = get("--evidence");
@@ -1622,24 +1638,24 @@ export default function (pi: ExtensionAPI) {
         if (pv !== undefined) params.priority = Number(pv);
         const text = await runFix(params, profilePath, { force });
         const parsed = JSON.parse(text);
-        notice(ctx, parsed.success ? "info" : "error", parsed.success ? "L1 修正成功" : `L1 修正被拒：${parsed.error}`);
+        notice(ctx, parsed.success ? "info" : "error", parsed.success ? t("ext.l1Fix.ok") : t("ext.l1Fix.rejected", { error: parsed.error }));
         // 完整结果进卡片：以前这里是 `ctx.console?.log?.()`——pi 的 ExtensionContext 没有 console
         // 字段，可选链静默跳过，于是命令等于没输出（2026-09-19 核实）。
-        noticeReport("L1 修正结果", text, { level: parsed.success ? "info" : "warning", maxSummaryLines: 8 });
+        noticeReport(t("ext.l1Fix.reportTitle"), text, { level: parsed.success ? "info" : "warning", maxSummaryLines: 8 });
         return text;
       } catch (err) {
-        ctx.ui.notify(`l1:fix 异常：${err instanceof Error ? err.message : String(err)}`, "error");
+        ctx.ui.notify(t("ext.l1Fix.error", { message: err instanceof Error ? err.message : String(err) }), "error");
       }
     },
   });
   // 任务生命周期标记（2026-10-08）——与 l1_fix 的分工见 task-state.ts 文件头：
   // l1_fix 是"记录写错了"（要证据、有防抖），本命令是"任务关了"（例行动作、无门槛、可回退）。
   pi.registerCommand("my-memory:l1:task", {
-    description: "任务生命周期标记（work_task）。用法：/my-memory:l1:task [list|done|drop|reopen] [id...] [--all] [--reason \"原因\"]",
+    description: t("ext.command.l1Task.description"),
     handler: async (args, ctx) => {
       try {
         const profilePath = manager?.getProfileManager()?.getActiveProfile()?.path;
-        if (!profilePath) { ctx.ui.notify("无活跃 profile", "error"); return; }
+        if (!profilePath) { ctx.ui.notify(t("ext.notify.noProfile"), "error"); return; }
         const argv = (args || "").trim().split(/\s+/).filter(Boolean);
         const hasSub = Boolean(argv[0]) && !argv[0].startsWith("-");
         const sub = (hasSub ? argv[0] : "list").toLowerCase();
@@ -1648,13 +1664,13 @@ export default function (pi: ExtensionAPI) {
         const flags: Record<string, string> = {};
         const ids: string[] = [];
         for (let i = 0; i < rest.length; i++) {
-          const t = rest[i];
-          if (t.startsWith("--")) {
-            const key = t.slice(2);
+          const tok = rest[i];
+          if (tok.startsWith("--")) {
+            const key = tok.slice(2);
             const next = rest[i + 1];
             if (next !== undefined && !next.startsWith("--")) { flags[key] = next; i++; }
             else flags[key] = "1";
-          } else ids.push(t);
+          } else ids.push(tok);
         }
         const { listTaskRecords, applyTaskStateChanges } = await import("./memory/l1/task-state.ts");
 
@@ -1662,29 +1678,29 @@ export default function (pi: ExtensionAPI) {
           const includeClosed = flags.all === "1";
           const rows = listTaskRecords(profilePath, includeClosed);
           if (rows.length === 0) {
-            ctx.ui.notify(includeClosed ? "库里没有 work_task 记录" : "没有未关闭的 work_task（--all 可看已关闭的）", "info");
+            ctx.ui.notify(t(includeClosed ? "ext.task.noneAny" : "ext.task.noneOpen"), "info");
             return;
           }
           const lines = [
-            `${includeClosed ? "全部" : "未关闭"} work_task ${rows.length} 条（状态变更用 /my-memory:l1:task done|drop|reopen <id...>）:`,
-            "状态 | 创建日 | pri | id | 正文",
+            t("ext.task.listHeader", { scope: t(includeClosed ? "ext.task.scopeAll" : "ext.task.scopeOpen"), count: rows.length }),
+            t("ext.task.columns"),
           ];
           for (const r of rows) {
-            const st = r.state === "open" ? "待办" : r.state === "done" ? "已完成" : "已废弃";
+            const st = taskStateLabel(r.state);
             lines.push(`${st} | ${(r.createdAt || "?").slice(0, 10)} | ${String(r.priority).padStart(2)} | ${r.id} | ${r.content.replace(/\s+/g, " ").slice(0, 60)}`);
           }
-          noticeReport("L1 任务清单", lines.join("\n"), { level: "info", maxSummaryLines: 30 });
+          noticeReport(t("ext.task.listTitle"), lines.join("\n"), { level: "info", maxSummaryLines: 30 });
           return lines.join("\n");
         }
 
         const stateMap: Record<string, "open" | "done" | "dropped"> = { done: "done", drop: "dropped", reopen: "open" };
         const state = stateMap[sub];
         if (!state) {
-          ctx.ui.notify(`未知子命令 ${sub}（可用：list|done|drop|reopen）`, "error");
+          ctx.ui.notify(t("ext.task.unknownSub", { sub }), "error");
           return;
         }
         if (ids.length === 0) {
-          ctx.ui.notify(`用法：/my-memory:l1:task ${sub} <id...> [--reason "原因"]`, "error");
+          ctx.ui.notify(t("ext.task.usage", { sub }), "error");
           return;
         }
         const out = applyTaskStateChanges(
@@ -1692,87 +1708,95 @@ export default function (pi: ExtensionAPI) {
           ids.map((id) => ({ id, state })),
           { by: "user", reason: flags.reason && flags.reason !== "1" ? flags.reason : undefined },
         );
-        const label = state === "open" ? "重开" : state === "done" ? "标记完成" : "标记废弃";
+        const label = t(`ext.task.act.${state}`);
         if (out.lockError) {
-          ctx.ui.notify(`${label}失败：${out.lockError}`, "error");
+          ctx.ui.notify(t("ext.task.actFailed", { label, error: out.lockError }), "error");
           return;
         }
-        const lines = [`${label}：成功 ${out.changed} / 幂等 ${out.noop} / 失败 ${out.failed}（分片 ${out.changedFiles} 个）`];
+        const lines = [t("ext.task.resultLine", { label, changed: out.changed, noop: out.noop, failed: out.failed, files: out.changedFiles })];
         for (const r of out.results) {
-          lines.push(r.ok ? (r.changed ? `✓ ${r.id}  ${r.from} → ${r.to}` : `= ${r.id}  已是 ${r.to}（无操作）`) : `✗ ${r.id}  ${r.error}`);
+          lines.push(
+            r.ok
+              ? (r.changed
+                ? t("ext.task.itemOk", { id: r.id, from: r.from, to: r.to })
+                : t("ext.task.itemNoop", { id: r.id, to: r.to }))
+              : t("ext.task.itemFail", { id: r.id, error: r.error }),
+          );
         }
-        noticeReport("L1 任务状态", lines.join("\n"), { level: out.failed > 0 ? "warning" : "info", maxSummaryLines: 20 });
+        noticeReport(t("ext.task.stateTitle"), lines.join("\n"), { level: out.failed > 0 ? "warning" : "info", maxSummaryLines: 20 });
         return lines.join("\n");
       } catch (err) {
-        ctx.ui.notify(`l1:task 异常：${err instanceof Error ? err.message : String(err)}`, "error");
+        ctx.ui.notify(t("ext.task.error", { message: err instanceof Error ? err.message : String(err) }), "error");
       }
     },
   });
   pi.registerCommand("my-memory:l1:health", {
-    description: "L1 库健康指标（超长/test 残留/孤儿 stats/自造 id/畸形行/错误串）",
+    description: t("ext.command.l1Health.description"),
     handler: async (_args, ctx) => {
       try {
         const profilePath = manager?.getProfileManager()?.getActiveProfile()?.path;
-        if (!profilePath) { ctx.ui.notify("无活跃 profile", "error"); return; }
+        if (!profilePath) { ctx.ui.notify(t("ext.notify.noProfile"), "error"); return; }
         const { execFileSync } = await import("node:child_process");
         const { join, dirname } = await import("node:path");
         const { fileURLToPath } = await import("node:url");
         const toolDir = join(dirname(fileURLToPath(import.meta.url)), "scripts", "l1-admin");
         const stdout = execFileSync(process.execPath, ["health.mjs", "--profile", profilePath], { cwd: toolDir, encoding: "utf8", timeout: 60000 });
         // 体检报告较长：进聊天区卡片（以前用 ctx.console?.log?.() = 静默 no-op）
-        noticeReport("L1 库体检", stdout, { level: "info" });
+        noticeReport(t("ext.health.title"), stdout, { level: "info" });
         return stdout;
       } catch (err) {
-        ctx.ui.notify(`l1:health 异常：${err instanceof Error ? err.message : String(err)}`, "error");
+        ctx.ui.notify(t("ext.health.error", { message: err instanceof Error ? err.message : String(err) }), "error");
       }
     },
   });
   pi.registerCommand("my-memory:l1:quality", {
-    description: "按质量分排行展示 L1 原子记忆（effective*decay*(1-min(invalid/hits,0.8))，days 按活跃会话日计）。用法：/my-memory:l1:quality [top=20]",
+    description: t("ext.command.l1Quality.description"),
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
-      if (!profile) { ctx.ui.notify("No active profile", "error"); return; }
+      if (!profile) { ctx.ui.notify(t("ext.notify.noProfile"), "error"); return; }
       const top = Math.min(Math.max(parseInt((_args||"20").trim())||20, 1), 100);
       try {
         const { getQualityRanked } = await import("./memory/l1/quality.ts");
         const ranked = await getQualityRanked(profile.path, top);
-        if (ranked.length===0) { ctx.ui.notify("暂无 L1 records", "info"); return; }
-        const clockNote = ranked.some(r=>r.activeDayClock) ? "days=活跃会话日" : "days=日历天(活跃日数据不可得)";
-        const lines=[`L1 质量排行（quality = effective * exp(-days/14) * (1-min(invalid/hits,0.8)) | 新记录 max(priority/100,0.3) | ${clockNote}）:`, "rank | q | eff | hits/inv | decay | days | tag | pri | id | content(60)"];
+        if (ranked.length===0) { ctx.ui.notify(t("ext.quality.empty"), "info"); return; }
+        const clockNote = t(ranked.some(r=>r.activeDayClock) ? "ext.quality.clockActive" : "ext.quality.clockCalendar");
+        const lines=[t("ext.quality.header", { clock: clockNote }), t("ext.quality.columns")];
         ranked.forEach((r,i)=>{
           const q=r.quality.toFixed(2).padStart(5), eff=String(r.effective).padStart(2), hi=`${r.hits}/${r.invalid}`.padStart(5);
           const dc=r.decay.toFixed(2), dy=r.days.toFixed(1).padStart(4), tag=r.tag.padEnd(4), pri=String(r.pri??r.priority??"?").padStart(2);
           const ct=(r.content||"").slice(0,60).replace(/\n/g," ");
           lines.push(`[${String(i+1).padStart(2)}] q=${q} eff=${eff} hits=${hi} decay=${dc} days=${dy} tag=${tag} pri=${pri} id=${r.id} | ${ct}`);
         });
-        noticeReport("L1 质量排行", lines.join("\n"), { level: "info", maxSummaryLines: 14 });
-      } catch(e){ ctx.ui.notify(`quality 失败: ${e instanceof Error?e.message:String(e)}`, "error"); }
+        noticeReport(t("ext.quality.title"), lines.join("\n"), { level: "info", maxSummaryLines: 14 });
+      } catch(e){ ctx.ui.notify(t("ext.quality.error", { message: e instanceof Error?e.message:String(e) }), "error"); }
     },
   });
 
   pi.registerCommand("my-memory:l1:stats", {
-    description: "汇总 L1 质量分布与冷/噪清单。用法：/my-memory:l1:stats",
+    description: t("ext.command.l1Stats.description"),
     handler: async (_args, ctx) => {
       const profile = manager.getProfileManager().getActiveProfile();
-      if (!profile) { ctx.ui.notify("No active profile", "error"); return; }
+      if (!profile) { ctx.ui.notify(t("ext.notify.noProfile"), "error"); return; }
       try {
         const { getQualityStats } = await import("./memory/l1/quality.ts");
         const s=await getQualityStats(profile.path);
-        const unit = s.clock.activeDayClock ? "活跃日" : "日历天";
-        const lines=[`L1 质量汇总: 总数=${s.total} | 分布 热${s.dist["热"]??0}/温${s.dist["温"]??0}/冷${s.dist["冷"]??0}/新${s.dist["新"]??0}/待观察${s.dist["待观察"]??0}/噪${s.dist["噪"]??0}`,
-                     `直方图 q 0-2:${s.histogram["0-2"]} 2-4:${s.histogram["2-4"]} 4-6:${s.histogram["4-6"]} 6+:${s.histogram["6+"]}`,
+        const unit = t(s.clock.activeDayClock ? "ext.stats.unitActive" : "ext.stats.unitCalendar");
+        // 质量分标签：数据值（热/温/…）保持中文落盘，只在展示时经 qualityTagLabel 换成当前语言
+        const dist = ["热","温","冷","新","待观察","噪"].map((tag) => `${qualityTagLabel(tag)}${s.dist[tag]??0}`).join("/");
+        const lines=[t("ext.stats.header", { total: s.total, dist }),
+                     t("ext.stats.histogram", { a: s.histogram["0-2"], b: s.histogram["2-4"], c: s.histogram["4-6"], d: s.histogram["6+"] }),
                      s.clock.activeDayClock
-                       ? `时钟: 活跃会话日 ${s.clock.activeDays} 个 / 跨度 ${s.clock.spanDays.toFixed(0)} 日历天（停工期间 days 不增长，单位=${unit}）`
-                       : `时钟: 退化为日历天（未找到 l0/conversations 分片）`];
-        if(s.cold.length>0){ lines.push("", `冷清单 (>14${unit}0命中) ${s.cold.length}条 前5:`); s.cold.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} id=${r.id} | ${r.content.slice(0,60)}`)); }
-        else lines.push("", `冷清单: 0（>14${unit}0命中暂无，7-14${unit}为待观察）`);
-        if(s.noisy.length>0){ lines.push("", `噪清单 (失效率>50%) ${s.noisy.length}条 前5:`); s.noisy.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} eff=${r.effective} hits=${r.hits}/${r.invalid} id=${r.id} | ${r.content.slice(0,60)}`)); }
-        else lines.push("", "噪清单: 0");
-        lines.push("", `淘汰候选 ${s.prune.length} 条（已排除 priority>=${s.protectedPriority}(P75动态) / work_method / 有效命中过的记忆；quality 低只代表热度低，不代表可删）`);
+                       ? t("ext.stats.clockActive", { days: s.clock.activeDays, span: s.clock.spanDays.toFixed(0), unit })
+                       : t("ext.stats.clockCalendar")];
+        if(s.cold.length>0){ lines.push("", t("ext.stats.coldList", { unit, count: s.cold.length })); s.cold.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} id=${r.id} | ${r.content.slice(0,60)}`)); }
+        else lines.push("", t("ext.stats.coldEmpty", { unit }));
+        if(s.noisy.length>0){ lines.push("", t("ext.stats.noisyList", { count: s.noisy.length })); s.noisy.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} eff=${r.effective} hits=${r.hits}/${r.invalid} id=${r.id} | ${r.content.slice(0,60)}`)); }
+        else lines.push("", t("ext.stats.noisyEmpty"));
+        lines.push("", t("ext.stats.prune", { count: s.prune.length, priority: s.protectedPriority }));
         s.prune.slice(0,5).forEach(r=> lines.push(` - q=${r.quality.toFixed(2)} days=${r.days.toFixed(1)} pri=${r.priority} type=${r.type} id=${r.id} | ${r.content.slice(0,50)}`));
-        lines.push("", `最早记录距今 ${s.ranked.length? Math.max(...s.ranked.map(r=>r.days)).toFixed(1):0} ${unit}，${s.total>0 && s.cold.length===0 ? `冷标签需等记录>14${unit}后可观测` : ""}`);
-        noticeReport("L1 质量汇总", lines.join("\n"), { level: "info", maxSummaryLines: 14 });
-      } catch(e){ ctx.ui.notify(`stats 失败: ${e instanceof Error?e.message:String(e)}`, "error"); }
+        lines.push("", t("ext.stats.span", { days: s.ranked.length? Math.max(...s.ranked.map(r=>r.days)).toFixed(1):0, unit, note: s.total>0 && s.cold.length===0 ? t("ext.stats.spanNote", { unit }) : "" }));
+        noticeReport(t("ext.stats.title"), lines.join("\n"), { level: "info", maxSummaryLines: 14 });
+      } catch(e){ ctx.ui.notify(t("ext.stats.error", { message: e instanceof Error?e.message:String(e) }), "error"); }
     },
   });
 

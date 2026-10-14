@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { MEMORY_DB_DIR, RUN_LOCK_FILE_PREFIX } from "../paths.ts";
 import { loadSubagentTimeouts, type SubagentTimeouts } from "./timeout-config.ts";
 import { logEvent } from "../../util/notice.ts";
+import { t } from "../../i18n/index.ts";
 
 /** 进程是否还活着（EPERM = 存在但无权限 → 视为存活）。 */
 export function isProcessAlive(pid: number): boolean {
@@ -297,8 +298,8 @@ function discoverRunLockLayers(profilePath: string): string[] {
 /** 被拒绝时给子代理的文案（它读到就会收尾）。 */
 export function runLockBusyMessage(layer: string, owner: RunLockOwner | undefined, nowMs = Date.now()): string {
 	const age = owner && owner.heartbeatAt > 0 ? Math.max(0, Math.round((nowMs - owner.heartbeatAt) / 1000)) : undefined;
-	return (
-		`另一子代理正在写本层（${layer}${owner ? `，占用人 pid=${owner.pid}，最后心跳 ${age ?? "?"}s 前` : ""}）：` +
-		"本次写入被拒绝，请立即结束本轮，不要再尝试任何写入。"
-	);
+	if (owner) {
+		return t("ext.lock.busyWithOwner", { layer, pid: owner.pid, age: age ?? "?" });
+	}
+	return t("ext.lock.busy", { layer });
 }

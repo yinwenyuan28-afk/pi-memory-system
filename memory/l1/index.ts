@@ -10,6 +10,7 @@ import {
 } from "./config.ts";
 import { holdUntilFrom, loadFailureState, saveFailureState, type LayerFailureState } from "../failure-state.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
+import { t } from "../../i18n/index.ts";
 import { getPipelineJobsDB, type PipelineJob } from "../pipeline/jobs-db.ts";
 import { readSubagentRun } from "../pipeline/subagent-runs.ts";
 import { startHeartbeat, waitJobWithLiveness } from "../pipeline/subagent-liveness.ts";
@@ -21,7 +22,7 @@ import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } f
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l1CoolDownMessage(failures: number): string {
-	return `L1 记忆提取连续失败 ${failures} 次，已暂停自动提取。用 /my-memory:l1-trigger 手动重试或检查日志。`;
+	return t("ext.l1.cooldown", { failures });
 }
 
 /**
@@ -140,8 +141,18 @@ export function setupL1Extractor(
 			profilePath,
 			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
 			getPid: () => readSubagentRun(profilePath, "l1", job.id)?.pid,
-			onTick: (info) =>
-				setPipelineStatus(status, ctx, "l1", `⚙L1 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`, scope),
+			onTick: (info) => {
+				const min = (info.elapsedMs / 60000).toFixed(1);
+				setPipelineStatus(
+					status, ctx, "l1",
+					info.alive === undefined
+						? t("ext.l1.status.dispatching", { min })
+						: info.alive
+							? t("ext.l1.status.alive", { min })
+							: t("ext.l1.status.exited", { min }),
+					scope,
+				);
+			},
 		});
 		// 阈值来自配置中心 `subagent` 节（实测单轮生成可达 987s，硬上限要能边跑边调）
 
@@ -212,13 +223,13 @@ export function setupL1Extractor(
 			logEvent("l1", `extract stopped at hard cap (job ${job.id}，${stop.note})`, profilePath);
 			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
-				title: "L1 提取已在硬上限被停掉",
+				title: t("ext.l1.card.hardCap.title"),
 				lines: [
-					`job ${job.id}（来源 ${job.source}）超过 ${(to.hardMs / 60000).toFixed(0)} 分钟未提交，已停止子代理`,
-					`本批未提交 ⇒ 游标未推进，下一轮重做；连续失败 ${s2.consecutiveFailures}/${L1_FAILURE_THRESHOLD}`,
-					stop.killConfirmed ? "杀后修复已完成（分片尾/写锁/游标已核）" : "**未能确认停止**，本层已持有，暂不接受新任务",
+					t("ext.l1.card.hardCap.line1", { id: job.id, source: job.source, min: (to.hardMs / 60000).toFixed(0) }),
+					t("ext.l1.card.hardCap.line2", { failures: s2.consecutiveFailures, threshold: L1_FAILURE_THRESHOLD }),
+					stop.killConfirmed ? t("ext.l1.card.hardCap.line3Confirmed") : t("ext.l1.card.hardCap.line3Unconfirmed"),
 				],
-				detail: `${stop.note}\n进程内日志：memoryDB/logs/l1.log`,
+				detail: t("ext.l1.card.hardCap.detail", { note: stop.note }),
 			});
 			if (s2.consecutiveFailures >= L1_FAILURE_THRESHOLD && !s2.cooledDown) {
 				s2.cooledDown = true;
@@ -233,8 +244,8 @@ export function setupL1Extractor(
 			logEvent("l1", `extract failed: ${failMsg}`, profilePath);
 			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
-				title: "L1 提取派发失败",
-				lines: [`job ${job.id}，连续失败 ${s2.consecutiveFailures}/${L1_FAILURE_THRESHOLD}`],
+				title: t("ext.l1.card.dispatchFailed.title"),
+				lines: [t("ext.l1.card.dispatchFailed.line", { id: job.id, failures: s2.consecutiveFailures, threshold: L1_FAILURE_THRESHOLD })],
 				detail: failMsg,
 			});
 			if (s2.consecutiveFailures >= L1_FAILURE_THRESHOLD && !s2.cooledDown) {
@@ -256,7 +267,7 @@ export function setupL1Extractor(
 	const triggerManual = (ctx?: ExtensionContext) => {
 		const profilePath = getProfilePath();
 		if (!profilePath) {
-			if (ctx) ctx.ui.notify("L1 调度器未初始化（缺少有效 profile）", "error");
+			if (ctx) ctx.ui.notify(t("ext.l1.notify.noProfile"), "error");
 			return;
 		}
 		try {
@@ -267,7 +278,7 @@ export function setupL1Extractor(
 				cooledDown: loadL1State().cooledDown,
 			});
 			if (verdict === "refuse-busy") {
-				if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warning");
+				if (ctx) ctx.ui.notify(t("ext.l1.notify.busy"), "warning");
 				return;
 			}
 			if (verdict === "unpause-queued") {
@@ -281,7 +292,7 @@ export function setupL1Extractor(
 				status?.refresh(ctx);
 				pipeline.kick();
 				logEvent("l1", "manual trigger: 复位熔断，队列中的 job 将执行", profilePath);
-				if (ctx) ctx.ui.notify("L1 已复位熔断，排队中的任务将执行", "info");
+				if (ctx) ctx.ui.notify(t("ext.l1.notify.unpaused"), "info");
 				return;
 			}
 		} catch {
@@ -289,7 +300,7 @@ export function setupL1Extractor(
 		}
 		// 同样只做增量判空，不与 executeJob 重复构造任务消息
 		if (listL0Files(profilePath, loadL1Cursor(profilePath)).length === 0) {
-			if (ctx) ctx.ui.notify("无 L0 增量数据，跳过手动触发", "info");
+			if (ctx) ctx.ui.notify(t("ext.l1.notify.noIncrement"), "info");
 			return;
 		}
 		const s2 = loadL1State();
@@ -300,14 +311,14 @@ export function setupL1Extractor(
 		if (ctx) pipeline.setCachedCtx(ctx);
 		const queued = pipeline.enqueueL1("manual");
 		if (!queued) {
-			if (ctx) ctx.ui.notify("L1 入队失败", "error");
+			if (ctx) ctx.ui.notify(t("ext.l1.notify.enqueueFailed"), "error");
 			return;
 		}
 		if (queued.duplicate) {
-			if (ctx) ctx.ui.notify("L1 提取已在队列或运行中", "warning");
+			if (ctx) ctx.ui.notify(t("ext.l1.notify.busy"), "warning");
 			return;
 		}
-		if (ctx) ctx.ui.notify("L1 提取已入队", "info");
+		if (ctx) ctx.ui.notify(t("ext.l1.notify.enqueued"), "info");
 		status?.refresh(ctx);
 		pipeline.kick();
 	};

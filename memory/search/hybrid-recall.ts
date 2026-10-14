@@ -26,6 +26,7 @@ import { logEvent } from "../../util/notice.ts";
 import { TOOL_RECALL_TOP_K_DEFAULT } from "../../config/thresholds.ts";
 import { CROSS_PROJECT_WEIGHT, scoreRecord } from "../../util/recall-score.ts";
 import { type L1TaskState, taskStateLabel, taskStateOf } from "../l1/record-types.ts";
+import { t } from "../../i18n/index.ts";
 
 /**
  * 项目加权时的**检索放大倍数**（2026-10-02）。
@@ -319,8 +320,8 @@ export function formatRecallL1Records(
 ): string {
   const lines: string[] = [];
 
-  lines.push(`=== L1 原子记忆召回 ===`);
-  lines.push(`召回 ${result.l1Records.length} 条 L1 records：\n`);
+  lines.push(t("ext.recall.header"));
+  lines.push(t("ext.recall.summary", { n: result.l1Records.length }));
 
   for (let i = 0; i < Math.min(result.l1Records.length, limit); i++) {
     const r = result.l1Records[i];
@@ -337,7 +338,7 @@ export function formatRecallL1Records(
   }
 
   if (result.l1Records.length > limit) {
-    lines.push(`... 还有 ${result.l1Records.length - limit} 条未显示`);
+    lines.push(t("ext.recall.remainingHidden", { n: result.l1Records.length - limit }));
   }
 
   return lines.join("\n");

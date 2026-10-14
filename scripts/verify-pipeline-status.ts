@@ -7,6 +7,11 @@ import { setupL1Extractor } from "../memory/l1/index.ts";
 import { closePipelineJobsDB, getPipelineJobsDB } from "../memory/pipeline/jobs-db.ts";
 import { setupSkillReviewer } from "../skill/reviewer.ts";
 
+// 断言针对源语言（中文）文案：显式固定语言，避免在英文系统/英文环境下把「文案正确」误判成失败。
+// i18n 在首次 t() 时才解析语言，而首次 t() 发生在下面这些函数调用里，故本赋值必定先于解析生效。
+process.env.LC_ALL = "zh-CN";
+process.env.LANG = "zh-CN";
+
 const idle = { remaining: 7, paused: false };
 assert.equal(formatPipelineStatus(idle, undefined, "13t"), "Memory L1 7t | Skill 13t");
 assert.equal(formatPipelineStatus({ ...idle, queued: true }, undefined, "13t"), "Memory L1 排队中 | Skill 13t");

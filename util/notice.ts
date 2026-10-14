@@ -31,6 +31,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSy
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { MEMORY_DB_DIR, MEMORY_LOGS_DIR, NOTICE_QUEUE_FILE } from "../memory/paths.ts";
+import { t } from "../i18n/index.ts";
 
 /** 通知级别（与 `ctx.ui.notify` 的枚举一致；调用方误传 `"warn"` 会被归一为 `"warning"`）。 */
 export type NoticeLevel = "info" | "warning" | "error";
@@ -182,12 +183,12 @@ function buildCardLines(data: NoticePayload, expanded: boolean): string[] {
 	for (const line of data.lines ?? []) out.push(`  ${line}`);
 	if (data.detail) {
 		if (!expanded) {
-			out.push("  （展开查看详情）");
+			out.push(`  ${t("ext.card.expandHint")}`);
 		} else {
 			const detailLines = data.detail.split(/\r?\n/);
 			for (const line of detailLines.slice(0, DETAIL_MAX_LINES)) out.push(`  ${line}`);
 			if (detailLines.length > DETAIL_MAX_LINES) {
-				out.push(`  …（另有 ${detailLines.length - DETAIL_MAX_LINES} 行未显示，完整内容见 memoryDB/logs/）`);
+				out.push(`  ${t("ext.card.detailOverflow", { n: detailLines.length - DETAIL_MAX_LINES })}`);
 			}
 		}
 	}

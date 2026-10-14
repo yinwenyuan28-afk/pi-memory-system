@@ -1,0 +1,504 @@
+{
+	"ext": {
+		"notify": {
+			"noProfile": "No active profile"
+		},
+		"error": {
+			"l1NotInitialized": "L1 scheduler is not initialized (extension still loading or disabled)",
+			"l2NotInitialized": "L2 scheduler is not initialized (extension still loading or disabled)",
+			"l3NotInitialized": "L3 persona scheduler is not initialized"
+		},
+		"card": {
+			"expandHint": "(expand to see details)",
+			"detailOverflow": "… ({{n}} more lines not shown; see memoryDB/logs/ for the full content)",
+			"promptAssets": {
+				"title": "Prompt templates missing or damaged ({{count}})"
+			},
+			"subagent": {
+				"title": "Subagent dispatch unavailable; L1/L2/L3 memory extraction cannot run",
+				"missing": "Subagent definitions missing: {{dir}} is missing {{names}}",
+				"allDefs": "all definitions",
+				"advice": "Subagent definitions must ship with the plugin; they cannot live only in ~/.pi/agent/agents/ (the published package should contain all 6 agents/*.md files)",
+				"detailSuffix": "\n\nSelf-spawn needs only agents/*.md and the pi entry point; it does not depend on any other extension."
+			}
+		},
+		"status": {
+			"l1PausedQueued": "L1 paused · queued",
+			"l1Paused": "L1 paused",
+			"l1Queued": "L1 queued",
+			"l1Remaining": "L1 {{n}}t",
+			"memoryActive": "Memory {{detail}}",
+			"memoryBoth": "Memory {{l1}} · {{detail}}",
+			"memoryL1": "Memory {{l1}}",
+			"memoryBare": "Memory",
+			"full": "{{memory}} | Skill {{skill}}"
+		},
+		"command": {
+			"language": {
+				"description": "Show or switch the interface language. Usage: /my-memory:language [auto|{{options}}]",
+				"usage": "Usage: /my-memory:language [auto|{{options}}]"
+			},
+			"l1Mode": {
+				"description": "Switch the L1 extraction mode: code (work_fact/work_task/work_method/work_artifact) or chat (persona/episodic/instruction). Usage: /my-memory:l1-mode [code|chat]",
+				"usage": "Usage: /my-memory:l1-mode [code|chat]"
+			},
+			"l3Trigger": {
+				"description": "Manually trigger L3 persona generation (update the draft profile USER-temp.md from L2 scenes, then merge it into USER.md yourself). Usage: /my-memory:l3-trigger",
+				"usage": "Usage: /my-memory:l3-trigger"
+			},
+			"profile": {
+				"description": "List or switch memory profiles. Usage: /my-memory:profile [list|switch <name>]"
+			},
+			"l2Trigger": {
+				"description": "Manually queue one L2 scene organization run. Usage: /my-memory:l2-trigger"
+			},
+			"subagentKill": {
+				"description": "Manually stop a layer's background subagent (for use beyond the hard limit). Usage: /my-memory:subagent-kill <l1|l2|l3> [jobId]"
+			},
+			"l2ArchiveList": {
+				"description": "List the L2 archive: contents and ledger (who moved what, when, and why). Usage: /my-memory:l2:archive-list"
+			},
+			"l2Archive": {
+				"description": "Manually move one scene block into the archive. Usage: /my-memory:l2:archive <file.md> --reason \"why move it\""
+			},
+			"l2Restore": {
+				"description": "Move an archived block back into the scene directory. Usage: /my-memory:l2:restore <file.md>"
+			},
+			"l1Trigger": {
+				"description": "Manually queue one L1 extraction run (bypasses the L1_INTERVAL turn count). Usage: /my-memory:l1-trigger"
+			},
+			"embeddingList": {
+				"description": "Show L1 record vectorization status. Usage: /my-memory:l1:embedding:list [limit=10]"
+			},
+			"embeddingBackfill": {
+				"description": "Embed all un-vectorized L1 records and store them. Usage: /my-memory:l1:embedding:backfill"
+			},
+			"embeddingRebuild": {
+				"description": "Clear the vector store and re-embed all L1 records (fixes stale embeddings). Usage: /my-memory:l1:embedding:rebuild"
+			},
+			"l1Fix": {
+				"description": "Manually rewrite or tombstone one L1 memory. Usage: /my-memory:l1:fix <id> --action rewrite|tombstone --content \"new content\" --evidence \"evidence\" [--force] [--priority 80] [--reason reason]"
+			},
+			"l1Task": {
+				"description": "Task lifecycle marking (work_task). Usage: /my-memory:l1:task [list|done|drop|reopen] [id...] [--all] [--reason \"reason\"]"
+			},
+			"l1Health": {
+				"description": "L1 store health metrics (over-long / test leftovers / orphan stats / self-made ids / malformed lines / error strings)"
+			},
+			"l1Quality": {
+				"description": "Rank L1 atomic memories by quality score (effective*decay*(1-min(invalid/hits,0.8)), days counted by active session days). Usage: /my-memory:l1:quality [top=20]"
+			},
+			"l1Stats": {
+				"description": "Summarize L1 quality distribution and the cold/noise lists. Usage: /my-memory:l1:stats"
+			}
+		},
+		"language": {
+			"current": "Current language: {{locale}} (configured: {{configured}}). Available: {{options}}",
+			"switched": "Language set to \"{{configured}}\"; now using {{locale}}. Run /reload to refresh command descriptions and cards; the status bar updates immediately.",
+			"unknown": "Unknown language \"{{value}}\". Available: {{options}}, or auto",
+			"auto": "auto (follow system locale)",
+			"writeFailed": "Could not write the language setting: {{message}}"
+		},
+		"l1Mode": {
+			"current": "Current L1 mode: {{mode}}. Usage: /my-memory:l1-mode [code|chat]",
+			"switched": "L1 mode switched to: {{mode}}"
+		},
+		"l3": {
+			"queued": "L3 persona generation queued",
+			"cooldown": "L3 persona failed {{failures}} times in a row; automatic updates are paused. Retry manually with /my-memory:l3-trigger or check the logs.",
+			"status": {
+				"dispatching": "⚙L3 {{min}}m (subagent dispatching)",
+				"alive": "⚙L3 {{min}}m (subagent alive)",
+				"exited": "⚙L3 {{min}}m (subagent exited)"
+			},
+			"notify": {
+				"noProfile": "L3 scheduler is not initialized (no active profile)",
+				"busy": "L3 persona is already queued or running",
+				"unpaused": "L3 circuit breaker reset; the queued job will run"
+			},
+			"card": {
+				"failed": {
+					"title": "L3 persona update failed",
+					"line": "{{failures}}/{{threshold}} consecutive failures"
+				},
+				"hardCap": {
+					"title": "L3 persona update was stopped at the hard cap",
+					"line1": "job {{id}} (source {{source}}) exceeded {{min}} minutes without committing; subagent stopped",
+					"line2Confirmed": "live USER.md untouched (L3 writes only {{file}}; atomic write + per-round backup)",
+					"line2Unconfirmed": "**Could not confirm the stop**; this layer is held and will not accept new tasks",
+					"detail": "{{note}}\nIn-process log: memoryDB/logs/l3.log"
+				},
+				"hardCapStopped": "Subagent stopped for exceeding the hard cap (job {{id}})",
+				"dispatchFailed": "Dispatch failed: {{message}}"
+			},
+			"proposal": {
+				"title": "Persona proposal (pending merge into USER.md): +{{added}} / -{{removed}}",
+				"noChange": {
+					"title": "No persona changes this round (L3 finished)",
+					"line": "Proposal ({{file}}) has {{n}} entries, unchanged from before the run"
+				},
+				"counts": "Entries {{before}} → {{after}}",
+				"writtenTo": "Written to {{file}}; live USER.md untouched, merge manually after review",
+				"addItem": "+ {{text}}",
+				"removeItem": "- {{text}}",
+				"addedMore": "+ …{{n}} more",
+				"removedMore": "- …{{n}} more",
+				"detailHeader": "Proposal: {{file}} (live USER.md not modified by L3; user merges manually)",
+				"detailAdded": "Added/rewritten {{n}}:",
+				"detailRemoved": "Removed {{n}}:"
+			}
+		},
+		"profile": {
+			"list": "Profiles (active marked with *):\n{{list}}",
+			"switched": "Switched to profile: {{name}}",
+			"failed": "Failed: {{message}}",
+			"usage": "Usage: /my-memory:profile [list|switch <name>]"
+		},
+		"subagentKill": {
+			"noProfile": "No profile available; cannot stop",
+			"usage": "Usage: /my-memory:subagent-kill <l1|l2|l3> [jobId]",
+			"none": "No subagent is running (no run record for layer {{layer}})",
+			"stopped": "{{layer}} subagent stopped; post-kill repair finished",
+			"unconfirmed": "Could not confirm the stop: {{note}} (this layer is now locked)"
+		},
+		"arch": {
+			"noProfile": "No profile available",
+			"empty": "The archive is empty (no block has been moved yet)",
+			"listTitle": "Archive: {{count}} blocks:\n{{list}}",
+			"noRecord": "(no record)",
+			"entry": "{{filename}} | {{when}} | members {{members}} | {{reason}}",
+			"archiveUsage": "Usage: /my-memory:l2:archive <file.md> --reason \"why move it\"",
+			"reasonRequired": "--reason is required (it is the archive's only audit evidence)",
+			"archiveFailed": "Archive failed: {{error}}",
+			"archived": "Moved into the archive: {{filename}} ({{count}} members kept along). To move it back: /my-memory:l2:restore {{filename}}",
+			"restoreUsage": "Usage: /my-memory:l2:restore <file.md>",
+			"sceneFull": "Scene directory is full ({{count}}/{{limit}}): archive or merge other blocks to free a slot, then restore",
+			"restoreFailed": "Restore failed: {{error}}",
+			"restored": "Moved back into the scene directory: {{filename}} ({{count}} members)"
+		},
+		"embedding": {
+			"statusTitle": "L1 vectorization status",
+			"queryFailed": "Query failed: {{message}}",
+			"allDone": "✅ All {{total}} L1 records are vectorized; nothing to backfill",
+			"precondition": "❌ Backfill preconditions not met: check the embedding config + vectorization.json (enabled=true). {{count}} records are not vectorized",
+			"start": "Backfill started: {{count}} records to vectorize",
+			"progress": "Backfill progress: {{done}}/{{total}}",
+			"done": "✅ Backfill complete: {{embedded}}/{{total}} succeeded in {{ms}}ms",
+			"doneFailed": "✅ Backfill complete: {{embedded}}/{{total}} succeeded, {{failed}} failed, in {{ms}}ms",
+			"errorBlock": "Errors:\n{{errors}}",
+			"failed": "Backfill failed: {{message}}",
+			"noRecords": "❌ No L1 records to rebuild",
+			"rebuildStart": "Rebuild started: clearing the vector store and re-embedding {{total}} records",
+			"rebuildProgress": "Rebuild progress: cleared={{cleared}}, embedded={{embedded}}/{{total}}",
+			"rebuildDone": "✅ Rebuild complete: cleared {{cleared}} old vectors, re-embedded {{embedded}}/{{total}} in {{ms}}ms",
+			"rebuildDoneFailed": "✅ Rebuild complete: cleared {{cleared}} old vectors, re-embedded {{embedded}}/{{total}}, {{failed}} failed, in {{ms}}ms",
+			"rebuildFailed": "Rebuild failed: {{message}}"
+		},
+		"l1Fix": {
+			"usage": "Usage: /my-memory:l1:fix <id> --action ... --content ... --evidence ...",
+			"ok": "L1 fix succeeded",
+			"rejected": "L1 fix rejected: {{error}}",
+			"reportTitle": "L1 fix result",
+			"error": "l1:fix error: {{message}}"
+		},
+		"task": {
+			"state": {
+				"open": "Open",
+				"done": "Done",
+				"dropped": "Dropped"
+			},
+			"act": {
+				"open": "Reopen",
+				"done": "Mark done",
+				"dropped": "Mark dropped"
+			},
+			"noneOpen": "No open work_task (use --all to include closed ones)",
+			"noneAny": "No work_task records in the store",
+			"scopeAll": "All",
+			"scopeOpen": "Open",
+			"listHeader": "{{scope}} work_task: {{count}} (change state with /my-memory:l1:task done|drop|reopen <id...>):",
+			"columns": "state | created | pri | id | content",
+			"listTitle": "L1 task list",
+			"unknownSub": "Unknown subcommand {{sub}} (available: list|done|drop|reopen)",
+			"usage": "Usage: /my-memory:l1:task {{sub}} <id...> [--reason \"reason\"]",
+			"actFailed": "{{label}} failed: {{error}}",
+			"resultLine": "{{label}}: {{changed}} succeeded / {{noop}} no-op / {{failed}} failed ({{files}} shards)",
+			"itemOk": "✓ {{id}}  {{from}} → {{to}}",
+			"itemNoop": "= {{id}}  already {{to}} (no change)",
+			"itemFail": "✗ {{id}}  {{error}}",
+			"stateTitle": "L1 task state",
+			"error": "l1:task error: {{message}}"
+		},
+		"health": {
+			"title": "L1 store health check",
+			"error": "l1:health error: {{message}}"
+		},
+		"quality": {
+			"tag": {
+				"hot": "Hot",
+				"warm": "Warm",
+				"cold": "Cold",
+				"new": "New",
+				"noise": "Noisy",
+				"watch": "Watch"
+			},
+			"empty": "No L1 records",
+			"clockActive": "days=active session days",
+			"clockCalendar": "days=calendar days (active-day data unavailable)",
+			"header": "L1 quality ranking (quality = effective * exp(-days/14) * (1-min(invalid/hits,0.8)) | new records max(priority/100,0.3) | {{clock}}):",
+			"columns": "rank | q | eff | hits/inv | decay | days | tag | pri | id | content(60)",
+			"title": "L1 quality ranking",
+			"error": "quality failed: {{message}}"
+		},
+		"stats": {
+			"unitActive": "active days",
+			"unitCalendar": "calendar days",
+			"header": "L1 quality summary: total={{total}} | distribution {{dist}}",
+			"histogram": "histogram q 0-2:{{a}} 2-4:{{b}} 4-6:{{c}} 6+:{{d}}",
+			"clockActive": "clock: {{days}} active session days / span {{span}} calendar days (days does not grow while idle; unit={{unit}})",
+			"clockCalendar": "clock: degraded to calendar days (no l0/conversations shards found)",
+			"coldList": "cold list (>14{{unit}}, 0 hits): {{count}}, top 5:",
+			"coldEmpty": "cold list: 0 (nothing over 14{{unit}} with 0 hits yet; 7-14{{unit}} is watch)",
+			"noisyList": "noise list (invalid rate >50%): {{count}}, top 5:",
+			"noisyEmpty": "noise list: 0",
+			"prune": "prune candidates: {{count}} (already excludes priority>={{priority}} (P75 dynamic) / work_method / memories with valid hits; low quality only means low heat, not safe to delete)",
+			"span": "oldest record is {{days}} {{unit}} old; {{note}}",
+			"spanNote": "the cold label needs records older than 14{{unit}} to be observable",
+			"title": "L1 quality summary",
+			"error": "stats failed: {{message}}"
+		},
+		"l1": {
+			"cooldown": "L1 memory extraction failed {{failures}} times in a row; automatic extraction is paused. Retry manually with /my-memory:l1-trigger or check the logs.",
+			"status": {
+				"dispatching": "⚙L1 {{min}}m (subagent dispatching)",
+				"alive": "⚙L1 {{min}}m (subagent alive)",
+				"exited": "⚙L1 {{min}}m (subagent exited)"
+			},
+			"notify": {
+				"noProfile": "L1 scheduler is not initialized (no active profile)",
+				"busy": "L1 extraction is already queued or running",
+				"unpaused": "L1 circuit breaker reset; the queued job will run",
+				"noIncrement": "No new L0 data; manual trigger skipped",
+				"enqueueFailed": "Failed to enqueue L1",
+				"enqueued": "L1 extraction enqueued"
+			},
+			"card": {
+				"hardCap": {
+					"title": "L1 extraction was stopped at the hard cap",
+					"line1": "job {{id}} (source {{source}}) exceeded {{min}} minutes without committing; subagent stopped",
+					"line2": "This batch was not committed ⇒ the cursor did not advance; it will be retried next round; {{failures}}/{{threshold}} consecutive failures",
+					"line3Confirmed": "Post-kill repair complete (shard tail / write lock / cursor verified)",
+					"line3Unconfirmed": "**Could not confirm the stop**; this layer is held and will not accept new tasks",
+					"detail": "{{note}}\nIn-process log: memoryDB/logs/l1.log"
+				},
+				"dispatchFailed": {
+					"title": "L1 extraction dispatch failed",
+					"line": "job {{id}}, {{failures}}/{{threshold}} consecutive failures"
+				}
+			},
+			"valueCheck": {
+				"skip": {
+					"title": "L1 value check did not take effect (fail-open, writing as-is)",
+					"line": "Value check skipped: failed to extract the criteria (is the marked section still in {{file}}?)",
+					"detail": "Impact: this batch was not filtered for \"worth keeping\". The criteria file shares its source with the extraction rules; it recovers automatically once the md is fixed."
+				},
+				"callFailed": {
+					"title": "L1 value check call failed (fail-open, writing as-is)"
+				},
+				"error": {
+					"title": "L1 value check error (fail-open, writing as-is)"
+				}
+			},
+			"commit": {
+				"vectorFailed": {
+					"title": "L1 records were written, but vectorization failed",
+					"hint": "Impact: this batch cannot be recalled (missing vector store entries); run /my-memory:l1:embedding:backfill to fix"
+				},
+				"mainAgent": "L1 commit: {{written}} records committed",
+				"mainAgentVectors": "L1 commit: {{written}} records committed, vectorized +{{inserted}}/-{{deleted}}"
+			},
+			"scenePool": {
+				"writeFailed": {
+					"title": "Failed to write the scene pool",
+					"line1": "Records were written with the correct scene name; missing pool entries will be rebuilt in the next batch (idempotent)",
+					"line2": "Impact: new scenes in this batch will not appear in the select-l1-scenes list immediately, which may overcount unclassified records"
+				}
+			}
+		},
+		"l2": {
+			"cooldown": "L2 scene organization failed {{failures}} times in a row; automatic extraction is paused. Retry manually with /my-memory:l2-trigger or check the logs.",
+			"status": {
+				"dispatching": "⚙L2 {{min}}m (subagent dispatching)",
+				"alive": "⚙L2 {{min}}m (subagent alive)",
+				"exited": "⚙L2 {{min}}m (subagent exited)"
+			},
+			"notify": {
+				"noProfile": "L2 scheduler is not initialized (no active profile)",
+				"busy": "L2 scene organization is already queued or running",
+				"unpaused": "L2 circuit breaker reset; the queued job will run",
+				"noRecords": "No new records for L2 (cursor is up to date)",
+				"enqueueFailed": "Failed to enqueue L2",
+				"enqueued": "L2 scene organization enqueued ({{n}} records)"
+			},
+			"card": {
+				"hardCap": {
+					"title": "L2 scene organization was stopped at the hard cap",
+					"line1": "job {{id}} (source {{source}}) exceeded {{min}} minutes without committing; subagent stopped",
+					"line2": "This batch was not committed ⇒ the cursor did not advance; it will be retried next round; {{failures}}/{{threshold}} consecutive failures",
+					"line3Confirmed": "Post-kill repair complete (temp files / index / members / write lock verified)",
+					"line3Unconfirmed": "**Could not confirm the stop**; this layer is held and will not accept new tasks",
+					"detail": "{{note}}\nIn-process log: memoryDB/logs/l2.log"
+				},
+				"dispatchFailed": {
+					"title": "L2 scene organization dispatch failed",
+					"line": "job {{id}}, {{failures}}/{{threshold}} consecutive failures"
+				}
+			}
+		},
+		"embed": {
+			"noEmbeddingConfigBackfill": "memory-system-model.json has no embedding config; cannot backfill",
+			"noEmbeddingConfigRebuild": "memory-system-model.json has no embedding config; cannot rebuild",
+			"clearOldFailed": "Failed to clear old vectors: {{message}}",
+			"rebuildConsistencyError": "Consistency error after rebuild: index {{indexRows}} rows / vectors {{vectorRows}} rows / aligned {{aligned}} rows",
+			"rebuildConsistencyCheckFailed": "Post-rebuild consistency self-check failed: {{message}}",
+			"statusHeader": "L1 vectorization status:",
+			"statusTotal": "  Total records: {{n}}",
+			"statusVectorized": "  Vectorized: {{n}}",
+			"statusUnvectorized": "  Not vectorized: {{n}}",
+			"statusReady": "  Ready to backfill: {{mark}}",
+			"unvectorizedIdsHeader": "Unvectorized record ids (first {{limit}}):",
+			"remainingHidden": "  ... {{n}} more not shown",
+			"backfillHint": "Hint: run /vectorize-backfill to start backfilling",
+			"allVectorized": "✅ All L1 records are vectorized",
+			"storeIntegrityCheckFailed": "vector store integrity check failed: {{message}}",
+			"storeIntegrityDetail": "index {{indexRows}} rows / vectors {{vectorRows}} rows / aligned {{aligned}} rows",
+			"storeIntegrityTitle": "Vector store consistency error (recall will be empty)",
+			"storeIntegrityHint": "Run /my-memory:l1:embedding:rebuild to rebuild"
+		},
+		"recall": {
+			"header": "=== L1 atomic memory recall ===",
+			"summary": "Recalled {{n}} L1 records:\n",
+			"remainingHidden": "... {{n}} more not shown"
+		},
+		"lock": {
+			"busyWithOwner": "Another subagent is writing this layer ({{layer}}, holder pid={{pid}}, last heartbeat {{age}}s ago): this write is rejected, end this round immediately and do not attempt any further writes.",
+			"busy": "Another subagent is writing this layer ({{layer}}): this write is rejected, end this round immediately and do not attempt any further writes.",
+			"stopRequested": "Stop requested ({{layer}} layer exceeded the hard limit): this write is rejected, end this round immediately and do not attempt any further writes."
+		},
+		"model": {
+			"command": {
+				"description": "Interactively configure the memory system's backend LLM, Embedding, and vectorization"
+			},
+			"noProfile": "No active memory profile",
+			"needUI": "This command needs the Pi interactive UI; run it in the TUI",
+			"selectSection": "Choose a section to modify:",
+			"option": {
+				"setLlm": "Set backend LLM",
+				"setEmbedding": "Set Embedding service",
+				"setVectorization": "Set vectorization",
+				"done": "Done",
+				"keepKey": "Keep current API Key",
+				"newKey": "Enter a new API Key",
+				"inputKey": "Enter API Key",
+				"cancel": "Cancel",
+				"keepOn": "Keep enabled",
+				"keepOff": "Keep disabled",
+				"editThreshold": "Change trigger threshold",
+				"enableVec": "Enable vectorization",
+				"disableVec": "Disable vectorization"
+			},
+			"state": {
+				"on": "enabled",
+				"off": "disabled"
+			},
+			"configFailed": "Configuration failed: {{message}}",
+			"noModels": "Pi has no selectable models. Add one via /login or the Pi model configuration first.",
+			"selectLlm": "Choose the memory system backend LLM",
+			"llmSaved": "Backend LLM saved: {{model}}",
+			"save": {
+				"llm": {
+					"title": "Save backend model",
+					"body": "The memory system backend LLM will use {{model}}. This does not change the current chat model."
+				},
+				"embedding": {
+					"title": "Save Embedding configuration",
+					"body": "Model: {{model}}\nDimensions: {{dimensions}}\nURL: {{url}}\nAPI Key: {{key}}"
+				}
+			},
+			"ask": {
+				"url": "Embedding OpenAI-compatible API base URL",
+				"keyPlaceholder": "Enter the key; leave empty to cancel this setup",
+				"modelName": "Embedding model name",
+				"dimensions": "Embedding output dimensions",
+				"threshold": "How many L1 records before vectorization starts"
+			},
+			"urlInvalid": "The address must be a valid http:// or https:// URL; the existing configuration was not changed.",
+			"keyWarning": "The Pi input box does not mask passwords; the key may be visible while you type. The key is written to the current profile's config file.",
+			"keyEmpty": "API Key cannot be empty; the existing configuration was not changed.",
+			"modelNameEmpty": "Model name cannot be empty; the existing configuration was not changed.",
+			"dimensionsInvalid": "Dimensions must be a positive integer; the existing configuration was not changed.",
+			"dimUnreadable": "The existing vector store dimensions cannot be read read-only; nothing was changed to avoid saving an incompatible configuration.",
+			"dimensionMismatch": "The existing vector store uses {{existing}} dimensions and cannot be switched directly to {{requested}} dimensions. The existing configuration was not changed to avoid later recall failures.",
+			"keyKept": "keeping current value",
+			"keyFilled": "entered (not echoed)",
+			"embeddingSaved": "Embedding configuration saved. Restart Pi to ensure the new configuration takes effect for all background processes.",
+			"thresholdInvalid": "The threshold must be a positive integer; the vectorization configuration was not changed.",
+			"vec": {
+				"prompt": "Vectorization is currently {{state}}; {{count}} L1 records; trigger threshold is {{threshold}} records. Once enabled it is used for L1 semantic recall and deduplication.",
+				"needEmbedding": "Configure a valid Embedding URL and API Key first; vectorization stays disabled.",
+				"confirmOn": "Start generating vectors for L1 memories after {{threshold}} records, enabling semantic recall and deduplication. Run the backfill command manually later for existing records if needed.",
+				"confirmOff": "Disabling stops new L1 vector writes; existing vectors remain recallable, but new memories will not enter semantic recall or vector-dedup candidates.",
+				"enabledNotice": "Vectorization enabled; no vectors are written until the threshold is reached.",
+				"disabledNotice": "Vectorization disabled.",
+				"state": {
+					"disabled": "disabled · threshold {{threshold}} · new vector writes are off",
+					"noEmbedding": "enabled · threshold {{threshold}} · missing a valid Embedding configuration",
+					"below": "enabled · threshold {{threshold}} · {{remaining}} to go",
+					"ready": "enabled · threshold {{threshold}} · new vector write conditions met"
+				}
+			},
+			"peek": {
+				"description": "Read-only view of the current memory model and vectorization status",
+				"failed": "Read-only check failed: {{message}}",
+				"llmConfigured": "{{model}} (backend configured)",
+				"llmUnresolved": "{{model}} (unresolved, falls back to the current Pi model at runtime)",
+				"llmFollowing": "{{model}} (following the current Pi model)",
+				"noModel": "not configured, and the current session has no model",
+				"notConfigured": "not configured",
+				"embeddingOk": "{{model}} · {{dimensions}} dims · API Key set",
+				"embeddingIncomplete": "incomplete configuration (missing key or URL)",
+				"vectorUnreadable": "Vector store    unreadable (read-only check)",
+				"vectorLine": "Vector records  {{count}} records",
+				"vectorLineDim": "Vector records  {{count}} records · {{dimensions}} dims",
+				"title": "Memory model status · profile: {{profile}}",
+				"llmLine": "Backend LLM     {{label}}",
+				"embeddingLine": "Embedding       {{label}}",
+				"vectorizationLine": "Vectorization   {{state}}",
+				"l1Line": "L1 memory       {{count}} records (last 365 days)",
+				"recallLine": "Semantic recall {{state}}",
+				"recallReady": "has usable vectors",
+				"recallUnavailable": "currently unavailable or has no vectors yet",
+				"readonlyNote": "Read-only check: no configuration or database was modified, and no remote service was called."
+			}
+		},
+		"skill": {
+			"command": {
+				"description": "Learn a reusable skill from source code, docs, or conversation. Usage: /learn [source]"
+			},
+			"reviewInProgress": "Skill review already in progress",
+			"learning": "Learning skill from your request...",
+			"status": {
+				"reviewing": "⚙review",
+				"waitingReply": "Waiting for full reply"
+			}
+		},
+		"review": {
+			"command": {
+				"description": "Manually trigger a full memory review of the entire conversation.",
+				"usage": "Usage: /remember"
+			},
+			"inProgress": "Memory review already in progress",
+			"started": "Memory review started via pi-subagents"
+		}
+	}
+}

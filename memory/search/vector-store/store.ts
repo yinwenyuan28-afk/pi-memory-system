@@ -21,6 +21,7 @@ import type Database from "better-sqlite3";
 import { loadEmbeddingConfig } from "../embedding/config.ts";
 import { MEMORY_DB_DIR, VECTORS_DIR } from "../../paths.ts";
 import { logEvent, noticeCard } from "../../../util/notice.ts";
+import { t } from "../../../i18n/index.ts";
 
 /** 搜索结果 hit */
 export interface VectorHit {
@@ -169,7 +170,7 @@ async function createSqliteVecStore(vectorsDir: string, profilePath: string): Pr
   // 完整性检查
   const integrity = db.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
   if (integrity.integrity_check !== "ok") {
-    throw new Error(`vector store 完整性检查失败：${integrity.integrity_check}`);
+    throw new Error(t("ext.embed.storeIntegrityCheckFailed", { message: integrity.integrity_check }));
   }
 
   // 一致性自检（拒绝静默失效）：映射表与向量表行数/可对齐行数不一致时必须显式告警。
@@ -181,13 +182,16 @@ async function createSqliteVecStore(vectorsDir: string, profilePath: string): Pr
     .get() as { n: number };
   if (indexCount.n !== vectorCount.n || alignedCount.n !== vectorCount.n) {
     // 一致性异常 = 「召回恒空」的静默失效：必须让用户看到（会话级去重，不重复刷）
-    const detail =
-      `映射表 ${indexCount.n} 行 / 向量表 ${vectorCount.n} 行 / 可对齐 ${alignedCount.n} 行`;
+    const detail = t("ext.embed.storeIntegrityDetail", {
+      indexRows: indexCount.n,
+      vectorRows: vectorCount.n,
+      aligned: alignedCount.n,
+    });
     logEvent("store", `⚠️ 一致性异常：${detail} —— 召回会失败（恒空），请执行 /my-memory:l1:embedding:rebuild`, profilePath);
     noticeCard({
       level: "error",
-      title: "向量库一致性异常（召回会恒空）",
-      lines: [detail, "执行 /my-memory:l1:embedding:rebuild 重建"],
+      title: t("ext.embed.storeIntegrityTitle"),
+      lines: [detail, t("ext.embed.storeIntegrityHint")],
       dedupKey: "vector-store-integrity",
     });
   } else {

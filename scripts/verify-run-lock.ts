@@ -25,6 +25,11 @@ import {
 	type RunLockOwner,
 } from "../memory/pipeline/run-lock.ts";
 
+// 断言里含中文（源语言）文案：显式固定语言，避免在英文系统/英文环境下把「文案正确」误判成失败。
+// i18n 在首次 t() 时才解析语言，故本赋值必定先于解析生效。
+process.env.LC_ALL = "zh-CN";
+process.env.LANG = "zh-CN";
+
 let pass = 0;
 let fail = 0;
 function check(name: string, cond: boolean, extra = ""): void {

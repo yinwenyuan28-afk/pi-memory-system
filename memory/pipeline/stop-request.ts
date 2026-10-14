@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 import { MEMORY_DB_DIR, STOP_REQUEST_FILE_PREFIX } from "../paths.ts";
 import { DEFAULT_STOP_REQUEST_TTL_MS, loadSubagentTimeouts } from "./timeout-config.ts";
+import { t } from "../../i18n/index.ts";
 
 /** 标记的默认有效期：超过它视为崩溃残留（可用配置中心 `subagent.stopRequestTtlMs` 覆盖）。 */
 export const STOP_REQUEST_TTL_MS = DEFAULT_STOP_REQUEST_TTL_MS;
@@ -89,5 +90,5 @@ export function isStopRequested(profilePath: string, layer: string, nowMs = Date
 
 /** 给写工具用的统一拒绝文案（子代理读到它会收尾）。 */
 export function stopRequestedMessage(layer: string): string {
-	return `已请求停止（${layer} 层超过硬上限）：本次写入被拒绝，请立即结束本轮，不要再尝试任何写入。`;
+	return t("ext.lock.stopRequested", { layer });
 }

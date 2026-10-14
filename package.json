@@ -20,6 +20,7 @@
 		"util/",
 		"skill/",
 		"config/",
+		"i18n/",
 		"prompts/",
 		"agents/",
 		"viewers/",
@@ -29,7 +30,7 @@
 	],
 	"scripts": {
 		"check-types": "node scripts/check-types.mjs",
-		"test": "node scripts/verify-prompt-contracts.mjs",
+		"test": "node scripts/verify-prompt-contracts.mjs && node scripts/verify-i18n.mjs",
 		"viewer": "node --experimental-strip-types scripts/l1-admin/viewer.mts"
 	},
 	"dependencies": {

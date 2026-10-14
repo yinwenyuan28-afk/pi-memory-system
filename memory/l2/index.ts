@@ -11,11 +11,12 @@ import { repairSceneMembers, syncSceneIndex } from "./commit-tool.ts";
 import { decideManualTrigger, type PipelineJobResult, type PipelineJobScope, type PipelineWorker } from "../pipeline/worker.ts";
 import { consumePendingTrigger } from "../pipeline/pending-trigger.ts";
 import { logEvent, noticeCard } from "../../util/notice.ts";
+import { t } from "../../i18n/index.ts";
 import { clearPipelineStatus, setPipelineStatus, type PipelineStatusReporter } from "../pipeline/status.ts";
 
 /** 熔断提示文案（notify 与卡片共用，避免两处漂移）。 */
 function l2CoolDownMessage(failures: number): string {
-	return `L2 场景组织连续失败 ${failures} 次，已暂停自动提取。用 /my-memory:l2-trigger 手动重试或检查日志。`;
+	return t("ext.l2.cooldown", { failures });
 }
 
 /**
@@ -97,8 +98,18 @@ export function setupL2Organizer(
 			profilePath,
 			// 心跳在派发之前就启动，pid 那时还没有 —— 从运行记录惰性取
 			getPid: () => readSubagentRun(profilePath, "l2", job.id)?.pid,
-			onTick: (info) =>
-				setPipelineStatus(status, ctx, "l2", `⚙L2 ${(info.elapsedMs / 60000).toFixed(1)}m（子代理 ${info.alive === undefined ? "派发中" : info.alive ? "存活" : "已退出"}）`, scope),
+			onTick: (info) => {
+				const min = (info.elapsedMs / 60000).toFixed(1);
+				setPipelineStatus(
+					status, ctx, "l2",
+					info.alive === undefined
+						? t("ext.l2.status.dispatching", { min })
+						: info.alive
+							? t("ext.l2.status.alive", { min })
+							: t("ext.l2.status.exited", { min }),
+					scope,
+				);
+			},
 		});
 		let watchingExit = true;
 		let waitP: ReturnType<typeof waitJobWithLiveness> | undefined;
@@ -175,13 +186,13 @@ export function setupL2Organizer(
 			logEvent("l2", `organize stopped at hard cap (${l2StopDetail})`, profilePath);
 			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
-				title: "L2 场景组织已在硬上限被停掉",
+				title: t("ext.l2.card.hardCap.title"),
 				lines: [
-					`job ${job.id}（来源 ${job.source}）超过 ${(to.hardMs / 60000).toFixed(0)} 分钟未提交，已停止子代理`,
-					`本批未提交 ⇒ 游标未推进，下一轮重做；连续失败 ${st.consecutiveFailures}/${L2_FAILURE_THRESHOLD}`,
-					stop.killConfirmed ? "杀后修复已完成（临时文件/索引/成员/写锁已核）" : "**未能确认停止**，本层已持有，暂不接受新任务",
+					t("ext.l2.card.hardCap.line1", { id: job.id, source: job.source, min: (to.hardMs / 60000).toFixed(0) }),
+					t("ext.l2.card.hardCap.line2", { failures: st.consecutiveFailures, threshold: L2_FAILURE_THRESHOLD }),
+					stop.killConfirmed ? t("ext.l2.card.hardCap.line3Confirmed") : t("ext.l2.card.hardCap.line3Unconfirmed"),
 				],
-				detail: `${stop.note}\n进程内日志：memoryDB/logs/l2.log`,
+				detail: t("ext.l2.card.hardCap.detail", { note: stop.note }),
 			});
 			if (st.consecutiveFailures >= L2_FAILURE_THRESHOLD && !st.cooledDown) {
 				st.cooledDown = true;
@@ -196,8 +207,8 @@ export function setupL2Organizer(
 			logEvent("l2", `organize failed: ${l2FailMsg}`, profilePath);
 			if (!scope || scope.isCurrent()) noticeCard({
 				level: "warning",
-				title: "L2 场景组织派发失败",
-				lines: [`job ${job.id}，连续失败 ${st.consecutiveFailures}/${L2_FAILURE_THRESHOLD}`],
+				title: t("ext.l2.card.dispatchFailed.title"),
+				lines: [t("ext.l2.card.dispatchFailed.line", { id: job.id, failures: st.consecutiveFailures, threshold: L2_FAILURE_THRESHOLD })],
 				detail: l2FailMsg,
 			});
 			if (st.consecutiveFailures >= L2_FAILURE_THRESHOLD && !st.cooledDown) {
@@ -225,7 +236,7 @@ export function setupL2Organizer(
 	async function triggerManual(ctx?: ExtensionContext): Promise<void> {
 		const profilePath = getProfilePath();
 		if (!profilePath) {
-			if (ctx) ctx.ui.notify("L2 调度器未初始化（缺少有效 profile）", "error");
+			if (ctx) ctx.ui.notify(t("ext.l2.notify.noProfile"), "error");
 			return;
 		}
 		try {
@@ -236,7 +247,7 @@ export function setupL2Organizer(
 				cooledDown: loadL2State().cooledDown,
 			});
 			if (verdict === "refuse-busy") {
-				if (ctx) ctx.ui.notify("L2 场景组织已在队列或运行中", "warning");
+				if (ctx) ctx.ui.notify(t("ext.l2.notify.busy"), "warning");
 				return;
 			}
 			if (verdict === "unpause-queued") {
@@ -249,7 +260,7 @@ export function setupL2Organizer(
 				if (ctx) pipeline.setCachedCtx(ctx);
 				pipeline.kick();
 				logEvent("l2", "manual trigger: 复位熔断，队列中的 job 将执行", profilePath);
-				if (ctx) ctx.ui.notify("L2 已复位熔断，排队中的任务将执行", "info");
+				if (ctx) ctx.ui.notify(t("ext.l2.notify.unpaused"), "info");
 				return;
 			}
 		} catch {
@@ -258,7 +269,7 @@ export function setupL2Organizer(
 		const watermark = loadL2Cursor(profilePath).lastProcessedAt;
 		const stageCount = readAllRecords(profilePath).filter((r) => r.epoch > watermark).length;
 		if (stageCount === 0) {
-			if (ctx) ctx.ui.notify("L2 无新 records（cursor 已是最新）", "info");
+			if (ctx) ctx.ui.notify(t("ext.l2.notify.noRecords"), "info");
 			logEvent("l2", "manual trigger: no new records", profilePath);
 			return;
 		}
@@ -270,14 +281,14 @@ export function setupL2Organizer(
 		if (ctx) pipeline.setCachedCtx(ctx);
 		const queued = pipeline.enqueueL2("manual");
 		if (!queued) {
-			if (ctx) ctx.ui.notify("L2 入队失败", "error");
+			if (ctx) ctx.ui.notify(t("ext.l2.notify.enqueueFailed"), "error");
 			return;
 		}
 		if (queued.duplicate) {
-			if (ctx) ctx.ui.notify("L2 场景组织已在队列或运行中", "warning");
+			if (ctx) ctx.ui.notify(t("ext.l2.notify.busy"), "warning");
 			return;
 		}
-		if (ctx) ctx.ui.notify(`L2 场景组织已入队（${stageCount} records）`, "info");
+		if (ctx) ctx.ui.notify(t("ext.l2.notify.enqueued", { n: stageCount }), "info");
 		pipeline.kick();
 	}
 

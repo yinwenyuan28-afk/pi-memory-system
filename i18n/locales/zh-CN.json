@@ -1,0 +1,504 @@
+{
+	"ext": {
+		"notify": {
+			"noProfile": "无活跃 profile"
+		},
+		"error": {
+			"l1NotInitialized": "L1 调度器未初始化（扩展加载中或未启用）",
+			"l2NotInitialized": "L2 调度器未初始化（扩展加载中或未启用）",
+			"l3NotInitialized": "L3 persona 调度器未初始化"
+		},
+		"card": {
+			"expandHint": "（展开查看详情）",
+			"detailOverflow": "…（另有 {{n}} 行未显示，完整内容见 memoryDB/logs/）",
+			"promptAssets": {
+				"title": "提示词模板缺失/损坏（{{count}} 项）"
+			},
+			"subagent": {
+				"title": "子代理派发不可用，L1/L2/L3 记忆提取将无法运行",
+				"missing": "子代理定义缺失：{{dir}} 下缺少 {{names}}",
+				"allDefs": "全部定义",
+				"advice": "子代理定义需随插件分发，不能只存在于 ~/.pi/agent/agents/（发布包应含 agents/*.md 共 6 个）",
+				"detailSuffix": "\n\n自建 spawn 只需要 agents/*.md 与 pi 入口，不依赖任何其它扩展。"
+			}
+		},
+		"status": {
+			"l1PausedQueued": "L1 已暂停·有排队任务",
+			"l1Paused": "L1 已暂停",
+			"l1Queued": "L1 排队中",
+			"l1Remaining": "L1 {{n}}t",
+			"memoryActive": "Memory {{detail}}",
+			"memoryBoth": "Memory {{l1}} · {{detail}}",
+			"memoryL1": "Memory {{l1}}",
+			"memoryBare": "Memory",
+			"full": "{{memory}} | Skill {{skill}}"
+		},
+		"command": {
+			"language": {
+				"description": "查看或切换界面语言。用法：/my-memory:language [auto|{{options}}]",
+				"usage": "用法：/my-memory:language [auto|{{options}}]"
+			},
+			"l1Mode": {
+				"description": "切换 L1 提取模式：code（work_fact/work_task/work_method/work_artifact）或 chat（persona/episodic/instruction）。用法：/my-memory:l1-mode [code|chat]",
+				"usage": "用法：/my-memory:l1-mode [code|chat]"
+			},
+			"l3Trigger": {
+				"description": "手动触发 L3 Persona 生成（从 L2 场景更新画像提议稿 USER-temp.md，再由用户并入 USER.md）。用法：/my-memory:l3-trigger",
+				"usage": "用法：/my-memory:l3-trigger"
+			},
+			"profile": {
+				"description": "列出或切换记忆 profile。用法：/my-memory:profile [list|switch <name>]"
+			},
+			"l2Trigger": {
+				"description": "手动入队一次 L2 场景组织。用法：/my-memory:l2-trigger"
+			},
+			"subagentKill": {
+				"description": "手动停掉某层的后台子代理（硬上限之外用）。用法：/my-memory:subagent-kill <l1|l2|l3> [jobId]"
+			},
+			"l2ArchiveList": {
+				"description": "列出 L2 归档层的内容与账目（谁在什么时候为什么搬的）。用法：/my-memory:l2:archive-list"
+			},
+			"l2Archive": {
+				"description": "手工把一个场景块搬进归档层。用法：/my-memory:l2:archive <文件名.md> --reason \"为什么搬它\""
+			},
+			"l2Restore": {
+				"description": "把一个归档的块搬回场景目录。用法：/my-memory:l2:restore <文件名.md>"
+			},
+			"l1Trigger": {
+				"description": "手动入队一次 L1 提取（绕过 L1_INTERVAL 攒轮数）。用法：/my-memory:l1-trigger"
+			},
+			"embeddingList": {
+				"description": "查询 L1 records 向量化状态。用法：/my-memory:l1:embedding:list [limit=10]"
+			},
+			"embeddingBackfill": {
+				"description": "批量将未向量化的 L1 records 嵌入向量并入库。用法：/my-memory:l1:embedding:backfill"
+			},
+			"embeddingRebuild": {
+				"description": "清空 vector store 并重新嵌入所有 L1 records（解决旧嵌入污染）。用法：/my-memory:l1:embedding:rebuild"
+			},
+			"l1Fix": {
+				"description": "手工修正/作废一条 L1 记忆。用法：/my-memory:l1:fix <id> --action rewrite|tombstone --content \"新内容\" --evidence \"证据\" [--force] [--priority 80] [--reason 理由]"
+			},
+			"l1Task": {
+				"description": "任务生命周期标记（work_task）。用法：/my-memory:l1:task [list|done|drop|reopen] [id...] [--all] [--reason \"原因\"]"
+			},
+			"l1Health": {
+				"description": "L1 库健康指标（超长/test 残留/孤儿 stats/自造 id/畸形行/错误串）"
+			},
+			"l1Quality": {
+				"description": "按质量分排行展示 L1 原子记忆（effective*decay*(1-min(invalid/hits,0.8))，days 按活跃会话日计）。用法：/my-memory:l1:quality [top=20]"
+			},
+			"l1Stats": {
+				"description": "汇总 L1 质量分布与冷/噪清单。用法：/my-memory:l1:stats"
+			}
+		},
+		"language": {
+			"current": "当前语言：{{locale}}（配置：{{configured}}）。可用：{{options}}",
+			"switched": "语言配置已设为「{{configured}}」，当前生效 {{locale}}。执行 /reload 刷新命令说明与卡片；状态栏即时生效。",
+			"unknown": "不认识的语言「{{value}}」。可用：{{options}}，或 auto",
+			"auto": "自动（跟随系统区域）",
+			"writeFailed": "写入语言配置失败：{{message}}"
+		},
+		"l1Mode": {
+			"current": "当前 L1 模式: {{mode}}。用法：/my-memory:l1-mode [code|chat]",
+			"switched": "L1 模式已切换为：{{mode}}"
+		},
+		"l3": {
+			"queued": "已入队一次 L3 persona 生成",
+			"cooldown": "L3 画像连续失败 {{failures}} 次，已暂停自动更新。用 /my-memory:l3-trigger 手动重试或检查日志。",
+			"status": {
+				"dispatching": "⚙L3 {{min}}m（子代理 派发中）",
+				"alive": "⚙L3 {{min}}m（子代理 存活）",
+				"exited": "⚙L3 {{min}}m（子代理 已退出）"
+			},
+			"notify": {
+				"noProfile": "L3 调度器未初始化（缺少有效 profile）",
+				"busy": "L3 画像已在队列或运行中",
+				"unpaused": "L3 已复位熔断，排队中的任务将执行"
+			},
+			"card": {
+				"failed": {
+					"title": "L3 画像更新失败",
+					"line": "连续失败 {{failures}}/{{threshold}}"
+				},
+				"hardCap": {
+					"title": "L3 画像更新已在硬上限被停掉",
+					"line1": "job {{id}}（来源 {{source}}）超过 {{min}} 分钟未提交，已停止子代理",
+					"line2Confirmed": "live USER.md 未被触碰（L3 只写 {{file}}，原子写 + 每轮备份）",
+					"line2Unconfirmed": "**未能确认停止**，本层已持有，暂不接受新任务",
+					"detail": "{{note}}\n进程内日志：memoryDB/logs/l3.log"
+				},
+				"hardCapStopped": "子代理超过硬上限被停掉（job {{id}}）",
+				"dispatchFailed": "派发失败：{{message}}"
+			},
+			"proposal": {
+				"title": "画像提议（待并入 USER.md）：＋{{added}} / －{{removed}}",
+				"noChange": {
+					"title": "画像本轮无改动（L3 已跑完）",
+					"line": "提议稿（{{file}}）条目数 {{n}}，与跑前一致"
+				},
+				"counts": "条目数 {{before}} → {{after}}",
+				"writtenTo": "写入 {{file}}；live USER.md 未动，确认后手工并入",
+				"addItem": "＋ {{text}}",
+				"removeItem": "－ {{text}}",
+				"addedMore": "＋ …另 {{n}} 条",
+				"removedMore": "－ …另 {{n}} 条",
+				"detailHeader": "提议稿：{{file}}（live USER.md 未被 L3 修改，并入由用户手工完成）",
+				"detailAdded": "新增/改写 {{n}} 条：",
+				"detailRemoved": "删除 {{n}} 条："
+			}
+		},
+		"profile": {
+			"list": "Profiles（当前激活标 *）:\n{{list}}",
+			"switched": "已切换到 profile：{{name}}",
+			"failed": "失败：{{message}}",
+			"usage": "用法：/my-memory:profile [list|switch <name>]"
+		},
+		"subagentKill": {
+			"noProfile": "未取得 profile，无法停止",
+			"usage": "用法：/my-memory:subagent-kill <l1|l2|l3> [jobId]",
+			"none": "没有正在运行的子代理（{{layer}} 层没有本扩展的运行记录）",
+			"stopped": "{{layer}} 子代理已停掉，杀后修复已完成",
+			"unconfirmed": "未能确认停止：{{note}}（该层已持有）"
+		},
+		"arch": {
+			"noProfile": "未取得 profile",
+			"empty": "归档层是空的（还没搬过任何块）",
+			"listTitle": "归档层 {{count}} 个块：\n{{list}}",
+			"noRecord": "（无记录）",
+			"entry": "{{filename}}｜{{when}}｜成员 {{members}}｜{{reason}}",
+			"archiveUsage": "用法：/my-memory:l2:archive <文件名.md> --reason \"为什么搬它\"",
+			"reasonRequired": "必须给 --reason（这是归档唯一的审计凭据）",
+			"archiveFailed": "归档失败：{{error}}",
+			"archived": "已搬进归档层：{{filename}}（{{count}} 个成员随之保留）。搬回来：/my-memory:l2:restore {{filename}}",
+			"restoreUsage": "用法：/my-memory:l2:restore <文件名.md>",
+			"sceneFull": "场景目录已满（{{count}}/{{limit}}）：先把别的块归档或合并，腾出位置再恢复",
+			"restoreFailed": "恢复失败：{{error}}",
+			"restored": "已搬回场景目录：{{filename}}（{{count}} 个成员）"
+		},
+		"embedding": {
+			"statusTitle": "L1 向量化状态",
+			"queryFailed": "查询失败: {{message}}",
+			"allDone": "✅ 所有 {{total}} 条 L1 records 都已向量化，无需回填",
+			"precondition": "❌ 回填前置条件不满足：检查 embedding 配置 + vectorization.json（enabled=true）。未向量化 {{count}} 条",
+			"start": "开始回填：{{count}} 条待向量化",
+			"progress": "回填进度: {{done}}/{{total}}",
+			"done": "✅ 回填完成：成功 {{embedded}}/{{total}}，耗时 {{ms}}ms",
+			"doneFailed": "✅ 回填完成：成功 {{embedded}}/{{total}}，失败 {{failed}}，耗时 {{ms}}ms",
+			"errorBlock": "错误：\n{{errors}}",
+			"failed": "回填失败: {{message}}",
+			"noRecords": "❌ 没有 L1 records 可重建",
+			"rebuildStart": "开始 rebuild：清空 vector store + 重新嵌入 {{total}} 条 records",
+			"rebuildProgress": "rebuild 进度: cleared={{cleared}}, embedded={{embedded}}/{{total}}",
+			"rebuildDone": "✅ rebuild 完成：清空 {{cleared}} 条旧向量，重新嵌入 {{embedded}}/{{total}} 条，耗时 {{ms}}ms",
+			"rebuildDoneFailed": "✅ rebuild 完成：清空 {{cleared}} 条旧向量，重新嵌入 {{embedded}}/{{total}} 条，失败 {{failed}}，耗时 {{ms}}ms",
+			"rebuildFailed": "rebuild 失败: {{message}}"
+		},
+		"l1Fix": {
+			"usage": "用法：/my-memory:l1:fix <id> --action ... --content ... --evidence ...",
+			"ok": "L1 修正成功",
+			"rejected": "L1 修正被拒：{{error}}",
+			"reportTitle": "L1 修正结果",
+			"error": "l1:fix 异常：{{message}}"
+		},
+		"task": {
+			"state": {
+				"open": "待办",
+				"done": "已完成",
+				"dropped": "已废弃"
+			},
+			"act": {
+				"open": "重开",
+				"done": "标记完成",
+				"dropped": "标记废弃"
+			},
+			"noneOpen": "没有未关闭的 work_task（--all 可看已关闭的）",
+			"noneAny": "库里没有 work_task 记录",
+			"scopeAll": "全部",
+			"scopeOpen": "未关闭",
+			"listHeader": "{{scope}} work_task {{count}} 条（状态变更用 /my-memory:l1:task done|drop|reopen <id...>）:",
+			"columns": "状态 | 创建日 | pri | id | 正文",
+			"listTitle": "L1 任务清单",
+			"unknownSub": "未知子命令 {{sub}}（可用：list|done|drop|reopen）",
+			"usage": "用法：/my-memory:l1:task {{sub}} <id...> [--reason \"原因\"]",
+			"actFailed": "{{label}}失败：{{error}}",
+			"resultLine": "{{label}}：成功 {{changed}} / 幂等 {{noop}} / 失败 {{failed}}（分片 {{files}} 个）",
+			"itemOk": "✓ {{id}}  {{from}} → {{to}}",
+			"itemNoop": "= {{id}}  已是 {{to}}（无操作）",
+			"itemFail": "✗ {{id}}  {{error}}",
+			"stateTitle": "L1 任务状态",
+			"error": "l1:task 异常：{{message}}"
+		},
+		"health": {
+			"title": "L1 库体检",
+			"error": "l1:health 异常：{{message}}"
+		},
+		"quality": {
+			"tag": {
+				"hot": "热",
+				"warm": "温",
+				"cold": "冷",
+				"new": "新",
+				"noise": "噪",
+				"watch": "待观察"
+			},
+			"empty": "暂无 L1 records",
+			"clockActive": "days=活跃会话日",
+			"clockCalendar": "days=日历天(活跃日数据不可得)",
+			"header": "L1 质量排行（quality = effective * exp(-days/14) * (1-min(invalid/hits,0.8)) | 新记录 max(priority/100,0.3) | {{clock}}）:",
+			"columns": "rank | q | eff | hits/inv | decay | days | tag | pri | id | content(60)",
+			"title": "L1 质量排行",
+			"error": "quality 失败: {{message}}"
+		},
+		"stats": {
+			"unitActive": "活跃日",
+			"unitCalendar": "日历天",
+			"header": "L1 质量汇总: 总数={{total}} | 分布 {{dist}}",
+			"histogram": "直方图 q 0-2:{{a}} 2-4:{{b}} 4-6:{{c}} 6+:{{d}}",
+			"clockActive": "时钟: 活跃会话日 {{days}} 个 / 跨度 {{span}} 日历天（停工期间 days 不增长，单位={{unit}}）",
+			"clockCalendar": "时钟: 退化为日历天（未找到 l0/conversations 分片）",
+			"coldList": "冷清单 (>14{{unit}}0命中) {{count}}条 前5:",
+			"coldEmpty": "冷清单: 0（>14{{unit}}0命中暂无，7-14{{unit}}为待观察）",
+			"noisyList": "噪清单 (失效率>50%) {{count}}条 前5:",
+			"noisyEmpty": "噪清单: 0",
+			"prune": "淘汰候选 {{count}} 条（已排除 priority>={{priority}}(P75动态) / work_method / 有效命中过的记忆；quality 低只代表热度低，不代表可删）",
+			"span": "最早记录距今 {{days}} {{unit}}，{{note}}",
+			"spanNote": "冷标签需等记录>14{{unit}}后可观测",
+			"title": "L1 质量汇总",
+			"error": "stats 失败: {{message}}"
+		},
+		"l1": {
+			"cooldown": "L1 记忆提取连续失败 {{failures}} 次，已暂停自动提取。用 /my-memory:l1-trigger 手动重试或检查日志。",
+			"status": {
+				"dispatching": "⚙L1 {{min}}m（子代理 派发中）",
+				"alive": "⚙L1 {{min}}m（子代理 存活）",
+				"exited": "⚙L1 {{min}}m（子代理 已退出）"
+			},
+			"notify": {
+				"noProfile": "L1 调度器未初始化（缺少有效 profile）",
+				"busy": "L1 提取已在队列或运行中",
+				"unpaused": "L1 已复位熔断，排队中的任务将执行",
+				"noIncrement": "无 L0 增量数据，跳过手动触发",
+				"enqueueFailed": "L1 入队失败",
+				"enqueued": "L1 提取已入队"
+			},
+			"card": {
+				"hardCap": {
+					"title": "L1 提取已在硬上限被停掉",
+					"line1": "job {{id}}（来源 {{source}}）超过 {{min}} 分钟未提交，已停止子代理",
+					"line2": "本批未提交 ⇒ 游标未推进，下一轮重做；连续失败 {{failures}}/{{threshold}}",
+					"line3Confirmed": "杀后修复已完成（分片尾/写锁/游标已核）",
+					"line3Unconfirmed": "**未能确认停止**，本层已持有，暂不接受新任务",
+					"detail": "{{note}}\n进程内日志：memoryDB/logs/l1.log"
+				},
+				"dispatchFailed": {
+					"title": "L1 提取派发失败",
+					"line": "job {{id}}，连续失败 {{failures}}/{{threshold}}"
+				}
+			},
+			"valueCheck": {
+				"skip": {
+					"title": "L1 价值校验未生效（fail-open，照写）",
+					"line": "价值校验跳过：判据摘取失败（{{file}} 的标记段落是否还在？）",
+					"detail": "影响：本批记录未经过“值不值得留”的过滤。判据文件与提取规则同源，修好 md 后自动恢复。"
+				},
+				"callFailed": {
+					"title": "L1 价值校验调用失败（fail-open，照写）"
+				},
+				"error": {
+					"title": "L1 价值校验异常（fail-open，照写）"
+				}
+			},
+			"commit": {
+				"vectorFailed": {
+					"title": "L1 记录已落盘，但向量化写入失败",
+					"hint": "影响：这批记忆召回不到（向量库缺条目），需 /my-memory:l1:embedding:backfill 补"
+				},
+				"mainAgent": "L1 commit: {{written}} 条记录已提交",
+				"mainAgentVectors": "L1 commit: {{written}} 条记录已提交，向量化写入 +{{inserted}}/-{{deleted}} 条"
+			},
+			"scenePool": {
+				"writeFailed": {
+					"title": "场景池写入失败",
+					"line1": "记录已落盘且带正确场景名；池条目缺失将在下批重建（幂等）",
+					"line2": "影响：本批新场景不会立刻出现在 select-l1-scenes 清单里，可能多计未归类"
+				}
+			}
+		},
+		"l2": {
+			"cooldown": "L2 场景组织连续失败 {{failures}} 次，已暂停自动提取。用 /my-memory:l2-trigger 手动重试或检查日志。",
+			"status": {
+				"dispatching": "⚙L2 {{min}}m（子代理 派发中）",
+				"alive": "⚙L2 {{min}}m（子代理 存活）",
+				"exited": "⚙L2 {{min}}m（子代理 已退出）"
+			},
+			"notify": {
+				"noProfile": "L2 调度器未初始化（缺少有效 profile）",
+				"busy": "L2 场景组织已在队列或运行中",
+				"unpaused": "L2 已复位熔断，排队中的任务将执行",
+				"noRecords": "L2 无新 records（cursor 已是最新）",
+				"enqueueFailed": "L2 入队失败",
+				"enqueued": "L2 场景组织已入队（{{n}} records）"
+			},
+			"card": {
+				"hardCap": {
+					"title": "L2 场景组织已在硬上限被停掉",
+					"line1": "job {{id}}（来源 {{source}}）超过 {{min}} 分钟未提交，已停止子代理",
+					"line2": "本批未提交 ⇒ 游标未推进，下一轮重做；连续失败 {{failures}}/{{threshold}}",
+					"line3Confirmed": "杀后修复已完成（临时文件/索引/成员/写锁已核）",
+					"line3Unconfirmed": "**未能确认停止**，本层已持有，暂不接受新任务",
+					"detail": "{{note}}\n进程内日志：memoryDB/logs/l2.log"
+				},
+				"dispatchFailed": {
+					"title": "L2 场景组织派发失败",
+					"line": "job {{id}}，连续失败 {{failures}}/{{threshold}}"
+				}
+			}
+		},
+		"embed": {
+			"noEmbeddingConfigBackfill": "memory-system-model.json 无 embedding 配置，无法回填",
+			"noEmbeddingConfigRebuild": "memory-system-model.json 无 embedding 配置，无法 rebuild",
+			"clearOldFailed": "清理旧向量失败: {{message}}",
+			"rebuildConsistencyError": "重建后一致性异常：映射表 {{indexRows}} 行 / 向量表 {{vectorRows}} 行 / 可对齐 {{aligned}} 行",
+			"rebuildConsistencyCheckFailed": "重建后一致性自检失败: {{message}}",
+			"statusHeader": "L1 向量化状态:",
+			"statusTotal": "  总 records: {{n}}",
+			"statusVectorized": "  已向量化: {{n}}",
+			"statusUnvectorized": "  未向量化: {{n}}",
+			"statusReady": "  可回填: {{mark}}",
+			"unvectorizedIdsHeader": "未向量化 record id（前 {{limit}} 条）:",
+			"remainingHidden": "  ... 还有 {{n}} 条未显示",
+			"backfillHint": "提示：使用 /vectorize-backfill 触发回填",
+			"allVectorized": "✅ 所有 L1 records 都已向量化",
+			"storeIntegrityCheckFailed": "vector store 完整性检查失败：{{message}}",
+			"storeIntegrityDetail": "映射表 {{indexRows}} 行 / 向量表 {{vectorRows}} 行 / 可对齐 {{aligned}} 行",
+			"storeIntegrityTitle": "向量库一致性异常（召回会恒空）",
+			"storeIntegrityHint": "执行 /my-memory:l1:embedding:rebuild 重建"
+		},
+		"recall": {
+			"header": "=== L1 原子记忆召回 ===",
+			"summary": "召回 {{n}} 条 L1 records：\n",
+			"remainingHidden": "... 还有 {{n}} 条未显示"
+		},
+		"lock": {
+			"busyWithOwner": "另一子代理正在写本层（{{layer}}，占用人 pid={{pid}}，最后心跳 {{age}}s 前）：本次写入被拒绝，请立即结束本轮，不要再尝试任何写入。",
+			"busy": "另一子代理正在写本层（{{layer}}）：本次写入被拒绝，请立即结束本轮，不要再尝试任何写入。",
+			"stopRequested": "已请求停止（{{layer}} 层超过硬上限）：本次写入被拒绝，请立即结束本轮，不要再尝试任何写入。"
+		},
+		"model": {
+			"command": {
+				"description": "交互式配置记忆系统的后台 LLM、Embedding 和向量化"
+			},
+			"noProfile": "当前没有激活的记忆 profile",
+			"needUI": "此命令需要 Pi 交互界面，请在 TUI 中运行",
+			"selectSection": "请选择要修改的部分：",
+			"option": {
+				"setLlm": "设置后台 LLM",
+				"setEmbedding": "设置 Embedding 服务",
+				"setVectorization": "设置向量化",
+				"done": "完成",
+				"keepKey": "保留当前 API Key",
+				"newKey": "输入新的 API Key",
+				"inputKey": "输入 API Key",
+				"cancel": "取消",
+				"keepOn": "保持开启",
+				"keepOff": "保持关闭",
+				"editThreshold": "修改触发阈值",
+				"enableVec": "开启向量化",
+				"disableVec": "关闭向量化"
+			},
+			"state": {
+				"on": "开启",
+				"off": "关闭"
+			},
+			"configFailed": "配置失败：{{message}}",
+			"noModels": "Pi 当前没有可选模型。请先通过 /login 或 Pi 模型配置添加模型。",
+			"selectLlm": "选择记忆系统后台 LLM",
+			"llmSaved": "后台 LLM 已保存：{{model}}",
+			"save": {
+				"llm": {
+					"title": "保存后台模型",
+					"body": "记忆系统后台 LLM 将使用 {{model}}。这不会改变当前对话模型。"
+				},
+				"embedding": {
+					"title": "保存 Embedding 配置",
+					"body": "模型：{{model}}\n维度：{{dimensions}}\n地址：{{url}}\nAPI Key：{{key}}"
+				}
+			},
+			"ask": {
+				"url": "Embedding OpenAI-compatible API 基础地址",
+				"keyPlaceholder": "输入密钥；留空取消本次配置",
+				"modelName": "Embedding 模型名",
+				"dimensions": "Embedding 输出维度",
+				"threshold": "达到多少条 L1 记录后开始向量化"
+			},
+			"urlInvalid": "地址必须是有效的 http:// 或 https:// URL；原配置未更改。",
+			"keyWarning": "Pi 输入框不提供密码掩码；输入时密钥可能可见。密钥会写入当前 profile 的配置文件。",
+			"keyEmpty": "API Key 不能为空；原配置未更改。",
+			"modelNameEmpty": "模型名不能为空；原配置未更改。",
+			"dimensionsInvalid": "维度必须是正整数；原配置未更改。",
+			"dimUnreadable": "现有向量库维度无法只读识别；为避免保存不兼容配置，本次未更改。",
+			"dimensionMismatch": "现有向量库使用 {{existing}} 维，不能直接切换到 {{requested}} 维。为避免后续召回失败，原配置未更改。",
+			"keyKept": "保留现有值",
+			"keyFilled": "已填写（不会回显）",
+			"embeddingSaved": "Embedding 配置已保存。重启 Pi 后会确保新配置对所有后台进程生效。",
+			"thresholdInvalid": "阈值必须是正整数；向量化配置未更改。",
+			"vec": {
+				"prompt": "向量化当前{{state}}；L1 记录 {{count}} 条；触发阈值 {{threshold}} 条。开启后用于 L1 语义召回和去重。",
+				"needEmbedding": "需要先配置有效的 Embedding URL 和 API Key；向量化保持关闭。",
+				"confirmOn": "达到 {{threshold}} 条后开始为 L1 记忆生成向量，支持语义召回和去重。已有记录需要时可手动运行回填命令。",
+				"confirmOff": "关闭后停止新 L1 向量写入；已有向量仍可召回，但新增记忆不会进入语义召回和向量去重候选。",
+				"enabledNotice": "向量化已开启；阈值未达到前不会写入向量。",
+				"disabledNotice": "向量化已关闭。",
+				"state": {
+					"disabled": "关闭 · 阈值 {{threshold}} 条 · 新向量写入已关闭",
+					"noEmbedding": "开启 · 阈值 {{threshold}} 条 · 缺少有效 Embedding 配置",
+					"below": "开启 · 阈值 {{threshold}} 条 · 还差 {{remaining}} 条",
+					"ready": "开启 · 阈值 {{threshold}} 条 · 新向量写入条件已满足"
+				}
+			},
+			"peek": {
+				"description": "只读查看当前记忆模型与向量化状态",
+				"failed": "只读检查失败：{{message}}",
+				"llmConfigured": "{{model}}（后台已配置）",
+				"llmUnresolved": "{{model}}（未解析，运行时回退当前 Pi 模型）",
+				"llmFollowing": "{{model}}（跟随当前 Pi 模型）",
+				"noModel": "未配置，且当前会话无模型",
+				"notConfigured": "未配置",
+				"embeddingOk": "{{model}} · {{dimensions}} 维 · API Key 已设置",
+				"embeddingIncomplete": "配置不完整（密钥或地址缺失）",
+				"vectorUnreadable": "向量库       不可读取（只读检查）",
+				"vectorLine": "向量记录     {{count}} 条",
+				"vectorLineDim": "向量记录     {{count}} 条 · {{dimensions}} 维",
+				"title": "记忆模型状态 · profile: {{profile}}",
+				"llmLine": "后台 LLM     {{label}}",
+				"embeddingLine": "Embedding    {{label}}",
+				"vectorizationLine": "向量化       {{state}}",
+				"l1Line": "L1 记忆      {{count}} 条（最近 365 天）",
+				"recallLine": "语义召回     {{state}}",
+				"recallReady": "有可用向量",
+				"recallUnavailable": "当前不可用或尚无向量",
+				"readonlyNote": "只读检查：未修改配置或数据库，未调用远端服务。"
+			}
+		},
+		"skill": {
+			"command": {
+				"description": "从源码、文档或对话中学习一个可复用的 skill。用法：/learn [source]"
+			},
+			"reviewInProgress": "Skill 审查正在进行中",
+			"learning": "正在从你的请求中学习 skill……",
+			"status": {
+				"reviewing": "⚙审查",
+				"waitingReply": "等待完整回复"
+			}
+		},
+		"review": {
+			"command": {
+				"description": "手动触发一次对整个对话的完整记忆审查。",
+				"usage": "用法：/remember"
+			},
+			"inProgress": "记忆审查正在进行中",
+			"started": "已通过 pi-subagents 启动记忆审查"
+		}
+	}
+}

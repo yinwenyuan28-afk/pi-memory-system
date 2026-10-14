@@ -61,6 +61,21 @@
 
 查看器默认仅监听本机，但它能读取记忆并执行部分写入操作。局域网模式没有鉴权，只应在可信网络中使用。完整操作说明和安全边界见[记录查看器指南](https://github.com/yinwenyuan28-afk/pi-memory-system/blob/main/docs/viewer-guide.md)。
 
+## 界面语言
+
+扩展的界面文案（命令说明、提示、状态栏、报告）支持中英双语，默认**自动跟随系统区域**：英文系统用英文，中文系统用中文。
+
+用命令查看或切换：
+
+    /my-memory:language            # 查看当前语言
+    /my-memory:language en         # 切英文
+    /my-memory:language zh-CN      # 切中文
+    /my-memory:language auto       # 回到自动探测
+
+切换后**执行一次 /reload**（命令说明与已渲染的卡片在下次加载才刷新；状态栏会立即变）。也可以直接改配置文件 `<profile>/memoryDB/config/application-propertis.json` 的 `language.locale`。
+
+新增一门语言只需在 `i18n/locales/` 放一个 `<lang>.json`，无需改代码，详见 [i18n 说明](https://github.com/yinwenyuan28-afk/pi-memory-system/blob/main/i18n/README.md)。
+
 ## 已知限制
 
 - 向量化默认关闭；启用后需要配置 Embedding 服务。已有向量数据时，不要直接更改 Embedding 维度。
