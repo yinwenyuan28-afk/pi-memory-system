@@ -41,6 +41,7 @@ pi install npm:pi-memory-system
 
 ## 同作者的其他项目
 
+- [ai-lite](https://github.com/yinwenyuan28-afk/ai-lite)：面向 Spring Boot 2.x / JDK 8 存量系统的 AI 接入层，提供统一模型网关、Agent 编排、跨请求会话和提示词版本中心。
 - [cursor-encoding-fix](https://github.com/yinwenyuan28-afk/cursor-encoding-fix)：专治简体中文 Windows 上 Cursor Agent 把中文静默存成 GBK 的问题，通过 MCP 工具读写文件并统一落盘为无 BOM 的 UTF-8。
 
 [GitHub 项目](https://github.com/yinwenyuan28-afk/pi-memory-system) · [联系邮箱](mailto:email@pi-memory.com)

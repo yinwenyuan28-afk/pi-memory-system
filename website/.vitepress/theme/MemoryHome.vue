@@ -4,8 +4,8 @@ import { useData, withBase } from 'vitepress';
 import { ElButton, ElCollapse, ElCollapseItem, ElConfigProvider, ElDialog, ElTabPane, ElTabs, ElTag, ID_INJECTION_KEY, ZINDEX_INJECTION_KEY } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import enLocale from 'element-plus/es/locale/lang/en';
-import { ArrowRight, ArrowUpRight, BookOpen, Check, ChevronRight, Copy, FileCode2, GitBranch, Layers as Layers3, Mail, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
-import { copy, otherRepository, repository } from './content';
+import { ArrowRight, ArrowUpRight, BookOpen, Boxes, Check, ChevronRight, Copy, FileCode2, GitBranch, Layers as Layers3, Mail, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
+import { copy, otherRepositories, repository } from './content';
 import ConversationDemo from './ConversationDemo.vue';
 
 const { lang } = useData();
@@ -130,15 +130,17 @@ onUnmounted(() => clearTimeout(copyTimer));
           <span class="more-eyebrow">{{ t.otherProjects.eyebrow }}</span>
           <h2 id="more-projects-title">{{ t.otherProjects.title }}</h2>
         </div>
-        <a class="project-card" :href="otherRepository" target="_blank" rel="noopener noreferrer">
-          <span class="project-icon"><FileCode2 :size="22" /></span>
-          <div class="project-copy">
-            <h3>{{ t.otherProjects.item.title }}</h3>
-            <p>{{ t.otherProjects.item.text }}</p>
-            <ul class="project-tags"><li v-for="tag in t.otherProjects.item.tags" :key="tag">{{ tag }}</li></ul>
-          </div>
-          <span class="project-link">{{ t.otherProjects.item.link }}<ArrowUpRight :size="16" /></span>
-        </a>
+        <div class="project-grid">
+          <a v-for="item in t.otherProjects.items" :key="item.id" class="project-card" :href="otherRepositories[item.id]" target="_blank" rel="noopener noreferrer">
+            <span class="project-icon"><component :is="item.id === 'cursor-encoding-fix' ? FileCode2 : Boxes" :size="22" /></span>
+            <div class="project-copy">
+              <h3>{{ item.title }}</h3>
+              <p>{{ item.text }}</p>
+              <ul class="project-tags"><li v-for="tag in item.tags" :key="tag">{{ tag }}</li></ul>
+              <span class="project-link">{{ t.otherProjects.link }}<ArrowUpRight :size="16" /></span>
+            </div>
+          </a>
+        </div>
       </section>
 
       <nav class="home-footer site-width" :aria-label="english ? 'Footer links' : '页脚链接'"><a :href="docLink('quickstart')"><BookOpen :size="15" />{{ t.footerDocs }}</a><a :href="docLink('limits')">{{ t.footerData }}</a><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.footerIssue }}</a><a href="mailto:email@pi-memory.com"><Mail :size="15" />email@pi-memory.com</a></nav>

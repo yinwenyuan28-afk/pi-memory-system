@@ -206,18 +206,20 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
 .final-copy p { margin-top: 9px; font-size: 13px; max-width: 62ch; }
 .final-actions { flex-shrink: 0; }
 .final-actions .el-button > span { color: inherit; }
-.more-projects { display: grid; grid-template-columns: .62fr 1.38fr; gap: 44px; align-items: center; padding-block: 34px 42px; }
+.more-projects { padding-block: 34px 42px; }
+.more-heading { margin-bottom: 26px; }
 .more-eyebrow { display: block; color: var(--site-brand); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .memory-site .more-heading h2 { font-size: 22px; line-height: 1.45; letter-spacing: -.4px; margin-top: 9px; }
-.project-card { display: flex; align-items: flex-start; gap: 18px; padding: 22px 24px; border: 1px solid var(--site-border); border-radius: 14px; background: var(--site-surface); color: var(--site-ink); transition: border-color .18s ease, box-shadow .18s ease; }
+.project-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.project-card { display: flex; align-items: stretch; gap: 16px; padding: 22px 24px; border: 1px solid var(--site-border); border-radius: 14px; background: var(--site-surface); color: var(--site-ink); transition: border-color .18s ease, box-shadow .18s ease; }
 .project-card:hover { border-color: var(--site-brand); box-shadow: var(--site-shadow); }
-.project-icon { flex-shrink: 0; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--site-soft); color: var(--site-brand); }
-.project-copy { flex: 1; min-width: 0; }
+.project-icon { flex-shrink: 0; align-self: flex-start; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--site-soft); color: var(--site-brand); }
+.project-copy { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .project-copy h3 { font-size: 16px; letter-spacing: -.2px; }
 .project-copy p { font-size: 13px; margin-top: 7px; }
 .project-tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 12px 0 0; }
 .project-tags li { padding: 2px 9px; border: 1px solid var(--site-border); border-radius: 999px; background: var(--site-bg); color: var(--site-muted); font-size: 10px; line-height: 1.6; }
-.project-link { flex-shrink: 0; display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--site-brand); font-size: 12px; font-weight: 550; white-space: nowrap; }
+.project-link { display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 14px; color: var(--site-brand); font-size: 12px; font-weight: 550; white-space: nowrap; }
 .project-card:hover .project-link { text-decoration: underline; text-underline-offset: 3px; }
 .home-footer { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: center; padding-block: 5px 35px; font-size: 12px; color: var(--site-muted); }
 .home-footer a { display: flex; align-items: center; gap: 6px; }
@@ -259,7 +261,8 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
   .faq-intro h2 { font-size: 26px; }
   .faq .el-collapse-item__header { padding-inline: 16px; }
   .faq .el-collapse-item__content { padding: 0 40px 16px 16px; }
-  .more-projects { grid-template-columns: 1fr; gap: 18px; padding-block: 26px 32px; }
+  .more-projects { padding-block: 26px 32px; }
+  .project-grid { grid-template-columns: 1fr; gap: 16px; }
   .memory-site .final-copy h2 { font-size: 21px; }
 }
 
@@ -289,8 +292,8 @@ html[lang='en'] .hero h1 { font-size: clamp(40px, 4.3vw, 57px); }
   .final-main > img { width: 42px; height: 42px; padding: 6px; }
   .memory-site .final-copy h2 { font-size: 20px; }
   .final-actions { margin-left: 0; flex-direction: column; align-items: stretch; }
-  .project-card { flex-wrap: wrap; padding: 18px; }
-  .project-link { flex: 0 0 100%; box-sizing: border-box; margin-left: 0; padding-left: 60px; }
+  .project-card { padding: 18px; }
+  .project-link { padding-top: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
