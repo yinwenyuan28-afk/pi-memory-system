@@ -39,4 +39,8 @@ pi install npm:pi-memory-system
 - [上下文与渐进式设计](/docs/context-design)
 - [限制与数据说明](/docs/limits)
 
+## 同作者的其他项目
+
+- [cursor-encoding-fix](https://github.com/yinwenyuan28-afk/cursor-encoding-fix)：专治简体中文 Windows 上 Cursor Agent 把中文静默存成 GBK 的问题，通过 MCP 工具读写文件并统一落盘为无 BOM 的 UTF-8。
+
 [GitHub 项目](https://github.com/yinwenyuan28-afk/pi-memory-system) · [联系邮箱](mailto:email@pi-memory.com)

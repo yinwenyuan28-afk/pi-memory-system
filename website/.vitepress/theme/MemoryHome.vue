@@ -4,8 +4,8 @@ import { useData, withBase } from 'vitepress';
 import { ElButton, ElCollapse, ElCollapseItem, ElConfigProvider, ElDialog, ElTabPane, ElTabs, ElTag, ID_INJECTION_KEY, ZINDEX_INJECTION_KEY } from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import enLocale from 'element-plus/es/locale/lang/en';
-import { ArrowRight, BookOpen, Check, ChevronRight, Copy, GitBranch, Layers as Layers3, Mail, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
-import { copy, repository } from './content';
+import { ArrowRight, ArrowUpRight, BookOpen, Check, ChevronRight, Copy, FileCode2, GitBranch, Layers as Layers3, Mail, MessageSquare, Monitor, Play, Search, ShieldCheck, Terminal } from '@lucide/vue';
+import { copy, otherRepository, repository } from './content';
 import ConversationDemo from './ConversationDemo.vue';
 
 const { lang } = useData();
@@ -123,6 +123,22 @@ onUnmounted(() => clearTimeout(copyTimer));
           <ElButton tag="a" :href="docLink('quickstart')" type="primary" size="large">{{ t.start }}<ArrowRight :size="17" /></ElButton>
           <ElButton tag="a" :href="repository" target="_blank" rel="noopener noreferrer" size="large"><GitBranch :size="17" />{{ t.contributeCode }}</ElButton>
         </div>
+      </section>
+
+      <section class="more-projects site-width" :aria-labelledby="'more-projects-title'">
+        <div class="more-heading">
+          <span class="more-eyebrow">{{ t.otherProjects.eyebrow }}</span>
+          <h2 id="more-projects-title">{{ t.otherProjects.title }}</h2>
+        </div>
+        <a class="project-card" :href="otherRepository" target="_blank" rel="noopener noreferrer">
+          <span class="project-icon"><FileCode2 :size="22" /></span>
+          <div class="project-copy">
+            <h3>{{ t.otherProjects.item.title }}</h3>
+            <p>{{ t.otherProjects.item.text }}</p>
+            <ul class="project-tags"><li v-for="tag in t.otherProjects.item.tags" :key="tag">{{ tag }}</li></ul>
+          </div>
+          <span class="project-link">{{ t.otherProjects.item.link }}<ArrowUpRight :size="16" /></span>
+        </a>
       </section>
 
       <nav class="home-footer site-width" :aria-label="english ? 'Footer links' : '页脚链接'"><a :href="docLink('quickstart')"><BookOpen :size="15" />{{ t.footerDocs }}</a><a :href="docLink('limits')">{{ t.footerData }}</a><a :href="`${repository}/issues`" target="_blank" rel="noopener noreferrer">{{ t.footerIssue }}</a><a href="mailto:email@pi-memory.com"><Mail :size="15" />email@pi-memory.com</a></nav>

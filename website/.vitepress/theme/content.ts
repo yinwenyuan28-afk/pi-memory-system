@@ -1,5 +1,8 @@
 export const repository = 'https://github.com/yinwenyuan28-afk/pi-memory-system';
 
+/** 作者其他项目（跨项目推广）的仓库地址 */
+export const otherRepository = 'https://github.com/yinwenyuan28-afk/cursor-encoding-fix';
+
 export const copy = {
   zh: {
     forPi: '为持续工作的 Pi 用户而做',
@@ -45,6 +48,16 @@ export const copy = {
     ],
     finalTitle: '让下一次会话，接着这一次。', finalText: '开始积累你的项目记忆，也欢迎贡献代码、完善文档或分享使用场景。',
     contributeEyebrow: '开源共建', contributeCode: '参与项目共建',
+    otherProjects: {
+      eyebrow: '同作者的其他项目',
+      title: '顺手做的一枚 Windows 小工具。',
+      item: {
+        title: 'cursor-encoding-fix',
+        text: '专治简体中文 Windows 上 Cursor Agent 把中文静默存成 GBK 的问题。通过 MCP 工具读写文件，一律落盘为无 BOM 的 UTF-8；也可以挂钩子拦住官方写入工具。',
+        tags: ['Windows', 'Cursor', 'UTF-8'],
+        link: '在 GitHub 查看'
+      }
+    },
     footerDocs: '文档', footerData: '数据与限制', footerIssue: '反馈问题'
   },
   en: {
@@ -91,6 +104,16 @@ export const copy = {
     ],
     finalTitle: 'Pick up where this conversation leaves off.', finalText: 'Start building your project memory. Help shape it with code, documentation, or workflows.',
     contributeEyebrow: 'Open source', contributeCode: 'Contribute on GitHub',
+    otherProjects: {
+      eyebrow: 'More from the author',
+      title: 'Another small tool for Windows developers.',
+      item: {
+        title: 'cursor-encoding-fix',
+        text: 'Fixes Cursor Agent silently saving non-ASCII text as GBK on Simplified Chinese Windows. Files are read and written through MCP tools and always saved as UTF-8 without BOM, with an optional hook that blocks the built-in write tools.',
+        tags: ['Windows', 'Cursor', 'UTF-8'],
+        link: 'View on GitHub'
+      }
+    },
     footerDocs: 'Documentation', footerData: 'Data and limits', footerIssue: 'Report an issue'
   }
 };

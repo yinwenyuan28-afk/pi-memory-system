@@ -39,4 +39,8 @@ Currently for Windows. The project-tested Pi 0.83.0 requires Node.js 22.19 or la
 - [Context and progressive loading](/en/docs/context-design)
 - [Limits and data handling](/en/docs/limits)
 
+## More from the author
+
+- [cursor-encoding-fix](https://github.com/yinwenyuan28-afk/cursor-encoding-fix): Fixes Cursor Agent silently saving non-ASCII text as GBK on Simplified Chinese Windows by reading and writing files through MCP tools as UTF-8 without BOM.
+
 [GitHub repository](https://github.com/yinwenyuan28-afk/pi-memory-system) · [Contact](mailto:email@pi-memory.com)
