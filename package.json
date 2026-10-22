@@ -26,7 +26,8 @@
 		"viewers/",
 		"scripts/l1-admin/",
 		"scripts/lib/",
-		"README.md"
+		"README.md",
+		"README-cn.md"
 	],
 	"scripts": {
 		"check-types": "node scripts/check-types.mjs",
