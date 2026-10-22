@@ -88,4 +88,4 @@ See the [development guide](docs/development.md) for dev dependencies, checks, v
 
 ## License
 
-MIT
+MIT. The English text in [LICENSE](LICENSE) is authoritative; a Chinese translation is available at [LICENSE.zh-CN.md](LICENSE.zh-CN.md).

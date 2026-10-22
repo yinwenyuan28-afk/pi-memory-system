@@ -87,3 +87,7 @@ English: [README.md](README.md)
 ## 开发与发布
 
 开发依赖、检查命令、查看器门禁和 npm 发布步骤见[开发与发布指南](https://github.com/yinwenyuan28-afk/pi-memory-system/blob/main/docs/development.md)。系统设计细节见[记忆系统架构说明](https://github.com/yinwenyuan28-afk/pi-memory-system/blob/main/%E8%AE%B0%E5%BF%86%E7%B3%BB%E7%BB%9F%E6%9E%B6%E6%9E%84%E8%AF%B4%E6%98%8E.md)。
+
+## 许可证
+
+MIT，以 [LICENSE](LICENSE) 英文原文为准；中文译文见 [LICENSE.zh-CN.md](LICENSE.zh-CN.md)。
