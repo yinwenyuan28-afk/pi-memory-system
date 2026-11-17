@@ -150,12 +150,13 @@ export function projectHref(id: string, english: boolean, docSlug?: string) {
  */
 export function projectSidebars(english = false) {
   const prefix = english ? '/en' : '';
-  const numerals = ['一', '二', '三', '四', '五'];
+  const numerals = ['一', '二', '三', '四', '五', '六'];
   return Object.fromEntries(projects.map(project => {
     const numbered = !english && project.id === 'ai-lite';
     const items = [
       ...(numbered ? [
-        { text: '从一次调用开始', link: '/projects/ai-lite/' },
+        { text: '网关层：从一次调用开始', link: '/projects/ai-lite/' },
+        { text: '网关层：从一次调用开始（NIO）', link: '/projects/ai-lite/docs/gateway-nio' },
         { text: '编排层：从步骤到任务', link: '/projects/ai-lite/docs/orchestration' }
       ] : []),
       ...project.docs.map(doc => ({

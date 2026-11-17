@@ -19,3 +19,4 @@
 
 讲解方案和验证记录见 [AI_LITE_WEBSITE_PLAN](../plan/pi-memory-system/AI_LITE_WEBSITE_PLAN.md)。
 编排层入口：`/projects/ai-lite/docs/orchestration`，从固定步骤、异步顺序与步骤重试，逐步讲到 AgentLoop、七个生命周期时机、工具并行和 Spec/Assembly。新增六类流程图，例子与当前编排层源码核对。
+NIO 网关入口：`/projects/ai-lite/docs/gateway-nio`。以 Jetty 为例，沿同步、异步、异步重试、流式 inline/io 递进，配五张独立线程图；中文侧栏中列为第二章，后续编号顺延。维护时按真实事件处理路径核对，不将 NIO 等同于同步入口不等待或所有回调固定在 selector 线程。

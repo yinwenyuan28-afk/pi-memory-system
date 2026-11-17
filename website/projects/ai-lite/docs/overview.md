@@ -63,6 +63,8 @@ Kotlin 协程桥接让等待中的协程挂起，也不会自动改变所选 HTT
 
 > 实现：[默认 OkHttp](https://github.com/yinwenyuan28-afk/ai-lite/tree/main/ai-lite-http-okhttp)、[Jetty](https://github.com/yinwenyuan28-afk/ai-lite/tree/main/ai-lite-http-jetty)。完整选项见[配置参考](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/docs/ref-配置.md)。
 
+Jetty NIO 的同步、异步、重试与流式线程图，见[网关层：从一次调用开始（NIO）](./gateway-nio)。
+
 ## 模块如何组合
 
 | 需求 | 主要模块 |
