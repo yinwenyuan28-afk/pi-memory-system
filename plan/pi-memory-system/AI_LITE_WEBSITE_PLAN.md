@@ -143,3 +143,30 @@ NIO独立章节验证完成：
 - 浏览器确认5张图均渲染，节点标题尺寸检查无越界；桌面1440px与手机390px页面无横向溢出，手机五个图区域均可独立滚动。目录16个链接，9个子标题。
 - 深浅色自动检查已确认违规0，SVG背景自动识别限制已截图人工检查；浏览器无运行错误。截图 nio-async.png、nio-stream-inline.png、nio-stream-io.png、nio-mobile.png 位于原任务临时目录。
 - Java实现与依赖配置未修改，仅添加网站说明与图示；未提交或发布。
+
+### 线程图星标与子标题编号（2026-11-17）
+
+用户要求有详细线程图的小节加星星，并补1.1/2.2形式子编号。两个中文网关页的三级标题按所属主节连续编号；只给直接包含线程时间线的标题增加★，不标记普通流程图。使用VitePress实际Markdown解析结果取得旧id，通过自定义标题锚点保留全部旧链接；正文与本页目录使用相同标题。添加一行星标含义说明。修改后验证旧id无丢失，再构建并检查目录与跳转。
+
+星标与编号验证完成：两个网关页面共21个三级标题完成子编号，8个直接包含详细线程图的二/三级标题带★。默认页目录显示3.1至3.6与4.1至4.6；NIO页显示2.1/2.2、3.1/3.2、4.1至4.3、5.1/5.2。使用VitePress自定义标题id，程序检查原36个标题锚点全部保留；浏览器确认旧重试、流式锚点存在，并实际点击NIO的4.2星标目录到达原io锚点。npm run build成功（30.28s），保留既有包体积/Element Plus提示。正文与目录显示一致；手机390px时页面无横向溢出，浏览器无运行错误。截图 thread-stars-outline.png、nio-thread-stars-outline.png 保存在原任务临时目录。
+### 导航调整、会话持久化、限流熔断与 Agent 站点地图（2026-11-17）
+
+状态：executing。用户直接要求实施；阅读顺序调整为快速开始 → 整体设计 → 默认网关 → NIO 网关 → 编排层 → Session 的持久化 → 限流熔断机制 → 常见问题。保留现有路由和线程图锚点。
+
+新增两篇中文教程，复用本地 SVG 图组件，以会话恢复/写入/缓存/并发，以及请求准入/限流/熔断状态转换递进讲解。源码与测试为实现事实依据，明确内存、JDBC 与 Redis 的职责，以及单进程保护边界。Agent 地图放在 public/llms.txt，列出全站阅读入口与 ai-lite 八章；README 说明维护文件位置。检查已有 Markdown 内容协商是否覆盖项目页面，补齐缺失复制，避免地图能定位而 Agent 读不到正文。
+
+验证：npm run build；八章侧栏顺序/前后篇；新增图桌面与手机显示；地图 URL 和内部 Markdown 副本覆盖；对 Worker 的 Accept: text/markdown 路径作本地模拟检查。
+
+本阶段状态：done。完成两篇中文教程 session-persistence.md 与 rate-limit-circuit.md，以及六张 SVG 图（恢复、缓存、版本竞争、请求准入、排队线程、熔断状态）。中文导航调整为八章，保留全部路由与旧线程标题 id；入口链接、README 和整体设计同步更新。独立源码复核后明确缓存快照可能落后于数据库，以及未形成传输结局的取消/校验错误不保证采样，未修改 Java 实现。
+
+公开 Agent 地图 public/llms.txt 覆盖62个中英文页面，config head 增加发现链接；维护地图 agent-content/site-map.md 标明源文件、阅读顺序与维护检查。修复 copy-markdown.mjs 漏复制中英文 projects 的问题。该修复通过生成目录及 Worker 模拟请求验证，未发布到生产。
+
+验证：npm run build 成功（23.37s），仅保留既有包体积/Element Plus 提示；41个本地正文链接及锚点均可解析，62个地图路由均有源码与生成Markdown。Worker 对六个路由的GET/HEAD共12次Markdown响应、HTML默认及q=0回退、llms.txt和内部路径404检查全部通过。浏览器确认八项导航、两个新增页面前后篇、三级编号与排队图星标；各页3张图，新增图节点文字无横向超出，390px下scrollWidth=innerWidth=390。深浅色图经截图查看，两个页面自动无障碍检查确认违规0，SVG背景仍有自动识别限制；浏览器未报告运行错误。截图 session-persistence-desktop.png、session-cache-mobile.png、guard-circuit-state.png、guard-queue-threads.png、guard-queue-threads-light.png、guard-mobile.png 位于原任务临时目录。
+
+### Provider 与运行时配置独立章节（2026-11-17）
+
+状态：executing。用户确认新增章节放在限流熔断机制之后、常见问题之前，作为第八章，FAQ顺延第九章。新增 provider-runtime.md，按Provider与模型定义、Profile调用、运行时业务绑定、字段覆盖与合并、生效时机和诊断递进；使用本地SVG图，沿用三级子编号。核对ModelResolver/LlmGateway/JdbcRuntimeCatalog及装配条件，保留现有URL与锚点。同步导航、前后篇正文入口、README与两份Agent地图。验证构建、图示、手机排版、目录、地图和Markdown导出。
+
+Provider阶段完成与验证（2026-11-18）：状态done。新增第八章provider-runtime.md，六个主节与十个深入子节，三张SVG图分别说明YAML Profile关系、运行时绑定和节点缓存刷新。目录开启时profile/普通explicit仍走YAML、biz缺绑定不回退、模型READY、数据库NULL与空Map、Provider整份替换与跨层递归合并、JDBC提示词装配、事务缺失和多节点锁范围均经源码独立复核；当前POM仍为0.1.15，不采用源码里不符实际SQL的0.1.16唯一索引注释。示意合并结果使用text代码块，避免误认为可直接复制的JSON。
+
+中文导航九章，新增章节在限流熔断后与FAQ前，浏览器实际前后篇一致；快速开始、整体设计、限流熔断、FAQ、README及两份Agent地图已增加入口。最终npm run build通过（14.97s），只有既有包体积和Element Plus导入提示；新页正文3个本地链接和3个仓库文件链接均有对应目标，公开地图63页都有Markdown副本。新页Worker模拟GET/HEAD的text/markdown响应通过。浏览器显示三张图、三级编号与完整目录；图内节点文字无横向超出；桌面1440px、手机390px检查通过，手机scrollWidth=innerWidth=390，图独立横向查看。深浅色截图经人工查看，无障碍检查确认违规0、SVG背景仍有自动识别限制，浏览器没有运行错误。截图provider-profile-desktop.png、provider-refresh-desktop.png、provider-runtime-dark.png、provider-runtime-mobile.png在既有任务临时目录。没有修改Java实现、提交或发布。

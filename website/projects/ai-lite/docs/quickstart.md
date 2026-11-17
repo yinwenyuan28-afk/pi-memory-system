@@ -98,3 +98,5 @@ public class IntroService {
 启用目录模式后，`LlmCall.biz("intro", messages)` 会读取运行时绑定；没有绑定就失败，不会退回 YAML 默认配置档。未启用目录时，`biz` 可以使用 YAML 的 `default-profile`；本页没有设置该字段，所以用 `profile` 显式选择 `main`。
 
 完整安装、目录装配与配置项见[仓库 README](https://github.com/yinwenyuan28-afk/ai-lite)和[配置参考](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/docs/ref-配置.md)。
+
+Provider、Profile 与目录模式的选择和生效规则，见 [Provider 与运行时配置](./provider-runtime)。

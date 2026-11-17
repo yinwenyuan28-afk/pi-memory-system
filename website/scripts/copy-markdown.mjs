@@ -6,6 +6,7 @@ const websiteDir = fileURLToPath(new URL('../', import.meta.url));
 const distDir = path.join(websiteDir, '.vitepress', 'dist');
 const markdownDir = path.join(distDir, '_markdown');
 
+/** 用途：递归复制指定公开页面树到内部 Markdown 资源目录，保留相对路由。 */
 async function copyMarkdownTree(sourceDir, targetDir) {
   const entries = await readdir(sourceDir, { withFileTypes: true });
 
@@ -31,5 +32,9 @@ await cp(path.join(websiteDir, 'agent-content', 'zh-home.md'), path.join(markdow
 await cp(path.join(websiteDir, 'agent-content', 'en-home.md'), path.join(markdownDir, 'en', 'index.md'));
 await copyMarkdownTree(path.join(websiteDir, 'docs'), path.join(markdownDir, 'docs'));
 await copyMarkdownTree(path.join(websiteDir, 'en', 'docs'), path.join(markdownDir, 'en', 'docs'));
+
+// 用途：项目介绍与教程也支持生产 Worker 的 Accept: text/markdown 内容协商。
+await copyMarkdownTree(path.join(websiteDir, 'projects'), path.join(markdownDir, 'projects'));
+await copyMarkdownTree(path.join(websiteDir, 'en', 'projects'), path.join(markdownDir, 'en', 'projects'));
 
 console.log('Copied VitePress pages to the internal Markdown asset directory.');

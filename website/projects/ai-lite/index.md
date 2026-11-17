@@ -15,6 +15,8 @@ ai-lite 面向 **Spring Boot 2.x / JDK 8** 存量系统。业务通过同一个�
 
 [动手接入](./docs/quickstart) · [查看整体设计](./docs/overview) · [GitHub 源码](https://github.com/yinwenyuan28-afk/ai-lite)
 
+正文和目录中的“★”表示该小节包含详细线程模型图。
+
 ## 先看它放在哪里
 
 <AiLiteFlow kind="architecture" />
@@ -45,7 +47,7 @@ System.out.println(result.getContent());
 
 > 源码：[LlmCall 与调用入口](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/llm/LlmGateway.java)。后文的调用沿用上面的 `call`。
 
-## 2. 异步：把等待交给 future
+## 2. ★ 异步：把等待交给 future {#_2-异步-把等待交给-future}
 
 输入和最终结果都不变，把 `one` 换成 `oneAsync`。返回的 `CompletableFuture` 表示“结果稍后完成”，调用线程可以继续处理其他工作。
 
@@ -93,7 +95,7 @@ CompletableFuture<LlmResult> future =
 > 源码：[RetryPolicy](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/llm/RetryPolicy.java)。即使没有收到结果，供应商也可能已处理请求；重试可能带来额外费用。
 
 
-### 深入一层：两次失败以后，调用方到底在等什么？
+### 3.1 深入一层：两次失败以后，调用方到底在等什么？ {#深入一层-两次失败以后-调用方到底在等什么}
 
 先按一个具体过程看：允许总共尝试 3 次，退避从 200ms 开始、每次翻倍。为了让时间容易对照，下面暂按 `jitter(false)` 关闭随机变化，且假设没有 `Retry-After`。请求耗时为示例值。
 
@@ -113,7 +115,7 @@ CompletableFuture<LlmResult> future =
 
 > 实现：[LlmGateway.RetryRun](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/llm/LlmGateway.java) 的 `startAttempt` 与 `onAttemptComplete`。
 
-### 退避期间，谁在等，谁在工作？
+### 3.2 ★ 退避期间，谁在等，谁在工作？ {#退避期间-谁在等-谁在工作}
 
 如果直接在失败回调里 `Thread.sleep(200)`，HTTP 工作线程就会被这次退避占住。ai-lite 把“过多久再试”转换成定时任务：失败回调完成判断和投递后返回，到点再由专用调度线程发起下一次异步调用。
 
@@ -131,7 +133,7 @@ CompletableFuture<LlmResult> future =
 
 图中的两次 HTTP 请求不保证使用同一条 Dispatcher 工作线程；同样，结果完成后也不要求原业务线程回来处理。应区分“整体 future 尚未完成”和“某条线程一直被占用”，它们不是同一件事。
 
-### 什么错误能再试？下一次究竟等多久？
+### 3.3 什么错误能再试？下一次究竟等多久？ {#什么错误能再试-下一次究竟等多久}
 
 重试先判断错误类型，再检查尝试次数和时间预算。HTTP 401 往往需要修正密钥，参数错误需要改请求；不改变输入就重复发送，通常只会再次失败。
 
@@ -161,7 +163,7 @@ CompletableFuture<LlmResult> future =
 
 > 实现：[RetryPolicy.delayMs / defaultRetryable](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/llm/RetryPolicy.java)、[RetrySupport.backoffMs / clampDelayMs](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/internal/llm/RetrySupport.java)。
 
-### 三个限制分别管什么？
+### 3.4 三个限制分别管什么？ {#三个限制分别管什么}
 
 `maxAttempts`、单次 HTTP 超时和 `totalDeadlineMs` 约束的对象不同，不能只配置其中一个就认为整个调用受到了完整限制。
 
@@ -198,7 +200,7 @@ CompletableFuture<LlmResult> retried =
 
 > 验证：[LlmGatewayAsyncRetryTest.b05DeadlineDoesNotInterruptInFlightAttempt](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/test/java/io/github/yinwenyuan28/ailite/llm/LlmGatewayAsyncRetryTest.java) 专门覆盖“预算已到，在途请求随后成功”的行为。
 
-### 取消如何同时管住当前请求和下一次重试？
+### 3.5 取消如何同时管住当前请求和下一次重试？ {#取消如何同时管住当前请求和下一次重试}
 
 ```java
 LlmCancelHandle cancel = new LlmCancelHandle();
@@ -216,7 +218,7 @@ CompletableFuture<LlmResult> future =
 
 HTTP 完成回调、定时任务和取消可能来自不同线程。内部在确定终态时使用原子状态控制，确保整体结果只确定一次；终态之后的迟到回调不能重新启动重试。正在发出的请求仍可能已被供应商处理，因此取消与重试都不等于撤销执行。
 
-### 如何知道中间发生了什么？
+### 3.6 如何知道中间发生了什么？ {#如何知道中间发生了什么}
 
 整体 future 最终成功，不代表前面没有失败。需要记录“准备进行下一次尝试”时，可以配置监听器：
 
@@ -268,7 +270,7 @@ future.thenAccept(result ->
 把增量推给浏览器，还需要应用接入 SSE（服务端向浏览器持续发送事件）等输出通道。Controller 返回 `SseEmitter` 或 future 时，要确认 Servlet 和参与的过滤器均支持异步。
 
 
-### 深入一层：一段增量是怎样到达 onDelta 的？
+### 4.1 深入一层：一段增量是怎样到达 onDelta 的？ {#深入一层-一段增量是怎样到达-ondelta-的}
 
 以 OpenAI Completions 兼容协议为例，模型通过 SSE 事件陆续发送内容。SSE 是服务端在同一个 HTTP 响应里持续发送事件的格式；网络读到的字节片段、SSE 事件、业务收到的文本增量，是三个不同边界。
 
@@ -288,7 +290,7 @@ HTTP 200 只说明响应已经开始，仍要继续读取和解析。模型服�
 
 > 实现：[OpenAiCompletionsTransport.completeAsync / handleEvent](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/transport/OpenAiCompletionsTransport.java)、[OkHttpExecutor.executeStreamingAsync](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-http-okhttp/src/main/java/io/github/yinwenyuan28/ailite/http/okhttp/OkHttpExecutor.java)。
 
-### 增量、最终正文和最终状态分别怎么用？
+### 4.2 增量、最终正文和最终状态分别怎么用？ {#增量、最终正文和最终状态分别怎么用}
 
 先看一个**只有正文**的例子。假设依次收到三次回调：
 
@@ -318,7 +320,7 @@ future.whenComplete((result, error) -> {
 
 正常完成 future 也不保证文本已经满足业务要求，例如输出达到模型上限仍可能返回结果。结构化 JSON 输出在生成中可能是不完整片段，业务校验应结合最终内容与停止原因，不能要求每段增量都能单独解析。
 
-### 回调在哪个线程执行，为什么还要保证顺序？
+### 4.3 ★ 回调在哪个线程执行，为什么还要保证顺序？ {#回调在哪个线程执行-为什么还要保证顺序}
 
 `oneByStreamAsync` 已经是异步流式：调用方先拿到 future，生成过程中仍能收到增量。“异步调用”与“回调在哪个线程执行”是两个独立选择：
 
@@ -365,7 +367,7 @@ ai-lite:
 
 > 实现：[CallbackPolicy](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/llm/CallbackPolicy.java)、[SerialCallbackExecutor](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/llm/SerialCallbackExecutor.java)、[LlmGateway.AsyncRun.completeBarrier](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-llm/src/main/java/io/github/yinwenyuan28/ailite/llm/LlmGateway.java)。
 
-### 如果消费速度跟不上，或流中途失败了呢？
+### 4.4 如果消费速度跟不上，或流中途失败了呢？ {#如果消费速度跟不上-或流中途失败了呢}
 
 `io` 策略把回调放入有上限的队列，不能让慢消费者无限积压内存。向回调通道提交失败，例如队列已满或初次调度被回调池拒绝时，调用会以 `OVERLOAD` 异常结束，并中止底层传输；它不会无限缓存，也不会自动让模型放慢生成速度。
 
@@ -383,7 +385,7 @@ ai-lite:
 
 应用应保留明确的“生成中、完成、中止、失败”状态。已经显示的部分文字不能仅因存在就当作完整成功结果，也不能假设取消结果一定包含全部已展示内容。是否保留、标记为未完成或清除这部分内容，由产品流程决定。
 
-### 为什么流式重试以“是否已经交付增量”为界？
+### 4.5 为什么流式重试以“是否已经交付增量”为界？ {#为什么流式重试以-是否已经交付增量-为界}
 
 普通非流式重试中，失败时业务通常还没有拿到答案；流式调用一旦交付文字，用户已经看到了这次尝试的一部分。重新发送请求会从头生成，内容可能与前一次不同，也没有自动从断开位置接着写的约定。
 
@@ -406,7 +408,7 @@ LlmResult result = gateway.oneByStreamWithRetry(
 
 `oneByStreamWithRetry` 的方法本身同步等待，退避也在同步路径中执行。当前没有 `oneByStreamWithRetryAsync` 公共入口，不能把上一节异步重试的调度机制直接套在它身上。
 
-### 模型已经在流式输出，为什么浏览器仍然一次性显示？
+### 4.6 模型已经在流式输出，为什么浏览器仍然一次性显示？ {#模型已经在流式输出-为什么浏览器仍然一次性显示}
 
 从供应商到 Java 服务的流式响应，与从 Java 服务到浏览器的增量交付，是两段连接：
 
@@ -446,11 +448,13 @@ ai-lite 负责前一段的模型调用与回调。应用还要把增量写入 SS
 
 <AiLiteFlow kind="state" />
 
-**会话运行时**加载历史、追加执行条目，并保存对话进度。可按需要组合内存、Redis、JDBC；上下文预算与自动压缩用于控制发给模型的历史大小，需要显式配置。
+**会话运行时**加载历史、追加执行条目，并保存对话进度。默认存于内存，可用 JDBC 持久化并加 Redis 缓存；上下文预算与自动压缩用于控制发给模型的历史大小，需要显式配置。
 
 **提示词中心**管理草稿、发布、回滚、审计和占位符渲染。渲染后得到普通消息，再交给网关。已有自己的提示词平台时，也可以直接传入消息。
 
 **这一层的设计：**对话历史解决“之前说了什么”，提示词版本解决“这次按哪套要求执行”。两者独立管理，存储实现也可以替换。
+
+跨请求加载、保存时机与版本冲突见 [Session 的持久化](./docs/session-persistence)；供应商并发与暂停请求规则见[限流熔断机制](./docs/rate-limit-circuit)。
 
 ## 接下来按需求接入
 

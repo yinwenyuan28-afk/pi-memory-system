@@ -13,6 +13,8 @@ outline: [2, 3]
 
 NIO 指非阻塞 I/O。它减少每个等待请求的线程占用，数据处理、解析与业务回调仍然需要线程。本页图中的灰色等待框表示**连接状态**，不表示一条线程正在为该请求睡眠。
 
+正文和目录中的“★”表示该小节包含详细线程模型图。
+
 ## 先切换 HTTP 传输
 
 保留 Starter，增加 Jetty 模块。下面使用当前本地源码核对的 0.1.15，两个依赖版本保持一致：
@@ -45,7 +47,7 @@ ai-lite:
 
 本页假设已经注入 `LlmGateway gateway`，`intro` 已在业务 id 中登记，`main` 配置档指向可用模型。当前适配模块基于 Jetty 9.4，运行环境与依赖兼容范围以[仓库配置参考](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/docs/ref-配置.md)为准。
 
-## 1. 同步：底层是 NIO，调用方仍然等完整结果
+## 1. ★ 同步：底层是 NIO，调用方仍然等完整结果 {#_1-同步-底层是-nio-调用方仍然等完整结果}
 
 先保持最简单的用法：问一次，得到完整文字后再继续。
 
@@ -66,7 +68,7 @@ System.out.println(result.getContent());
 
 > 实现：[JettyHttpExecutor.execute / executeStreaming](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-http-jetty/src/main/java/io/github/yinwenyuan28/ailite/http/jetty/JettyHttpExecutor.java) 使用同步等待与读取，异步路径则使用响应事件监听。
 
-## 2. 异步：等待连接就绪，共享线程处理事件
+## 2. ★ 异步：等待连接就绪，共享线程处理事件 {#_2-异步-等待连接就绪-共享线程处理事件}
 
 把 `one` 换成 `oneAsync`，输入和结果类型不变：
 
@@ -80,7 +82,7 @@ future.thenAccept(result ->
 
 这里释放了两种不同的等待：业务线程拿到 future 后可以继续工作；Jetty 侧也不需要为这个请求持续保留一条阻塞读流的线程。网络数据就绪后，事件处理线程才读取数据、解析响应、推进 future。
 
-### 没有请求专属等待线程，状态放在哪里？
+### 2.1 没有请求专属等待线程，状态放在哪里？ {#没有请求专属等待线程-状态放在哪里}
 
 | 阶段 | 仍然保留什么 | 线程做什么 |
 | --- | --- | --- |
@@ -92,7 +94,7 @@ Jetty 仍需要共享的网络选择与事件处理线程。共享线程也会�
 
 图中的“Jetty I/O / 事件处理”表示执行职责，不承诺所有回调固定在某条 selector 线程，也不保证每次事件由同一条线程处理。
 
-### thenAccept 的耗时仍然需要考虑
+### 2.2 thenAccept 的耗时仍然需要考虑 {#thenaccept-的耗时仍然需要考虑}
 
 `thenAccept` 可能直接在完成 future 的线程上执行。若在其中进行慢查询或重计算，仍会占用当时的 Jetty 响应处理线程；若 future 已经完成后才注册，执行线程也可能不同。
 
@@ -108,7 +110,7 @@ future.thenAcceptAsync(result ->
 
 > 实现：[JettyHttpExecutor.executeAsync](https://github.com/yinwenyuan28-afk/ai-lite/blob/main/ai-lite-http-jetty/src/main/java/io/github/yinwenyuan28/ailite/http/jetty/JettyHttpExecutor.java) 通过 `onContent` 累计响应、`onComplete` 处理结果。
 
-## 3. 异步重试：网络等待和退避分别由谁管理？
+## 3. ★ 异步重试：网络等待和退避分别由谁管理？ {#_3-异步重试-网络等待和退避分别由谁管理}
 
 显式重试入口保持相同：
 
@@ -126,7 +128,7 @@ CompletableFuture<LlmResult> future =
 
 网络等待由 Jetty 的连接与事件机制负责；重试退避仍交给独立的 `ai-lite-retry-*` 调度器。一次失败事件处理完，Jetty 回调返回；定时任务到点后，调度线程检查取消与预算，再调用下一次 `oneAsync`。
 
-### 两种等待都不需要为每次调用占住一条线程
+### 3.1 两种等待都不需要为每次调用占住一条线程 {#两种等待都不需要为每次调用占住一条线程}
 
 - **等网络**：连接保留状态，数据就绪时由共享事件处理线程推进。
 - **等退避**：定时任务留在调度队列，到点才执行短小的发起动作。
@@ -134,7 +136,7 @@ CompletableFuture<LlmResult> future =
 
 业务拿到的仍然是一个整体 future，内部每次尝试有新的 future 和取消句柄。图示采用“第一次 503、关闭随机变化后退避 200ms、第二次成功”的简化过程，时间轴不按比例。
 
-### 哪些规则与 OkHttp 相同？
+### 3.2 哪些规则与 OkHttp 相同？ {#哪些规则与-okhttp-相同}
 
 `maxAttempts` 包含首次尝试，普通 `oneAsync` 不自动重试。默认瞬时错误分类、指数退避、随机变化和 `Retry-After` 的裁剪都由网关的公共重试实现决定，不随传输改变。
 
@@ -153,7 +155,7 @@ CompletableFuture<LlmResult> future =
 
 异步与流式仍是两个维度：方法先返回 future，内容在生成过程中逐段交付。变化在于 Jetty 不持续阻塞读取同一个请求，而是在收到内容事件时推进。
 
-### inline：增量回调仍在事件处理路径里
+### 4.1 ★ inline：增量回调仍在事件处理路径里 {#inline-增量回调仍在事件处理路径里}
 
 <AiLiteFlow kind="nioStream" />
 
@@ -163,7 +165,7 @@ CompletableFuture<LlmResult> future =
 
 `oneByStream` 则是同步流式：即使每段都能显示，方法本身仍等待流结束。不要只根据“流式”二字判断调用线程是否会等待。
 
-### io：将用户增量处理交给独立回调池
+### 4.2 ★ io：将用户增量处理交给独立回调池 {#io-将用户增量处理交给独立回调池}
 
 ```yaml
 ai-lite:
@@ -180,7 +182,7 @@ Jetty 侧处理本次网络事件并投递增量，独立回调池再按本次�
 
 这张图中的长方块表示第一段用户回调尚未返回，第二段先进入队列等待。网络事件间隔的灰色框表示连接状态，不是线程在执行睡眠。
 
-### 最终结果、错误与取消怎么处理？
+### 4.3 最终结果、错误与取消怎么处理？ {#最终结果、错误与取消怎么处理}
 
 与默认传输保持相同的业务约定：
 
@@ -202,13 +204,13 @@ Jetty 通过 `request.abort()` 中止网络请求，但不能撤回已经执行�
 
 NIO 节省的是每个请求等待网络的线程，连接、缓冲区、模型上下文、解析与业务处理仍占资源。供应商配额、连接数、CPU 和内存都可能成为限制。
 
-### 连接数与线程数是两种配置
+### 5.1 连接数与线程数是两种配置 {#连接数与线程数是两种配置}
 
 `jetty.max-connections-per-destination` 控制单目标连接数。达到连接与上游容量后，继续增加请求并不一定增加吞吐，还可能增加排队时间。
 
 `jetty.threads: 0` 保留 Jetty 默认线程池。若显式指定固定大小，当前实现会检查至少满足 `max(1, CPU核数 / 2) + 2`；过小可能在客户端首次懒创建时失败。不要把“NIO 用较少线程”理解成可以随意把线程池设成 1。
 
-### 读取超时与整个任务的时限不同
+### 5.2 读取超时与整个任务的时限不同 {#读取超时与整个任务的时限不同}
 
 当前 Jetty 适配将读取超时映射到请求的 `idleTimeout`，限制无数据活动的间隔；持续有数据的流，可能运行得更久。连接与读取超时非正数会取框架默认值，不表示无限等待。
 

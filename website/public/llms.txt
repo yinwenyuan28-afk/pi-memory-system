@@ -1,0 +1,96 @@
+# Pi Memory — Agent documentation map
+
+> Pi Memory 是 Pi coding agent 的长期记忆扩展。本站也提供 ai-lite、agentcenter 和 cursor-encoding-fix 的独立项目文档。按问题选择一页，再沿本页子标题深入。
+
+核对日期：2026-11-17。本文是页面索引，功能与配置以对应正文为准。中文 ai-lite 教程比英文版完整；英文内容独立维护，不假定路由逐一对应。
+
+## 如何读取
+
+- 普通 GET 返回网页。生产站点同一 URL 发送 Accept: text/markdown 可读取 Markdown；本地 VitePress dev 未运行 Worker，不提供此内容协商。
+- 不请求内部 /_markdown/ 路径；该路径由生产 Worker 拒绝公开访问。
+- SVG 流程图使用 Vue 组件，Markdown 中可能保留组件标签；对应解释见图前后正文与表格。
+- ★ 表示该小节有详细线程图，1.1/3.2 等子编号用于深入讲解。默认 OkHttp 与 Jetty NIO 的等待模型请分别阅读。
+
+## ai-lite：推荐阅读顺序
+
+- [一、快速开始](https://pi-memory.com/projects/ai-lite/docs/quickstart): 最小依赖、配置和调用
+- [二、整体设计](https://pi-memory.com/projects/ai-lite/docs/overview): 职责、模块和请求路径
+- [三、网关层：从一次调用开始](https://pi-memory.com/projects/ai-lite/): OkHttp：同步、异步、重试、流式与线程图
+- [四、网关层：从一次调用开始（NIO）](https://pi-memory.com/projects/ai-lite/docs/gateway-nio): Jetty：非阻塞网络事件与线程模型
+- [五、编排层：从步骤到任务](https://pi-memory.com/projects/ai-lite/docs/orchestration): Workflow、AgentLoop、生命周期、工具并行
+- [六、Session 的持久化](https://pi-memory.com/projects/ai-lite/docs/session-persistence): 内存、JDBC、Redis 缓存、版本冲突和保存时机
+- [七、限流熔断机制](https://pi-memory.com/projects/ai-lite/docs/rate-limit-circuit): 并发许可、异步队列、三态熔断、重试与多 key
+- [八、Provider 与运行时配置](https://pi-memory.com/projects/ai-lite/docs/provider-runtime): Provider、Profile、业务绑定、配置合并、缓存与生效时机
+- [九、常见问题](https://pi-memory.com/projects/ai-lite/docs/faq): 调用和配置边界
+
+ai-lite 关键边界：oneAsync 只说明调用方可先拿到 future；默认 OkHttp 的在途请求仍可能占工作线程。Redis 模块是 SessionCache，JDBC 才是会话持久存储。当前限流为单 JVM 的供应商并发限制，不是 QPS/RPM/TPM 配额。详见各章。
+
+## Pi Memory 中文文档
+
+- [产品首页](https://pi-memory.com/): 能力概览与安装入口
+- [快速开始](https://pi-memory.com/docs/quickstart): Pi Memory 快速开始
+- [配置语义召回](https://pi-memory.com/docs/recall): Pi Memory 配置语义召回
+- [记忆如何工作](https://pi-memory.com/docs/memory): Pi Memory 记忆如何工作
+- [上下文与渐进式设计](https://pi-memory.com/docs/context-design): Pi Memory 上下文与渐进式设计
+- [项目归属与记忆空间](https://pi-memory.com/docs/projects): Pi Memory 项目归属与记忆空间
+- [后台运行与故障恢复](https://pi-memory.com/docs/pipeline): Pi Memory 后台运行与故障恢复
+- [查看与修正记忆](https://pi-memory.com/docs/viewer): Pi Memory 查看与修正记忆
+- [沉淀可复用技能](https://pi-memory.com/docs/skills): Pi Memory 沉淀可复用技能
+- [配置说明](https://pi-memory.com/docs/configuration): Pi Memory 配置说明
+- [常用命令](https://pi-memory.com/docs/commands): Pi Memory 常用命令
+- [数据、隐私与备份](https://pi-memory.com/docs/data): Pi Memory 数据、隐私与备份
+- [限制与数据说明](https://pi-memory.com/docs/limits): Pi Memory 限制与数据说明
+
+## 其他项目
+
+- [所有项目](https://pi-memory.com/projects/): 选择独立项目，避免与 Pi Memory 功能混淆
+- [agentcenter](https://pi-memory.com/projects/agentcenter/): 项目介绍
+- [AGENTS.md](https://pi-memory.com/projects/agentcenter/docs/agents-md): agentcenter 说明
+- [支持的 Agent](https://pi-memory.com/projects/agentcenter/docs/agents): agentcenter 说明
+- [界面操作指南](https://pi-memory.com/projects/agentcenter/docs/guide): agentcenter 说明
+- [Provider](https://pi-memory.com/projects/agentcenter/docs/providers): agentcenter 说明
+- [下载与打开](https://pi-memory.com/projects/agentcenter/docs/quickstart): agentcenter 说明
+- [Skill](https://pi-memory.com/projects/agentcenter/docs/skills): agentcenter 说明
+- [cursor-encoding-fix](https://pi-memory.com/projects/cursor-encoding-fix/): 项目介绍
+- [安装](https://pi-memory.com/projects/cursor-encoding-fix/docs/install): cursor-encoding-fix 说明
+- [限制](https://pi-memory.com/projects/cursor-encoding-fix/docs/limits): cursor-encoding-fix 说明
+- [用法](https://pi-memory.com/projects/cursor-encoding-fix/docs/usage): cursor-encoding-fix 说明
+
+## English documentation
+
+- [English home](https://pi-memory.com/en/): Pi Memory overview
+- [Pi Memory: quickstart](https://pi-memory.com/en/docs/quickstart): 快速开始
+- [Pi Memory: recall](https://pi-memory.com/en/docs/recall): 配置语义召回
+- [Pi Memory: memory](https://pi-memory.com/en/docs/memory): 记忆如何工作
+- [Pi Memory: context-design](https://pi-memory.com/en/docs/context-design): 上下文与渐进式设计
+- [Pi Memory: projects](https://pi-memory.com/en/docs/projects): 项目归属与记忆空间
+- [Pi Memory: pipeline](https://pi-memory.com/en/docs/pipeline): 后台运行与故障恢复
+- [Pi Memory: viewer](https://pi-memory.com/en/docs/viewer): 查看与修正记忆
+- [Pi Memory: skills](https://pi-memory.com/en/docs/skills): 沉淀可复用技能
+- [Pi Memory: configuration](https://pi-memory.com/en/docs/configuration): 配置说明
+- [Pi Memory: commands](https://pi-memory.com/en/docs/commands): 常用命令
+- [Pi Memory: data](https://pi-memory.com/en/docs/data): 数据、隐私与备份
+- [Pi Memory: limits](https://pi-memory.com/en/docs/limits): 限制与数据说明
+- [All projects](https://pi-memory.com/en/projects/): English project catalog
+- [ai-lite](https://pi-memory.com/en/projects/ai-lite/): English overview
+- [FAQ](https://pi-memory.com/en/projects/ai-lite/docs/faq): ai-lite English guide
+- [What it covers](https://pi-memory.com/en/projects/ai-lite/docs/overview): ai-lite English guide
+- [Quick start](https://pi-memory.com/en/projects/ai-lite/docs/quickstart): ai-lite English guide
+- [agentcenter](https://pi-memory.com/en/projects/agentcenter/): English overview
+- [AGENTS.md](https://pi-memory.com/en/projects/agentcenter/docs/agents-md): agentcenter English guide
+- [Supported agents](https://pi-memory.com/en/projects/agentcenter/docs/agents): agentcenter English guide
+- [UI guide](https://pi-memory.com/en/projects/agentcenter/docs/guide): agentcenter English guide
+- [Providers](https://pi-memory.com/en/projects/agentcenter/docs/providers): agentcenter English guide
+- [Download and open](https://pi-memory.com/en/projects/agentcenter/docs/quickstart): agentcenter English guide
+- [Skills](https://pi-memory.com/en/projects/agentcenter/docs/skills): agentcenter English guide
+- [cursor-encoding-fix](https://pi-memory.com/en/projects/cursor-encoding-fix/): English overview
+- [Install](https://pi-memory.com/en/projects/cursor-encoding-fix/docs/install): cursor-encoding-fix English guide
+- [Limits](https://pi-memory.com/en/projects/cursor-encoding-fix/docs/limits): cursor-encoding-fix English guide
+- [Usage](https://pi-memory.com/en/projects/cursor-encoding-fix/docs/usage): cursor-encoding-fix English guide
+
+## Source repositories
+
+- [Pi Memory source](https://github.com/yinwenyuan28-afk/pi-memory-system): implementation and release instructions.
+- [ai-lite source](https://github.com/yinwenyuan28-afk/ai-lite): Java gateway, orchestration, sessions and provider protection.
+- [agentcenter source](https://github.com/yinwenyuan28-afk/agent-center): agent configuration management.
+- [cursor-encoding-fix source](https://github.com/yinwenyuan28-afk/cursor-encoding-fix): UTF-8 file tools.

@@ -275,8 +275,8 @@ String explanation = documentExplainer.run(source);
 
 这些都是普通 Java 接口。`Assembly` 可以在应用代码里先调用一个 WorkflowSpec，再调用一个 AgentSpec；它不会自动创建执行图、注册后台任务、保存进度或提供断点恢复。
 
-**这一层的设计：**网关处理一次请求，Workflow 处理固定顺序，AgentLoop 处理模型参与的循环，Spec 与 Assembly 保留业务自己的输入输出。跨请求历史再交给[会话层](./overview#会话与提示词各管自己的状态)，一次 AgentLoop 的上下文不会自动成为长期保存的会话。
+**这一层的设计：**网关处理一次请求，Workflow 处理固定顺序，AgentLoop 处理模型参与的循环，Spec 与 Assembly 保留业务自己的输入输出。跨请求历史再交给[Session 的持久化](./session-persistence)，一次 AgentLoop 的上下文不会自动成为长期保存的会话。
 
-[回到整体设计](./overview) · [查看接入配置](./quickstart) · [调用边界与常见问题](./faq)
+[继续阅读 Session 的持久化](./session-persistence) · [回到整体设计](./overview) · [查看接入配置](./quickstart) · [调用边界与常见问题](./faq)
 
 本页于 2026-11-17 对照当前本地 `Workflow`、`AgentLoop`、生命周期接口和相应测试核对。

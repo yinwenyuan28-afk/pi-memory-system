@@ -61,7 +61,10 @@ export default defineConfig({
       };
     }
   },
-  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/brand/icon.svg' }]],
+  head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/brand/icon.svg' }],
+    ['link', { rel: 'alternate', type: 'text/plain', href: '/llms.txt', title: 'Agent documentation map' }]
+  ],
   locales: {
     root: {
       label: '简体中文', lang: 'zh-CN',

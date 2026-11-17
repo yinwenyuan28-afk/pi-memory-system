@@ -50,6 +50,8 @@ description: 异步、重试、流式、取消和配置档的常见边界。
 
 启用运行时目录时，`LlmCall.biz` 需要目录中的业务绑定；没有绑定不会回退 YAML。未启用目录时，它可以使用 YAML 的 `default-profile`；只写模型列表而未设置该字段仍然不足。首次接入可以按[快速开始](./quickstart)使用 `LlmCall.profile` 显式选择配置档，并先在 `biz-ids` 登记业务 id。
 
+Profile 与业务绑定的路径对照、管理侧配置的生效时机，见 [Provider 与运行时配置](./provider-runtime)。
+
 ## AgentLoop 是否支持异步流式？
 
 当前要分别看待三种能力：同步执行 `run`、异步执行 `runAsync`、同步流式执行 `runStream`。不能因为单次网关有 `oneByStreamAsync`，就推导出 AgentLoop 也有相同的异步流式接口。

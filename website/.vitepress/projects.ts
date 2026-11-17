@@ -150,16 +150,21 @@ export function projectHref(id: string, english: boolean, docSlug?: string) {
  */
 export function projectSidebars(english = false) {
   const prefix = english ? '/en' : '';
-  const numerals = ['一', '二', '三', '四', '五', '六'];
+  const numerals = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
   return Object.fromEntries(projects.map(project => {
     const numbered = !english && project.id === 'ai-lite';
     const items = [
       ...(numbered ? [
+        { text: '快速开始', link: '/projects/ai-lite/docs/quickstart' },
+        { text: '整体设计', link: '/projects/ai-lite/docs/overview' },
         { text: '网关层：从一次调用开始', link: '/projects/ai-lite/' },
         { text: '网关层：从一次调用开始（NIO）', link: '/projects/ai-lite/docs/gateway-nio' },
-        { text: '编排层：从步骤到任务', link: '/projects/ai-lite/docs/orchestration' }
+        { text: '编排层：从步骤到任务', link: '/projects/ai-lite/docs/orchestration' },
+        { text: 'Session 的持久化', link: '/projects/ai-lite/docs/session-persistence' },
+        { text: '限流熔断机制', link: '/projects/ai-lite/docs/rate-limit-circuit' },
+        { text: 'Provider 与运行时配置', link: '/projects/ai-lite/docs/provider-runtime' }
       ] : []),
-      ...project.docs.map(doc => ({
+      ...project.docs.filter(doc => !numbered || doc.slug === 'faq').map(doc => ({
         text: english ? doc.title.en : doc.title.zh,
         link: `${prefix}/projects/${project.id}/docs/${doc.slug}`
       }))
