@@ -1,0 +1,23 @@
+/* 用途：只调整 ai-lite 文档中 Shiki 注释的对比度，不影响其他项目的代码配色。 */
+.ai-lite-guide .vp-doc [class*='language-'] span[style*='--shiki-light:#6A737D'] {
+  color: #56616d !important;
+}
+html.dark .ai-lite-guide .vp-doc [class*='language-'] span[style*='--shiki-dark:#6A737D'] {
+  color: #a7b3c2 !important;
+}
+/* 用途：提高浅色内联代码和语言标签的文字对比度，深色继续使用网站文本色。 */
+.ai-lite-guide .vp-doc :not(pre) > code { color: #1b6140; }
+html.dark .ai-lite-guide .vp-doc :not(pre) > code { color: #92dcb3; }
+.ai-lite-guide .vp-doc [class*='language-'] > .lang { color: var(--vp-c-text-2); }
+/* 用途：保留浅色语法高亮层次，加深类型与标签使用的绿色。 */
+html:not(.dark) .ai-lite-guide .vp-doc [class*='language-'] span[style*='--shiki-light:#22863A'] {
+  color: #176a2d !important;
+}
+/* 用途：加深浅色关键字与运算符，避免淡灰代码背景降低其对比度。 */
+html:not(.dark) .ai-lite-guide .vp-doc [class*='language-'] span[style*='--shiki-light:#D73A49'] {
+  color: #b52235 !important;
+}
+/* 用途：加深浅色参数高亮，保持 Java 示例中的参数名称清晰。 */
+html:not(.dark) .ai-lite-guide .vp-doc [class*='language-'] span[style*='--shiki-light:#E36209'] {
+  color: #994600 !important;
+}

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress';
+import { projectSidebars } from './projects';
 
 const repo = 'https://github.com/yinwenyuan28-afk/pi-memory-system';
 const sidebar = (prefix: string, en = false) => [
@@ -68,9 +69,10 @@ export default defineConfig({
         nav: [
           { text: '产品', link: '/' },
           { text: '工作方式', link: '/#how-it-works' },
-          { text: '文档', link: '/docs/quickstart' }
+          { text: '文档', link: '/docs/quickstart' },
+          { component: 'ProjectsNav' }
         ],
-        sidebar: { '/docs/': sidebar('') },
+        sidebar: { '/docs/': sidebar(''), ...projectSidebars(false) },
         outline: { level: [2, 3], label: '本页内容' },
         docFooter: { prev: '上一篇', next: '下一篇' },
         darkModeSwitchLabel: '外观', lightModeSwitchTitle: '切换为浅色', darkModeSwitchTitle: '切换为深色',
@@ -85,9 +87,10 @@ export default defineConfig({
         nav: [
           { text: 'Product', link: '/en/' },
           { text: 'How it works', link: '/en/#how-it-works' },
-          { text: 'Docs', link: '/en/docs/quickstart' }
+          { text: 'Docs', link: '/en/docs/quickstart' },
+          { component: 'ProjectsNav' }
         ],
-        sidebar: { '/en/docs/': sidebar('/en', true) },
+        sidebar: { '/en/docs/': sidebar('/en', true), ...projectSidebars(true) },
         outline: { level: [2, 3], label: 'On this page' },
         footer: { message: 'Give your next session a head start. · <a href="mailto:email@pi-memory.com">email@pi-memory.com</a>', copyright: 'pi-memory-system · MIT License' }
       }
@@ -120,7 +123,7 @@ export default defineConfig({
       include: [
         'element-plus', '@lucide/vue',
         'element-plus/es/locale/lang/zh-cn', 'element-plus/es/locale/lang/en',
-        ...['button', 'segmented', 'tag', 'tabs', 'collapse', 'dialog'].map(name => `element-plus/es/components/${name}/style/css`)
+        ...['button', 'segmented', 'tag', 'tabs', 'collapse', 'dialog', 'drawer'].map(name => `element-plus/es/components/${name}/style/css`)
       ]
     }
   }

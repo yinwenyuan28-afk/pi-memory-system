@@ -1,11 +1,5 @@
 export const repository = 'https://github.com/yinwenyuan28-afk/pi-memory-system';
 
-/** 作者其他项目的仓库地址；展示文案按 id 对应 copy.zh / copy.en 的 otherProjects.items */
-export const otherRepositories: Record<string, string> = {
-  'ai-lite': 'https://github.com/yinwenyuan28-afk/ai-lite',
-  'cursor-encoding-fix': 'https://github.com/yinwenyuan28-afk/cursor-encoding-fix'
-};
-
 export const copy = {
   zh: {
     forPi: '为持续工作的 Pi 用户而做',
@@ -53,12 +47,7 @@ export const copy = {
     contributeEyebrow: '开源共建', contributeCode: '参与项目共建',
     otherProjects: {
       eyebrow: '同作者的其他项目',
-      title: '顺手做的一些小工具。',
-      link: '在 GitHub 查看',
-      items: [
-        { id: 'ai-lite', title: 'ai-lite', text: '面向 Spring Boot 2.x / JDK 8 存量系统的 AI 接入层：统一模型网关、Agent 编排、跨请求会话和提示词版本中心。用异步 I/O 与协程，让少量线程承载高并发调用。', tags: ['JDK 8', 'Spring Boot', 'LLM'] },
-        { id: 'cursor-encoding-fix', title: 'cursor-encoding-fix', text: '专治简体中文 Windows 上 Cursor Agent 把中文静默存成 GBK 的问题。通过 MCP 工具读写文件，一律落盘为无 BOM 的 UTF-8；也可以挂钩子拦住官方写入工具。', tags: ['Windows', 'Cursor', 'UTF-8'] }
-      ]
+      title: '顺手做的一些小工具。'
     },
     footerDocs: '文档', footerData: '数据与限制', footerIssue: '反馈问题'
   },
@@ -108,12 +97,7 @@ export const copy = {
     contributeEyebrow: 'Open source', contributeCode: 'Contribute on GitHub',
     otherProjects: {
       eyebrow: 'More from the author',
-      title: 'A few small tools built along the way.',
-      link: 'View on GitHub',
-      items: [
-        { id: 'ai-lite', title: 'ai-lite', text: 'An AI integration layer for existing Spring Boot 2.x / JDK 8 systems: a multi-provider gateway, agent orchestration, cross-request sessions, and versioned prompts. Async I/O and coroutines let a small thread pool handle high concurrency.', tags: ['JDK 8', 'Spring Boot', 'LLM'] },
-        { id: 'cursor-encoding-fix', title: 'cursor-encoding-fix', text: 'Fixes Cursor Agent silently saving non-ASCII text as GBK on Simplified Chinese Windows. Files are read and written through MCP tools and always saved as UTF-8 without BOM, with an optional hook that blocks the built-in write tools.', tags: ['Windows', 'Cursor', 'UTF-8'] }
-      ]
+      title: 'A few small tools built along the way.'
     },
     footerDocs: 'Documentation', footerData: 'Data and limits', footerIssue: 'Report an issue'
   }

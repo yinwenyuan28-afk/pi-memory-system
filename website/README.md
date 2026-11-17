@@ -10,3 +10,12 @@
 - 构建预览：`npm run preview`
 
 这是本地设计原型。交互中的项目记录是标注过的示例，不连接真实记忆数据库。视频、封面和产品图标在启动与构建前从仓库 `assets/` 同步，生成副本不纳入版本控制。
+
+## ai-lite 图解介绍
+
+中文入口：`/projects/ai-lite/`。内容按同步 → 异步 → 显式重试 → 流式 → 工具与多轮 → 会话与提示词递进，另有整体设计、快速开始和常见问题。
+
+流程图由 `.vitepress/theme/AiLiteFlow.vue` 本地绘制，支持深浅色、小屏横向查看和文字说明。修改 API 示例、默认策略或线程模型时，应同时核对 ai-lite 源码；检查方式为 `npm run build` 和浏览器查看对应页面。英文页面保持独立维护。
+
+讲解方案和验证记录见 [AI_LITE_WEBSITE_PLAN](../plan/pi-memory-system/AI_LITE_WEBSITE_PLAN.md)。
+编排层入口：`/projects/ai-lite/docs/orchestration`，从固定步骤、异步顺序与步骤重试，逐步讲到 AgentLoop、七个生命周期时机、工具并行和 Spec/Assembly。新增六类流程图，例子与当前编排层源码核对。
