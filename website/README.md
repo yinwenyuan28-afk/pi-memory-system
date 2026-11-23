@@ -31,3 +31,7 @@ Provider 与运行时配置入口：`/projects/ai-lite/docs/provider-runtime`，
 - 远程内容地图：[public/llms.txt](./public/llms.txt)，对外路径 `/llms.txt`，包含全站中英文入口及 ai-lite 九章阅读顺序。新增或调整页面后同步维护。
 - 仓库维护地图：[agent-content/site-map.md](./agent-content/site-map.md)，标明页面、导航、组件、图示、源码核验和构建位置；该目录不发布为文档页面。
 - `npm run build` 在生成 HTML 后复制中英文 docs 与 projects 到内部 Markdown 资源目录。生产 Worker 支持相同页面 URL 的 `Accept: text/markdown`；本地 VitePress dev/preview 不运行 Worker。内部 `/_markdown/` 路径不作为公开链接。
+
+## AgentCenter 首屏背景
+
+`/projects/agentcenter/` 与英文对应页面在首屏用静态网络图做背景：右侧圆环主节点、直线连到各 Agent 图标，相邻射线之间交替浅/深色块。组件为 `.vitepress/theme/AgentCenterNetwork.vue`。这是概念示意，实际能力以支持的 Agent 文档为准。修改后执行 `npm run build` 并检查中英文与深浅色页面。

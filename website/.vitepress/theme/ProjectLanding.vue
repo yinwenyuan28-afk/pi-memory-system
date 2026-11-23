@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import AgentCenterNetwork from './AgentCenterNetwork.vue';
 import { useData, withBase } from 'vitepress';
 import { ElButton } from 'element-plus';
 import { ArrowRight, ArrowUpRight, BookOpen } from '@lucide/vue';
@@ -17,7 +18,8 @@ const page = (docSlug?: string) => project.value ? withBase(projectHref(project.
 
 <template>
   <main v-if="project" class="memory-site project-landing">
-    <section class="project-hero site-width" :aria-labelledby="'project-title'">
+    <section class="project-hero site-width" :class="{ 'agentcenter-hero': slug === 'agentcenter' }" :aria-labelledby="'project-title'">
+      <div class="project-hero-copy">
       <button type="button" class="product-context" @click="openProjectsDrawer"><span class="context-line" />{{ t.back }}</button>
       <h1 id="project-title"><span v-for="line in headline" :key="line">{{ line }}</span></h1>
       <p class="hero-intro">{{ text(project.summary, english) }}</p>
@@ -26,6 +28,8 @@ const page = (docSlug?: string) => project.value ? withBase(projectHref(project.
         <ElButton tag="a" :href="page(project.docs[0].slug)" type="primary" size="large">{{ t.readDocs }}<ArrowRight :size="17" /></ElButton>
         <ElButton tag="a" :href="project.repo" target="_blank" rel="noopener noreferrer" size="large"><ArrowUpRight :size="16" />{{ t.source }}</ElButton>
       </div>
+      </div>
+      <AgentCenterNetwork v-if="slug === 'agentcenter'" :english="english" />
     </section>
 
     <section class="outcomes site-width" :aria-label="project.name">
@@ -47,3 +51,14 @@ const page = (docSlug?: string) => project.value ? withBase(projectHref(project.
     </section>
   </main>
 </template>
+
+<style scoped>
+.agentcenter-hero { position: relative; display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: center; gap: 40px; padding-bottom: 45px; }
+.agentcenter-hero > * { min-width: 0; }
+.agentcenter-hero .project-hero-copy { position: relative; z-index: 2; }
+.agentcenter-hero .hero-intro { max-width: 430px; }
+@media (max-width: 900px) {
+  .agentcenter-hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .agentcenter-hero .hero-intro { max-width: 600px; }
+}
+</style>

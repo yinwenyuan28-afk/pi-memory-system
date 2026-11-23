@@ -115,7 +115,7 @@ export const projects: ProjectEntry[] = [
       en: ['Many agents.', 'One config home.']
     },
     outcomes: [
-      { title: { zh: '指令有母版', en: 'One instruction source' }, text: { zh: '一份 AGENTS.md 映射到各 agent 自己的指令文件位置。', en: 'One AGENTS.md maps onto each agent\'s own instruction file.' } },
+      { title: { zh: 'AGENT.md映射', en: 'One instruction source' }, text: { zh: '一份 AGENTS.md 映射到各 agent 自己的指令文件位置。', en: 'One AGENTS.md maps onto each agent\'s own instruction file.' } },
       { title: { zh: 'Skill 收回中心库', en: 'Skills in one library' }, text: { zh: '扫描散落在各家目录里的 skill，再逐条决定移入、去重或采用哪一份。', en: 'Scan scattered skills, then move, dedupe, or keep a chosen copy.' } },
       { title: { zh: 'Provider 与 MCP 按需分配', en: 'Providers and MCP, assigned' }, text: { zh: '密钥和 MCP server 先进一个池子，再逐条选择注入哪些 agent。', en: 'Keys and MCP servers live in one pool, then get assigned to the agents that should use them.' } }
     ],
