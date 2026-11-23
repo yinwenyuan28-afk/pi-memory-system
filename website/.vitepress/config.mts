@@ -2,37 +2,74 @@ import { defineConfig } from 'vitepress';
 import { projectSidebars } from './projects';
 
 const repo = 'https://github.com/yinwenyuan28-afk/pi-memory-system';
-const sidebar = (prefix: string, en = false) => [
+// 用途：中文侧栏按"从整体到细节"的阅读顺序组织；英文侧栏沿用既有页面，避免引用未翻译的新页。
+const sidebar = (prefix: string, en = false) => en ? [
   {
-    text: en ? 'Start here' : '开始使用',
+    text: 'Start here',
     items: [
-      { text: en ? 'Quick start' : '快速开始', link: `${prefix}/docs/quickstart` },
-      { text: en ? 'Configure recall' : '配置语义召回', link: `${prefix}/docs/recall` }
+      { text: 'Quick start', link: `${prefix}/docs/quickstart` },
+      { text: 'Configure recall', link: `${prefix}/docs/recall` }
     ]
   },
   {
-    text: en ? 'Understand the system' : '理解记忆系统',
+    text: 'Understand the system',
     items: [
-      { text: en ? 'How memory works' : '记忆如何工作', link: `${prefix}/docs/memory` },
-      { text: en ? 'Context and progressive loading' : '上下文与渐进式设计', link: `${prefix}/docs/context-design` },
-      { text: en ? 'Projects and profiles' : '项目归属与记忆空间', link: `${prefix}/docs/projects` },
-      { text: en ? 'Background work and recovery' : '后台运行与故障恢复', link: `${prefix}/docs/pipeline` }
+      { text: 'How memory works', link: `${prefix}/docs/memory` },
+      { text: 'Context and progressive loading', link: `${prefix}/docs/context-design` },
+      { text: 'Projects and profiles', link: `${prefix}/docs/projects` },
+      { text: 'Background work and recovery', link: `${prefix}/docs/pipeline` }
     ]
   },
   {
-    text: en ? 'Work with your memory' : '日常使用',
+    text: 'Work with your memory',
     items: [
-      { text: en ? 'Inspect and correct' : '查看与修正记忆', link: `${prefix}/docs/viewer` },
-      { text: en ? 'Learn reusable skills' : '沉淀可复用技能', link: `${prefix}/docs/skills` }
+      { text: 'Inspect and correct', link: `${prefix}/docs/viewer` },
+      { text: 'Learn reusable skills', link: `${prefix}/docs/skills` }
     ]
   },
   {
-    text: en ? 'Configuration and reference' : '配置与参考',
+    text: 'Configuration and reference',
     items: [
-      { text: en ? 'Configuration guide' : '配置说明', link: `${prefix}/docs/configuration` },
-      { text: en ? 'Command reference' : '常用命令', link: `${prefix}/docs/commands` },
-      { text: en ? 'Data, privacy, and backups' : '数据、隐私与备份', link: `${prefix}/docs/data` },
-      { text: en ? 'Current limitations' : '限制与数据说明', link: `${prefix}/docs/limits` }
+      { text: 'Configuration guide', link: `${prefix}/docs/configuration` },
+      { text: 'Command reference', link: `${prefix}/docs/commands` },
+      { text: 'Data, privacy, and backups', link: `${prefix}/docs/data` },
+      { text: 'Current limitations', link: `${prefix}/docs/limits` }
+    ]
+  }
+] : [
+  {
+    text: '开始使用',
+    items: [
+      { text: '快速开始', link: `${prefix}/docs/quickstart` },
+      { text: '整体设计', link: `${prefix}/docs/overview` }
+    ]
+  },
+  {
+    text: '理解记忆系统',
+    items: [
+      { text: '记忆模型', link: `${prefix}/docs/memory-model` },
+      { text: '记忆如何工作', link: `${prefix}/docs/memory` },
+      { text: '后台流水线', link: `${prefix}/docs/pipeline` },
+      { text: '召回与注入', link: `${prefix}/docs/recall` },
+      { text: '上下文与渐进式设计', link: `${prefix}/docs/context-design` },
+      { text: '工程质量', link: `${prefix}/docs/engineering` },
+      { text: '项目归属与记忆空间', link: `${prefix}/docs/projects` }
+    ]
+  },
+  {
+    text: '日常使用',
+    items: [
+      { text: '查看与修正记忆', link: `${prefix}/docs/viewer` },
+      { text: '沉淀可复用技能', link: `${prefix}/docs/skills` }
+    ]
+  },
+  {
+    text: '配置与参考',
+    items: [
+      { text: '配置与运行参数', link: `${prefix}/docs/configuration` },
+      { text: '常用命令', link: `${prefix}/docs/commands` },
+      { text: '数据、隐私与备份', link: `${prefix}/docs/data` },
+      { text: '限制与已知问题', link: `${prefix}/docs/limits` }
     ]
   }
 ];
