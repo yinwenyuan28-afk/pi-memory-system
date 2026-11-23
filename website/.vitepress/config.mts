@@ -83,6 +83,22 @@ export default defineConfig({
   appearance: true,
   markdown: {
     config(md) {
+      // 用途：正文开头的「给谁 / 一句话 / 不管 / 状态」等作者备注只留在 Markdown 源文件，不进公开页面。
+      md.core.ruler.after('block', 'hide-author-meta', (state) => {
+        const isMeta = (text: string) => /^(给谁|一句话|不管|状态|范围|核对|Who this is for|In one sentence|Not here|Checked|Audience|Scope)[:：]/.test(text.trim());
+        for (let index = 0; index < state.tokens.length; index++) {
+          if (state.tokens[index].type !== 'blockquote_open') continue;
+          let end = index + 1;
+          let text = '';
+          while (end < state.tokens.length && state.tokens[end].type !== 'blockquote_close') {
+            if (state.tokens[end].type === 'inline') text += state.tokens[end].content;
+            end += 1;
+          }
+          if (!isMeta(text) || end >= state.tokens.length) continue;
+          state.tokens.splice(index, end - index + 1);
+          index -= 1;
+        }
+      });
       const fence = md.renderer.rules.fence!;
       md.renderer.rules.fence = (tokens, index, options, env, self) => {
         const html = fence(tokens, index, options, env, self);
